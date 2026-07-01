@@ -104,6 +104,11 @@ repositório (ex.: planilha de portas do projeto elétrico/predial).
 
 ## Setup on-premise
 
+> Para um passo a passo completo de instalação em servidor Linux de produção
+> (systemd, Nginx com WebSocket, usuário dedicado, backups), veja
+> [`docs/instalacao-servidor-linux.md`](docs/instalacao-servidor-linux.md).
+> A seção abaixo é o setup rápido para desenvolvimento local.
+
 ### Pré-requisitos
 - .NET 8 SDK
 - PostgreSQL (12+)
