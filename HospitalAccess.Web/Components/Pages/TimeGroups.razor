@@ -14,40 +14,42 @@
     uma janela por dia (o mais comum na prática) — abertura mais granular pode ser feita via API.
 </p>
 
-<EditForm Model="_model" FormName="TimeGroupForm" OnValidSubmit="SaveAsync" class="mb-3">
-    <div class="row g-2 align-items-end mb-2">
-        <div class="col-md-2">
-            <label class="form-label">Grupo (1-64)</label>
-            <InputNumber class="form-control" @bind-Value="_model.GroupNumber" />
+<div class="form-panel mb-3">
+    <EditForm Model="_model" FormName="TimeGroupForm" OnValidSubmit="SaveAsync">
+        <div class="row g-2 align-items-end mb-2">
+            <div class="col-md-2">
+                <label class="form-label">Grupo (1-64)</label>
+                <InputNumber class="form-control" @bind-Value="_model.GroupNumber" />
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">Nome</label>
+                <InputText class="form-control" @bind-Value="_model.Name" placeholder="Ex.: Dias úteis 7h-19h" />
+            </div>
         </div>
-        <div class="col-md-4">
-            <label class="form-label">Nome</label>
-            <InputText class="form-control" @bind-Value="_model.Name" placeholder="Ex.: Dias úteis 7h-19h" />
-        </div>
-    </div>
 
-    <table class="table table-sm">
-        <thead><tr><th>Dia</th><th>Ativo</th><th>Início</th><th>Fim</th></tr></thead>
-        <tbody>
-            @for (var i = 0; i < 7; i++)
-            {
-                var day = _model.Days[i];
-                <tr>
-                    <td>@WeekdayNames[i]</td>
-                    <td><input type="checkbox" class="form-check-input" @bind="day.Enabled" /></td>
-                    <td><input type="time" class="form-control form-control-sm" @bind="day.Begin" /></td>
-                    <td><input type="time" class="form-control form-control-sm" @bind="day.End" /></td>
-                </tr>
-            }
-        </tbody>
-    </table>
+        <table class="table table-sm">
+            <thead><tr><th>Dia</th><th>Ativo</th><th>Início</th><th>Fim</th></tr></thead>
+            <tbody>
+                @for (var i = 0; i < 7; i++)
+                {
+                    var day = _model.Days[i];
+                    <tr>
+                        <td>@WeekdayNames[i]</td>
+                        <td><input type="checkbox" class="form-check-input" @bind="day.Enabled" /></td>
+                        <td><input type="time" class="form-control form-control-sm" @bind="day.Begin" /></td>
+                        <td><input type="time" class="form-control form-control-sm" @bind="day.End" /></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
 
-    <button class="btn btn-primary" type="submit">@(_editingId is null ? "Adicionar" : "Salvar")</button>
-    @if (_editingId is not null)
-    {
-        <button class="btn btn-outline-secondary" type="button" @onclick="CancelEdit">Cancelar</button>
-    }
-</EditForm>
+        <button class="btn btn-primary" type="submit">@(_editingId is null ? "Adicionar" : "Salvar")</button>
+        @if (_editingId is not null)
+        {
+            <button class="btn btn-outline-secondary" type="button" @onclick="CancelEdit">Cancelar</button>
+        }
+    </EditForm>
+</div>
 @if (_error is not null)
 {
     <div class="alert alert-danger">@_error</div>
@@ -61,10 +63,15 @@
     <p class="text-muted">@_syncMessage</p>
 }
 
+<div class="filter-bar mb-3">
+    <label class="form-label">Buscar</label>
+    <input type="text" class="form-control" placeholder="Nome do grupo..." @bind="_search" @bind:event="oninput" />
+</div>
+
 <table class="table table-hover align-middle">
     <thead><tr><th>Grupo</th><th>Nome</th><th>Dias configurados</th><th>Ações</th></tr></thead>
     <tbody>
-        @foreach (var t in _schedules)
+        @foreach (var t in FilteredSchedules)
         {
             <tr>
                 <td>@t.GroupNumber</td>
@@ -88,6 +95,12 @@
     private string? _error;
     private bool _syncing;
     private string? _syncMessage;
+    private string _search = string.Empty;
+
+    private IEnumerable<TimeGroupScheduleDto> FilteredSchedules => _schedules.Where(t =>
+        string.IsNullOrWhiteSpace(_search) ||
+        t.Name.Contains(_search, StringComparison.OrdinalIgnoreCase) ||
+        t.GroupNumber.ToString().Contains(_search));
 
     protected override async Task OnInitializedAsync()
     {

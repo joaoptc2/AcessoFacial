@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json.Serialization;
 using HospitalAccess.Api.Auth;
 using HospitalAccess.Api.Services;
 using HospitalAccess.Application.Qr;
@@ -14,7 +15,10 @@ using Microsoft.IdentityModel.Tokens;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddControllers();
+// Enums como string no JSON (ex.: AccessMethod, AlarmKind, SyncState) — os DTOs do
+// front-end Blazor já assumem essa representação.
+builder.Services.AddControllers()
+    .AddJsonOptions(o => o.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 

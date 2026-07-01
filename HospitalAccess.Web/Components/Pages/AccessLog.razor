@@ -10,7 +10,7 @@
 
 <h3>Log de Acessos (auditoria)</h3>
 
-<div class="row g-2 mb-3">
+<div class="filter-bar mb-3 row g-2">
     <div class="col-md-3">
         <label class="form-label">De</label>
         <input type="datetime-local" class="form-control" @bind="_from" />
@@ -18,6 +18,30 @@
     <div class="col-md-3">
         <label class="form-label">Até</label>
         <input type="datetime-local" class="form-control" @bind="_to" />
+    </div>
+    <div class="col-md-2">
+        <label class="form-label">Código do usuário</label>
+        <input type="number" class="form-control" @bind="_userCode" />
+    </div>
+    <div class="col-md-2">
+        <label class="form-label">Controlador</label>
+        <select class="form-select" @bind="_controllerId">
+            <option value="">(todos)</option>
+            @foreach (var c in _controllers)
+            {
+                <option value="@c.Id">@c.Name</option>
+            }
+        </select>
+    </div>
+    <div class="col-md-2">
+        <label class="form-label">Método</label>
+        <select class="form-select" @bind="_method">
+            <option value="">(todos)</option>
+            <option value="Face">Face</option>
+            <option value="QrCode">QR Code</option>
+            <option value="RemoteOpen">Abertura remota</option>
+            <option value="Card">Cartão</option>
+        </select>
     </div>
     <div class="col-md-2 align-self-end">
         <button class="btn btn-primary w-100" @onclick="SearchAsync">Filtrar</button>
@@ -56,13 +80,18 @@
 @code {
     private DateTime? _from;
     private DateTime? _to;
+    private uint? _userCode;
+    private string _controllerId = string.Empty;
+    private string _method = string.Empty;
     private int _currentPage = 1;
     private readonly int _pageSize = 25;
     private AccessLogPage? _page;
+    private List<ControllerDto> _controllers = [];
 
     protected override async Task OnInitializedAsync()
     {
         if (!AuthState.IsAuthenticated) { Nav.NavigateTo("/login"); return; }
+        _controllers = await Api.GetControllersAsync();
         await SearchAsync();
     }
 
@@ -80,13 +109,21 @@
 
     private async Task LoadAsync()
     {
+        Guid.TryParse(_controllerId, out var controllerGuid);
         _page = await Api.QueryAccessLogAsync(
-            _from?.ToUniversalTime(), _to?.ToUniversalTime(), null, null, _currentPage, _pageSize);
+            _from?.ToUniversalTime(), _to?.ToUniversalTime(), _userCode,
+            controllerGuid == Guid.Empty ? null : controllerGuid,
+            string.IsNullOrEmpty(_method) ? null : _method,
+            _currentPage, _pageSize);
     }
 
     private async Task ExportCsvAsync()
     {
-        var bytes = await Api.ExportAccessLogCsvAsync(_from?.ToUniversalTime(), _to?.ToUniversalTime());
+        Guid.TryParse(_controllerId, out var controllerGuid);
+        var bytes = await Api.ExportAccessLogCsvAsync(
+            _from?.ToUniversalTime(), _to?.ToUniversalTime(), _userCode,
+            controllerGuid == Guid.Empty ? null : controllerGuid,
+            string.IsNullOrEmpty(_method) ? null : _method);
         var base64 = Convert.ToBase64String(bytes);
         await Js.InvokeVoidAsync("downloadFileFromBase64", $"access-log-{DateTime.UtcNow:yyyyMMddHHmmss}.csv", "text/csv", base64);
     }

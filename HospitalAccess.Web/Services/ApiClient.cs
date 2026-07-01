@@ -237,22 +237,26 @@ public sealed class ApiClient
 
     // ---- Log de alarmes ----
 
-    public Task<AlarmEventPage?> QueryAlarmEventsAsync(DateTime? from, DateTime? to, Guid? controllerId, int page, int pageSize)
+    public Task<AlarmEventPage?> QueryAlarmEventsAsync(
+        DateTime? from, DateTime? to, Guid? controllerId, string? kind, int page, int pageSize)
     {
         var query = new List<string> { $"page={page}", $"pageSize={pageSize}" };
         if (from is not null) query.Add($"from={from:O}");
         if (to is not null) query.Add($"to={to:O}");
         if (controllerId is not null) query.Add($"controllerId={controllerId}");
+        if (!string.IsNullOrEmpty(kind)) query.Add($"kind={kind}");
 
         return GetJsonOrDefaultAsync<AlarmEventPage?>($"api/alarmevents?{string.Join('&', query)}", null);
     }
 
-    public async Task<byte[]> ExportAlarmEventsCsvAsync(DateTime? from, DateTime? to)
+    public async Task<byte[]> ExportAlarmEventsCsvAsync(DateTime? from, DateTime? to, Guid? controllerId, string? kind)
     {
         ApplyAuthHeader();
         var query = new List<string>();
         if (from is not null) query.Add($"from={from:O}");
         if (to is not null) query.Add($"to={to:O}");
+        if (controllerId is not null) query.Add($"controllerId={controllerId}");
+        if (!string.IsNullOrEmpty(kind)) query.Add($"kind={kind}");
 
         var response = await _http.GetAsync($"api/alarmevents/export?{string.Join('&', query)}");
         return response.IsSuccessStatusCode ? await response.Content.ReadAsByteArrayAsync() : [];
@@ -331,23 +335,27 @@ public sealed class ApiClient
     // ---- Log de acessos ----
 
     public Task<AccessLogPage?> QueryAccessLogAsync(
-        DateTime? from, DateTime? to, uint? userCode, Guid? controllerId, int page, int pageSize)
+        DateTime? from, DateTime? to, uint? userCode, Guid? controllerId, string? method, int page, int pageSize)
     {
         var query = new List<string> { $"page={page}", $"pageSize={pageSize}" };
         if (from is not null) query.Add($"from={from:O}");
         if (to is not null) query.Add($"to={to:O}");
         if (userCode is not null) query.Add($"userCode={userCode}");
         if (controllerId is not null) query.Add($"controllerId={controllerId}");
+        if (!string.IsNullOrEmpty(method)) query.Add($"method={method}");
 
         return GetJsonOrDefaultAsync<AccessLogPage?>($"api/accesslog?{string.Join('&', query)}", null);
     }
 
-    public async Task<byte[]> ExportAccessLogCsvAsync(DateTime? from, DateTime? to)
+    public async Task<byte[]> ExportAccessLogCsvAsync(DateTime? from, DateTime? to, uint? userCode, Guid? controllerId, string? method)
     {
         ApplyAuthHeader();
         var query = new List<string> { "format=csv" };
         if (from is not null) query.Add($"from={from:O}");
         if (to is not null) query.Add($"to={to:O}");
+        if (userCode is not null) query.Add($"userCode={userCode}");
+        if (controllerId is not null) query.Add($"controllerId={controllerId}");
+        if (!string.IsNullOrEmpty(method)) query.Add($"method={method}");
 
         var response = await _http.GetAsync($"api/accesslog/export?{string.Join('&', query)}");
         return response.IsSuccessStatusCode ? await response.Content.ReadAsByteArrayAsync() : [];

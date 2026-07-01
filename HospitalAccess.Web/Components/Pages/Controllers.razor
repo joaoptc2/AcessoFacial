@@ -33,50 +33,57 @@
     }
 }
 
-<EditForm Model="_model" FormName="ControllerForm" OnValidSubmit="SaveAsync" class="row g-2 mb-4 align-items-end">
-    <div class="col-md-2">
-        <label class="form-label">Nome</label>
-        <InputText class="form-control" @bind-Value="_model.Name" placeholder="Ex.: Portaria Principal" />
-    </div>
-    <div class="col-md-2">
-        <label class="form-label">IP</label>
-        <InputText class="form-control" @bind-Value="_model.IpAddress" />
-    </div>
-    <div class="col-md-1">
-        <label class="form-label">Porta</label>
-        <InputNumber class="form-control" @bind-Value="_model.Port" />
-    </div>
-    <div class="col-md-2">
-        <label class="form-label">SN (16 dígitos)</label>
-        <InputText class="form-control" @bind-Value="_model.SerialNumber" />
-    </div>
-    <div class="col-md-2">
-        <label class="form-label">Senha (8 hex)</label>
-        <InputText class="form-control" @bind-Value="_model.CommunicationPassword" />
-    </div>
-    <div class="col-md-1 form-check">
-        <InputCheckbox class="form-check-input" @bind-Value="_model.SupportsWaitRepeatMessage" id="waitRepeat" />
-        <label class="form-check-label" for="waitRepeat">Firmware &gt;= v4.28</label>
-    </div>
-    <div class="col-md-2">
-        <button class="btn btn-primary" type="submit">@(_editingId is null ? "Adicionar" : "Salvar")</button>
-        @if (_editingId is not null)
-        {
-            <button class="btn btn-outline-secondary" type="button" @onclick="CancelEdit">Cancelar</button>
-        }
-    </div>
-</EditForm>
+<div class="form-panel mb-4">
+    <EditForm Model="_model" FormName="ControllerForm" OnValidSubmit="SaveAsync" class="row g-2 align-items-end">
+        <div class="col-md-2">
+            <label class="form-label">Nome</label>
+            <InputText class="form-control" @bind-Value="_model.Name" placeholder="Ex.: Portaria Principal" />
+        </div>
+        <div class="col-md-2">
+            <label class="form-label">IP</label>
+            <InputText class="form-control" @bind-Value="_model.IpAddress" />
+        </div>
+        <div class="col-md-1">
+            <label class="form-label">Porta</label>
+            <InputNumber class="form-control" @bind-Value="_model.Port" />
+        </div>
+        <div class="col-md-2">
+            <label class="form-label">SN (16 dígitos)</label>
+            <InputText class="form-control" @bind-Value="_model.SerialNumber" />
+        </div>
+        <div class="col-md-2">
+            <label class="form-label">Senha (8 hex)</label>
+            <InputText class="form-control" @bind-Value="_model.CommunicationPassword" />
+        </div>
+        <div class="col-md-1 form-check">
+            <InputCheckbox class="form-check-input" @bind-Value="_model.SupportsWaitRepeatMessage" id="waitRepeat" />
+            <label class="form-check-label" for="waitRepeat">Firmware &gt;= v4.28</label>
+        </div>
+        <div class="col-md-2">
+            <button class="btn btn-primary" type="submit">@(_editingId is null ? "Adicionar" : "Salvar")</button>
+            @if (_editingId is not null)
+            {
+                <button class="btn btn-outline-secondary" type="button" @onclick="CancelEdit">Cancelar</button>
+            }
+        </div>
+    </EditForm>
+</div>
 @if (_formError is not null)
 {
     <div class="alert alert-danger">@_formError</div>
 }
+
+<div class="filter-bar mb-3">
+    <label class="form-label">Buscar</label>
+    <input type="text" class="form-control" placeholder="Nome, IP ou SN..." @bind="_search" @bind:event="oninput" />
+</div>
 
 <table class="table table-hover align-middle">
     <thead>
         <tr><th>Nome</th><th>IP:Porta</th><th>SN</th><th>Usuários</th><th>Ações</th></tr>
     </thead>
     <tbody>
-        @foreach (var c in _controllers)
+        @foreach (var c in FilteredControllers)
         {
             <tr>
                 <td>@c.Name</td>
@@ -145,8 +152,15 @@
     private List<SyncStatusDto> _syncStatuses = [];
     private bool _discovering;
     private List<DiscoveredController>? _discovered;
+    private string _search = string.Empty;
 
     private bool IsAdminOrOperator => AuthState.Role is "Admin" or "Operator";
+
+    private IEnumerable<ControllerDto> FilteredControllers => _controllers.Where(c =>
+        string.IsNullOrWhiteSpace(_search) ||
+        c.Name.Contains(_search, StringComparison.OrdinalIgnoreCase) ||
+        c.IpAddress.Contains(_search, StringComparison.OrdinalIgnoreCase) ||
+        c.SerialNumber.Contains(_search, StringComparison.OrdinalIgnoreCase));
 
     protected override async Task OnInitializedAsync()
     {

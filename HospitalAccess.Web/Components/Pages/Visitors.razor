@@ -9,7 +9,7 @@
 
 <h3>Visitantes / temporários (acesso por QR)</h3>
 
-<EditForm Model="_model" FormName="VisitorForm" OnValidSubmit="CreateAsync" class="col-md-6 border rounded p-3 mb-4 bg-light">
+<EditForm Model="_model" FormName="VisitorForm" OnValidSubmit="CreateAsync" class="col-md-6 form-panel mb-4">
     <div class="mb-3">
         <label class="form-label">Nome</label>
         <InputText class="form-control" @bind-Value="_model.Name" />
@@ -37,12 +37,28 @@
     </div>
 }
 
+<div class="filter-bar mb-3 row g-2 align-items-end">
+    <div class="col-md-5">
+        <label class="form-label">Buscar</label>
+        <input type="text" class="form-control" placeholder="Nome..." @bind="_search" @bind:event="oninput" />
+    </div>
+    <div class="col-md-4">
+        <label class="form-label">Status</label>
+        <select class="form-select" @bind="_statusFilter">
+            <option value="">(todos)</option>
+            <option value="ativo">Ativo</option>
+            <option value="expirado">Expirado</option>
+            <option value="revogado">Revogado</option>
+        </select>
+    </div>
+</div>
+
 <table class="table table-hover align-middle">
     <thead>
         <tr><th>Nome</th><th>Código</th><th>Válido de</th><th>Válido até</th><th>Status</th><th>Ações</th></tr>
     </thead>
     <tbody>
-        @foreach (var v in _visitors)
+        @foreach (var v in FilteredVisitors)
         {
             <tr>
                 <td>@v.Name</td>
@@ -69,6 +85,12 @@
     private string _qrVisitorName = string.Empty;
     private bool _busy;
     private List<VisitorListItemDto> _visitors = [];
+    private string _search = string.Empty;
+    private string _statusFilter = string.Empty;
+
+    private IEnumerable<VisitorListItemDto> FilteredVisitors => _visitors.Where(v =>
+        (string.IsNullOrWhiteSpace(_search) || v.Name.Contains(_search, StringComparison.OrdinalIgnoreCase)) &&
+        (string.IsNullOrEmpty(_statusFilter) || StatusLabel(v).Equals(_statusFilter, StringComparison.OrdinalIgnoreCase)));
 
     protected override async Task OnInitializedAsync()
     {

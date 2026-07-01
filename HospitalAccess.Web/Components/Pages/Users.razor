@@ -9,7 +9,7 @@
 
 <h3>Usuários permanentes (acesso por face)</h3>
 
-<EditForm Model="_model" FormName="UserForm" OnValidSubmit="SaveAsync" class="col-md-7 border rounded p-3 mb-4 bg-light">
+<EditForm Model="_model" FormName="UserForm" OnValidSubmit="SaveAsync" class="col-md-7 form-panel mb-4">
     <h5>@(_editingId is null ? "Novo usuário" : $"Editando: {_originalName}")</h5>
     <div class="mb-3">
         <label class="form-label">Nome</label>
@@ -66,12 +66,29 @@
     }
 </EditForm>
 
+<div class="filter-bar mb-3 row g-2 align-items-end">
+    <div class="col-md-5">
+        <label class="form-label">Buscar</label>
+        <input type="text" class="form-control" placeholder="Nome ou código..." @bind="_search" @bind:event="oninput" />
+    </div>
+    <div class="col-md-4">
+        <label class="form-label">Grupo</label>
+        <select class="form-select" @bind="_groupFilter">
+            <option value="">(todos)</option>
+            @foreach (var g in _groups)
+            {
+                <option value="@g.Id">@g.Name</option>
+            }
+        </select>
+    </div>
+</div>
+
 <table class="table table-hover align-middle">
     <thead>
         <tr><th>Nome</th><th>Código</th><th>Grupo</th><th>Cartão</th><th>Portas</th><th>Foto</th><th>Ações</th></tr>
     </thead>
     <tbody>
-        @foreach (var u in _users)
+        @foreach (var u in FilteredUsers)
         {
             <tr class="@(u.RevokedAtUtc is not null ? "table-secondary" : "")">
                 <td>@u.Name</td>
@@ -101,6 +118,14 @@
     private string? _error;
     private string? _success;
     private bool _busy;
+    private string _search = string.Empty;
+    private string _groupFilter = string.Empty;
+
+    private IEnumerable<UserListItemDto> FilteredUsers => _users.Where(u =>
+        (string.IsNullOrWhiteSpace(_search) ||
+            u.Name.Contains(_search, StringComparison.OrdinalIgnoreCase) ||
+            u.UserCode.ToString().Contains(_search)) &&
+        (string.IsNullOrEmpty(_groupFilter) || u.GroupId?.ToString() == _groupFilter));
 
     protected override async Task OnInitializedAsync()
     {

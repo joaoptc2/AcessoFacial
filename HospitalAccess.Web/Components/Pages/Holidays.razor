@@ -10,35 +10,37 @@
 <h3>Feriados</h3>
 <p class="text-muted">Calendário de feriados (até 30 slots), empurrado para os controladores sob demanda.</p>
 
-<EditForm Model="_model" FormName="HolidayForm" OnValidSubmit="SaveAsync" class="row g-2 mb-3 align-items-end">
-    <div class="col-md-2">
-        <label class="form-label">Slot (1-30)</label>
-        <InputNumber class="form-control" @bind-Value="_model.Index" />
-    </div>
-    <div class="col-md-3">
-        <label class="form-label">Nome</label>
-        <InputText class="form-control" @bind-Value="_model.Name" />
-    </div>
-    <div class="col-md-2">
-        <label class="form-label">Data</label>
-        <InputDate class="form-control" @bind-Value="_model.Date" />
-    </div>
-    <div class="col-md-2 form-check">
-        <InputCheckbox class="form-check-input" id="repeat" @bind-Value="_model.RepeatsYearly" />
-        <label class="form-check-label" for="repeat">Repete todo ano</label>
-    </div>
-    <div class="col-md-1">
-        <label class="form-label">Tipo</label>
-        <InputNumber class="form-control" @bind-Value="_model.HolidayType" />
-    </div>
-    <div class="col-md-2">
-        <button class="btn btn-primary" type="submit">@(_editingId is null ? "Adicionar" : "Salvar")</button>
-        @if (_editingId is not null)
-        {
-            <button class="btn btn-outline-secondary" type="button" @onclick="CancelEdit">Cancelar</button>
-        }
-    </div>
-</EditForm>
+<div class="form-panel mb-3">
+    <EditForm Model="_model" FormName="HolidayForm" OnValidSubmit="SaveAsync" class="row g-2 align-items-end">
+        <div class="col-md-2">
+            <label class="form-label">Slot (1-30)</label>
+            <InputNumber class="form-control" @bind-Value="_model.Index" />
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">Nome</label>
+            <InputText class="form-control" @bind-Value="_model.Name" />
+        </div>
+        <div class="col-md-2">
+            <label class="form-label">Data</label>
+            <InputDate class="form-control" @bind-Value="_model.Date" />
+        </div>
+        <div class="col-md-2 form-check">
+            <InputCheckbox class="form-check-input" id="repeat" @bind-Value="_model.RepeatsYearly" />
+            <label class="form-check-label" for="repeat">Repete todo ano</label>
+        </div>
+        <div class="col-md-1">
+            <label class="form-label">Tipo</label>
+            <InputNumber class="form-control" @bind-Value="_model.HolidayType" />
+        </div>
+        <div class="col-md-2">
+            <button class="btn btn-primary" type="submit">@(_editingId is null ? "Adicionar" : "Salvar")</button>
+            @if (_editingId is not null)
+            {
+                <button class="btn btn-outline-secondary" type="button" @onclick="CancelEdit">Cancelar</button>
+            }
+        </div>
+    </EditForm>
+</div>
 @if (_error is not null)
 {
     <div class="alert alert-danger">@_error</div>
@@ -52,10 +54,15 @@
     <p class="text-muted">@_syncMessage</p>
 }
 
+<div class="filter-bar mb-3">
+    <label class="form-label">Buscar</label>
+    <input type="text" class="form-control" placeholder="Nome do feriado..." @bind="_search" @bind:event="oninput" />
+</div>
+
 <table class="table table-hover align-middle">
     <thead><tr><th>Slot</th><th>Nome</th><th>Data</th><th>Repete</th><th>Tipo</th><th>Ações</th></tr></thead>
     <tbody>
-        @foreach (var h in _holidays)
+        @foreach (var h in FilteredHolidays)
         {
             <tr>
                 <td>@h.Index</td>
@@ -79,6 +86,10 @@
     private string? _error;
     private bool _syncing;
     private string? _syncMessage;
+    private string _search = string.Empty;
+
+    private IEnumerable<HolidayDto> FilteredHolidays => _holidays.Where(h =>
+        string.IsNullOrWhiteSpace(_search) || h.Name.Contains(_search, StringComparison.OrdinalIgnoreCase));
 
     protected override async Task OnInitializedAsync()
     {

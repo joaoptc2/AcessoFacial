@@ -283,6 +283,18 @@ dotnet test HospitalAccess.Tests/HospitalAccess.Tests.csproj
   há um na rede deste ambiente) — isso é o item mais importante a validar ao ligar o primeiro
   controlador real (ver caveat da seção 2 acima), especialmente a descoberta por broadcast
   UDP (item 10) que usa um padrão de comando diferente do resto do gateway.
+- Interface modernizada (paleta indigo/slate, tipografia system-ui, cards com sombra sutil,
+  tela de login em card centralizado, menu lateral escuro reorganizado em seções) e filtro de
+  busca adicionado em todas as listas (Controladores, Usuários, Grupos, Visitantes, Feriados,
+  Grade Horária) — client-side, já que essas listas são de porte modesto (dezenas de itens).
+  Log de Acessos e Log de Alarmes ganharam os filtros adicionais que a API já suportava
+  (usuário, controlador, método/tipo) mas a tela ainda não expunha.
+- Corrigido nessa rodada: enums (`AccessMethod`, `AlarmKind`, `SyncState`) serializavam como
+  número no JSON da API (padrão do `System.Text.Json`), mas os DTOs do front-end já assumiam
+  representação em texto (`string Method`, `string Kind`) — um `JsonStringEnumConverter`
+  global (`Program.cs`) resolve; validado inserindo linhas de teste direto no banco e
+  conferindo que `/api/accesslog` e `/api/alarmevents` devolvem `"method": "Face"` /
+  `"kind": "Fire"` (texto) e que as telas renderizam sem exceção.
 
 ## Limitações conhecidas / próximos passos
 - **Exportação em PDF** do log de acessos: não implementada (só CSV). Toda biblioteca PDF

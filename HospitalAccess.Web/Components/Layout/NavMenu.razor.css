@@ -17,11 +17,13 @@
 
 .top-row {
     height: 3.5rem;
-    background-color: rgba(0,0,0,0.4);
+    background-color: rgba(0,0,0,0.25);
 }
 
 .navbar-brand {
-    font-size: 1.1rem;
+    font-size: 1.05rem;
+    font-weight: 600;
+    letter-spacing: 0.01em;
 }
 
 .bi {
@@ -57,8 +59,8 @@
 }
 
 .nav-item {
-    font-size: 0.9rem;
-    padding-bottom: 0.5rem;
+    font-size: 0.88rem;
+    padding-bottom: 0.3rem;
 }
 
     .nav-item:first-of-type {
@@ -70,24 +72,25 @@
     }
 
     .nav-item ::deep .nav-link {
-        color: #d7d7d7;
+        color: rgba(255, 255, 255, 0.75);
         background: none;
         border: none;
-        border-radius: 4px;
-        height: 3rem;
+        border-radius: 6px;
+        height: 2.6rem;
         display: flex;
         align-items: center;
-        line-height: 3rem;
+        line-height: 2.6rem;
         width: 100%;
+        transition: background-color 0.12s ease-in-out, color 0.12s ease-in-out;
     }
 
 .nav-item ::deep a.active {
-    background-color: rgba(255,255,255,0.37);
+    background-color: #4f46e5;
     color: white;
 }
 
 .nav-item ::deep .nav-link:hover {
-    background-color: rgba(255,255,255,0.1);
+    background-color: rgba(255,255,255,0.08);
     color: white;
 }
 
