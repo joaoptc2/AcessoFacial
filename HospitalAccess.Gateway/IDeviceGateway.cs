@@ -21,8 +21,20 @@ public interface IDeviceGateway
     /// <summary>Remove um usuário de um controlador.</summary>
     Task DeletePersonAsync(Controller controller, uint userCode, CancellationToken ct = default);
 
-    /// <summary>Abre uma porta (relé) remotamente.</summary>
-    Task OpenDoorAsync(Controller controller, int relayIndex, CancellationToken ct = default);
+    /// <summary>Abre a porta remotamente (pulso — volta a fechar após o tempo de liberação configurado).</summary>
+    Task OpenDoorAsync(Controller controller, CancellationToken ct = default);
+
+    /// <summary>Fecha a porta remotamente (encerra o modo "sempre aberto", se ativo).</summary>
+    Task CloseDoorAsync(Controller controller, CancellationToken ct = default);
+
+    /// <summary>Mantém a porta aberta (modo "sempre aberto") até um comando de fechar ou trancar.</summary>
+    Task HoldDoorOpenAsync(Controller controller, CancellationToken ct = default);
+
+    /// <summary>Tranca a porta — bloqueia inclusive aberturas por credencial válida até destrancar.</summary>
+    Task LockDoorAsync(Controller controller, CancellationToken ct = default);
+
+    /// <summary>Destranca a porta (reverte LockDoorAsync), voltando à operação normal.</summary>
+    Task UnlockDoorAsync(Controller controller, CancellationToken ct = default);
 
     /// <summary>
     /// Evento de acesso em tempo real empurrado por um controlador.

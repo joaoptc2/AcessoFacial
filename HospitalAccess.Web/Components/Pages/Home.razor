@@ -13,12 +13,53 @@
 else
 {
     <h1>Controle de Acesso Hospitalar</h1>
-    <p>Bem-vindo(a), @AuthState.Username.</p>
-    <ul>
-        <li><a href="controllers">Controladores</a> — cadastro dos 30 controladores 8190H e status de sincronização.</li>
-        <li><a href="doors">Portas</a> — abertura remota e gestão de portas.</li>
-        <li><a href="users">Usuários</a> — cadastro de face (usuários permanentes).</li>
-        <li><a href="visitors">Visitantes / QR</a> — cadastro e geração de QR de acesso.</li>
-        <li><a href="accesslog">Log de Acessos</a> — auditoria, filtros e exportação CSV.</li>
-    </ul>
+    <p class="text-muted">Bem-vindo(a), @AuthState.Username (@AuthState.Role).</p>
+
+    <div class="row row-cols-1 row-cols-md-3 g-3 mt-2">
+        <div class="col">
+            <div class="card h-100">
+                <div class="card-body">
+                    <h5 class="card-title">Controladores / Portas</h5>
+                    <p class="card-text">Cadastro dos controladores 8190H, status de sincronização e comando remoto de porta (abrir, fechar, manter aberta, trancar, destrancar).</p>
+                    <a href="controllers" class="btn btn-primary btn-sm">Abrir</a>
+                </div>
+            </div>
+        </div>
+        <div class="col">
+            <div class="card h-100">
+                <div class="card-body">
+                    <h5 class="card-title">Usuários</h5>
+                    <p class="card-text">Lista, cadastro (foto de face), edição e exclusão de usuários permanentes, organizados por grupo.</p>
+                    <a href="users" class="btn btn-primary btn-sm">Abrir</a>
+                </div>
+            </div>
+        </div>
+        <div class="col">
+            <div class="card h-100">
+                <div class="card-body">
+                    <h5 class="card-title">Grupos de Usuários</h5>
+                    <p class="card-text">Organização de usuários em grupos (ex.: Enfermagem, Manutenção).</p>
+                    <a href="usergroups" class="btn btn-primary btn-sm">Abrir</a>
+                </div>
+            </div>
+        </div>
+        <div class="col">
+            <div class="card h-100">
+                <div class="card-body">
+                    <h5 class="card-title">Visitantes / Temporários</h5>
+                    <p class="card-text">Lista de visitantes, cadastro com validade embutida e geração/revogação de QR de acesso.</p>
+                    <a href="visitors" class="btn btn-primary btn-sm">Abrir</a>
+                </div>
+            </div>
+        </div>
+        <div class="col">
+            <div class="card h-100">
+                <div class="card-body">
+                    <h5 class="card-title">Log de Acessos</h5>
+                    <p class="card-text">Auditoria dos eventos de acesso em tempo real, com filtros e exportação CSV.</p>
+                    <a href="accesslog" class="btn btn-primary btn-sm">Abrir</a>
+                </div>
+            </div>
+        </div>
+    </div>
 }

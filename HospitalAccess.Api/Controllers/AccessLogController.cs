@@ -60,7 +60,7 @@ public class AccessLogController : ControllerBase
             .ToListAsync(ct);
 
         var csv = new StringBuilder();
-        csv.AppendLine("TimestampUtc,UserCode,UserName,ControllerName,DoorName,Method,RawEventCode,Direction,Granted");
+        csv.AppendLine("TimestampUtc,UserCode,UserName,ControllerName,Method,RawEventCode,Direction,Granted");
         foreach (var log in items)
         {
             csv.AppendLine(string.Join(',',
@@ -68,7 +68,6 @@ public class AccessLogController : ControllerBase
                 log.UserCode?.ToString(CultureInfo.InvariantCulture) ?? "",
                 CsvEscape(log.UserName),
                 CsvEscape(log.ControllerName),
-                CsvEscape(log.DoorName),
                 log.Method.ToString(),
                 log.RawEventCode.ToString(CultureInfo.InvariantCulture),
                 log.Direction?.ToString(CultureInfo.InvariantCulture) ?? "",

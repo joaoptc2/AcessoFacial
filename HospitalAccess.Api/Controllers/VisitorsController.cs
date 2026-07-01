@@ -1,10 +1,12 @@
 using HospitalAccess.Application.Qr;
+using HospitalAccess.Application.Sync;
 using HospitalAccess.Domain.Entities;
 using HospitalAccess.Domain.Enums;
 using HospitalAccess.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace HospitalAccess.Api.Controllers;
 
@@ -19,12 +21,79 @@ public class VisitorsController : ControllerBase
     private readonly AccessDbContext _db;
     private readonly QrAccessTokenService _qr;
     private readonly IQrImageEncoder _encoder;
+    private readonly IServiceScopeFactory _scopeFactory;
+    private readonly ILogger<VisitorsController> _logger;
 
-    public VisitorsController(AccessDbContext db, QrAccessTokenService qr, IQrImageEncoder encoder)
+    public VisitorsController(
+        AccessDbContext db, QrAccessTokenService qr, IQrImageEncoder encoder,
+        IServiceScopeFactory scopeFactory, ILogger<VisitorsController> logger)
     {
         _db = db;
         _qr = qr;
         _encoder = encoder;
+        _scopeFactory = scopeFactory;
+        _logger = logger;
+    }
+
+    /// <summary>Lista os visitantes/temporários (usuários permanentes ficam em /api/users).</summary>
+    [HttpGet]
+    public async Task<IActionResult> List(CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        var visitors = await _db.Users
+            .Where(u => u.Type == UserType.Visitor)
+            .OrderByDescending(u => u.CreatedAtUtc)
+            .Select(u => new
+            {
+                u.Id,
+                u.UserCode,
+                u.Name,
+                u.ValidFrom,
+                u.ValidUntil,
+                u.TimeGroup,
+                u.CreatedByUsername,
+                u.CreatedAtUtc,
+                u.RevokedAtUtc,
+                IsExpired = u.RevokedAtUtc == null && u.ValidUntil != null && u.ValidUntil < now,
+                IsRevoked = u.RevokedAtUtc != null,
+            })
+            .ToListAsync(ct);
+
+        return Ok(visitors);
+    }
+
+    /// <summary>Revoga um visitante antes do vencimento natural do QR.</summary>
+    [HttpDelete("{id:guid}")]
+    public async Task<IActionResult> Revoke(Guid id, CancellationToken ct)
+    {
+        var visitor = await _db.Users.FirstOrDefaultAsync(u => u.Id == id && u.Type == UserType.Visitor, ct);
+        if (visitor is null) return NotFound();
+
+        RevokeInBackground(id);
+
+        visitor.RevokedByUsername = User.Identity?.Name;
+        visitor.RevokedAtUtc = DateTime.UtcNow;
+        await _db.SaveChangesAsync(ct);
+
+        return NoContent();
+    }
+
+    /// <summary>Roda a revogação fora do ciclo de requisição (mesmo motivo do UsersController: não bloquear a resposta HTTP em hardware inacessível).</summary>
+    private void RevokeInBackground(Guid userId)
+    {
+        _ = Task.Run(async () =>
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var sync = scope.ServiceProvider.GetRequiredService<IUserSyncService>();
+            try
+            {
+                await sync.RevokeUserAsync(userId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Falha ao revogar visitante {UserId} em segundo plano.", userId);
+            }
+        });
     }
 
     /// <summary>

@@ -16,6 +16,10 @@ public class User
     public string Name { get; set; } = string.Empty;
     public UserType Type { get; set; } = UserType.Permanent;
 
+    /// <summary>Grupo organizacional (ex.: "Enfermagem"), só para organização — não é o TimeGroup do dispositivo.</summary>
+    public Guid? GroupId { get; set; }
+    public UserGroup? Group { get; set; }
+
     /// <summary>Validade do acesso. Para visitante, é a base da validade do QR.</summary>
     public DateTime? ValidFrom { get; set; }
     public DateTime? ValidUntil { get; set; }

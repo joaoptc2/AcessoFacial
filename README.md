@@ -68,7 +68,29 @@ para que o evento de acesso reportado em tempo real correlacione direto com `Use
 no nosso banco. Visitantes **não são cadastrados como `Person`** em nenhum controlador — o
 QR é validado inteiramente offline pelo firmware (RC4 + CRC8 + expiração embutida).
 
-### 7. Segurança física (fora do software)
+### 7. Controlador = porta (não existe entidade `Door` separada)
+O hardware 8190H tem **um único relé/porta por controlador** — não há como um controlador
+comandar mais de uma porta. Por isso não existe uma entidade `Door`: `Controller` já
+representa fisicamente a porta (campo `RelayIndex`, sempre `0`, mantido só por
+compatibilidade futura caso surja um modelo multi-relé). `AccessPermission` liga
+`User`→`Controller` diretamente. Os comandos de porta expostos pelo SDK — `OpenDoor`,
+`CloseDoor`, `HoldDoor` (manter aberta), `LockDoor` (trancar mesmo para credencial válida)
+e `UnlockDoor` (reverter o trancamento) — ficam em `IDeviceGateway` e são expostos por
+controlador em `POST /api/controllers/{id}/{open|close|hold-open|lock|unlock}`.
+
+### 8. Sincronização de usuário roda em segundo plano (fire-and-forget)
+Criar/editar/excluir um usuário grava no banco e dispara a sincronização com os
+controladores (`IUserSyncService`) **sem aguardar o resultado na requisição HTTP**: o
+comando ao hardware é TCP com retries e pode levar minutos se um controlador estiver
+inacessível, o que travaria a tela por tempo indefinido se fosse síncrono (bug encontrado
+via teste end-to-end contra um IP inexistente). O progresso fica em `DeviceSyncStatus`
+(Pending/Synced/Failed) e é reprocessado por `IUserSyncService.RetryPendingAsync` (job
+periódico). Exclusão de usuário: como a linha do `User` (e o `DeviceSyncStatus` em
+cascata) é apagada na hora, o `UserCode` e a lista de controladores são capturados
+*antes* do delete, e a revogação no hardware roda depois, direto pelo `IDeviceGateway`
+(ver `UsersController.RevokeDeletedUserInBackground`).
+
+### 9. Segurança física (fora do software)
 A política **fail-safe vs fail-secure** das portas em queda de energia/rede (isto é: se a
 fechadura trava ou libera quando falta energia ou a rede cai) é decisão de projeto físico
 predial e **deve ser definida com a equipe de segurança/manutenção do hospital**, em
@@ -94,7 +116,8 @@ repositório (ex.: planilha de portas do projeto elétrico/predial).
 └────────────────────────┘
 ```
 
-- **HospitalAccess.Domain** — entidades e enums, sem dependência de framework.
+- **HospitalAccess.Domain** — entidades e enums, sem dependência de framework
+  (`Controller` = porta física, `UserGroup` para organização de usuários).
 - **HospitalAccess.Application** — QR (protocolo puro), contratos de sincronização.
 - **HospitalAccess.Infrastructure** — EF Core/PostgreSQL, encoder de QR (QRCoder).
 - **HospitalAccess.Gateway** — único componente que fala com o hardware (SDK `DoNetDrive.*`).
@@ -165,11 +188,17 @@ dotnet test HospitalAccess.Tests/HospitalAccess.Tests.csproj
 ## O que foi verificado de ponta a ponta neste ambiente de desenvolvimento
 - Build completo da solução (0 erros/warnings) e suíte de testes (10 passando, 1 golden
   vector `Skip` intencional).
-- API rodando contra PostgreSQL real: login JWT, CRUD de controladores/portas/usuários/
-  visitantes, geração de QR (PNG real, byte-mode), exportação CSV do log de acessos.
+- API rodando contra PostgreSQL real: login JWT, CRUD de controladores (com comandos de
+  porta), usuários (com grupo organizacional e foto), grupos de usuários e visitantes,
+  geração de QR (PNG real, byte-mode), exportação CSV do log de acessos.
 - Front-end Blazor Server testado num Chromium real (Playwright): login → cadastro de
-  controlador/porta/usuário com foto/visitante → QR exibido na tela → log de acessos →
-  refresh de página degrada graciosamente para o login (não há crash).
+  controlador → comandos de porta (abrir/fechar/manter aberta/trancar/destrancar) → editar
+  controlador → cadastro de grupo de usuários → cadastro de usuário com foto/grupo/porta →
+  editar/excluir usuário → visitante com QR exibido na tela → revogar visitante → log de
+  acessos → refresh de página degrada graciosamente para o login (não há crash).
+- Corrigido durante o teste end-to-end: `POST/PUT/DELETE /api/users` travava a requisição
+  por tempo indefinido quando um controlador associado estava inacessível (a sincronização
+  era síncrona). Agora roda em segundo plano — ver item 8 acima.
 - Gateway: `dotnet build` compila contra as DLLs reais do SDK (todas as assinaturas
   usadas existem e batem com a engenharia reversa do IL); uma chamada de teste de conexão
   contra um IP inexistente confirmou que o timeout/retry funciona e a API não derruba —

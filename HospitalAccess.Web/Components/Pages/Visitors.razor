@@ -7,9 +7,9 @@
 
 <PageTitle>Visitantes</PageTitle>
 
-<h3>Visitantes (acesso por QR)</h3>
+<h3>Visitantes / temporários (acesso por QR)</h3>
 
-<EditForm Model="_model" FormName="VisitorForm" OnValidSubmit="CreateAsync" class="col-md-6">
+<EditForm Model="_model" FormName="VisitorForm" OnValidSubmit="CreateAsync" class="col-md-6 border rounded p-3 mb-4 bg-light">
     <div class="mb-3">
         <label class="form-label">Nome</label>
         <InputText class="form-control" @bind-Value="_model.Name" />
@@ -24,28 +24,59 @@
     </div>
     @if (_error is not null)
     {
-        <p class="text-danger">@_error</p>
+        <div class="alert alert-danger">@_error</div>
     }
     <button type="submit" class="btn btn-primary" disabled="@_busy">Cadastrar e gerar QR</button>
 </EditForm>
 
 @if (_qrImageBase64 is not null)
 {
-    <h4 class="mt-4">QR de acesso — @_model.Name</h4>
-    <img src="data:image/png;base64,@_qrImageBase64" alt="QR de acesso" style="max-width: 300px;" />
-    <p class="text-muted">Válido até @_model.ValidUntil.ToString("g")</p>
+    <div class="mb-4">
+        <h4>QR de acesso — @_qrVisitorName</h4>
+        <img src="data:image/png;base64,@_qrImageBase64" alt="QR de acesso" style="max-width: 300px;" />
+    </div>
 }
+
+<table class="table table-hover align-middle">
+    <thead>
+        <tr><th>Nome</th><th>Código</th><th>Válido de</th><th>Válido até</th><th>Status</th><th>Ações</th></tr>
+    </thead>
+    <tbody>
+        @foreach (var v in _visitors)
+        {
+            <tr>
+                <td>@v.Name</td>
+                <td>@v.UserCode</td>
+                <td>@v.ValidFrom?.ToLocalTime().ToString("g")</td>
+                <td>@v.ValidUntil?.ToLocalTime().ToString("g")</td>
+                <td><span class="badge @StatusBadgeClass(v)">@StatusLabel(v)</span></td>
+                <td>
+                    @if (!v.IsRevoked)
+                    {
+                        <button class="btn btn-sm btn-outline-secondary" @onclick="() => ShowQrAsync(v.Id, v.Name)">Ver QR</button>
+                        <button class="btn btn-sm btn-outline-danger" @onclick="() => RevokeAsync(v.Id)">Revogar</button>
+                    }
+                </td>
+            </tr>
+        }
+    </tbody>
+</table>
 
 @code {
     private readonly CreateModel _model = new() { ValidUntil = DateTime.Now.AddDays(1) };
     private string? _error;
     private string? _qrImageBase64;
+    private string _qrVisitorName = string.Empty;
     private bool _busy;
+    private List<VisitorListItemDto> _visitors = [];
 
-    protected override void OnInitialized()
+    protected override async Task OnInitializedAsync()
     {
-        if (!AuthState.IsAuthenticated) Nav.NavigateTo("/login");
+        if (!AuthState.IsAuthenticated) { Nav.NavigateTo("/login"); return; }
+        await LoadAsync();
     }
+
+    private async Task LoadAsync() => _visitors = await Api.GetVisitorsAsync();
 
     private async Task CreateAsync()
     {
@@ -65,17 +96,44 @@
         }
 
         var created = await createResponse.Content.ReadFromJsonAsync<CreateUserResponse>();
-        var png = created is null ? null : await Api.GenerateVisitorQrAsync(created.Id);
         _busy = false;
 
+        if (created is not null)
+            await ShowQrAsync(created.Id, _model.Name);
+
+        _model.Name = string.Empty;
+        await LoadAsync();
+    }
+
+    private async Task ShowQrAsync(Guid visitorId, string name)
+    {
+        var png = await Api.GenerateVisitorQrAsync(visitorId);
         if (png is null)
         {
-            _error = "Visitante criado, mas falha ao gerar o QR.";
+            _error = "Falha ao gerar o QR.";
             return;
         }
-
+        _qrVisitorName = name;
         _qrImageBase64 = Convert.ToBase64String(png);
     }
+
+    private async Task RevokeAsync(Guid id)
+    {
+        _error = null;
+        var response = await Api.RevokeVisitorAsync(id);
+        if (!response.IsSuccessStatusCode)
+        {
+            _error = await response.Content.ReadAsStringAsync();
+            return;
+        }
+        await LoadAsync();
+    }
+
+    private static string StatusLabel(VisitorListItemDto v) =>
+        v.IsRevoked ? "Revogado" : v.IsExpired ? "Expirado" : "Ativo";
+
+    private static string StatusBadgeClass(VisitorListItemDto v) =>
+        v.IsRevoked ? "bg-secondary" : v.IsExpired ? "bg-danger" : "bg-success";
 
     private sealed class CreateModel
     {

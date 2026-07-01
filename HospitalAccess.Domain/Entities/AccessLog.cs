@@ -17,7 +17,6 @@ public class AccessLog
 
     public Guid ControllerId { get; set; }
     public string ControllerName { get; set; } = string.Empty;
-    public string? DoorName { get; set; }
 
     public AccessMethod Method { get; set; }
 

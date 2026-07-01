@@ -120,16 +120,42 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
         await _allocator.AddCommandAsync(cmd);
     }
 
-    public async Task OpenDoorAsync(Controller controller, int relayIndex, CancellationToken ct = default)
+    public async Task OpenDoorAsync(Controller controller, CancellationToken ct = default)
     {
         // O 8190H (A33_Face) tem um único relé de porta por controlador; o comando de
         // desbloqueio remoto (Classe 3 / Remote Unlock) não recebe índice de relé —
         // confirmado tanto no .doc (0x03/0x03/0x00, sem parâmetro) quanto no SDK
-        // (OpenDoor(cmdDtl), sem argumento). relayIndex é mantido na assinatura da
-        // interface para não acoplar a Application a essa limitação do hardware atual,
-        // mas é ignorado nesta implementação.
+        // (OpenDoor(cmdDtl), sem argumento).
         var cmdDtl = _connections.CreateCommandDetail(controller);
         var cmd = new OpenDoor(cmdDtl);
+        await _allocator.AddCommandAsync(cmd);
+    }
+
+    public async Task CloseDoorAsync(Controller controller, CancellationToken ct = default)
+    {
+        var cmdDtl = _connections.CreateCommandDetail(controller);
+        var cmd = new CloseDoor(cmdDtl);
+        await _allocator.AddCommandAsync(cmd);
+    }
+
+    public async Task HoldDoorOpenAsync(Controller controller, CancellationToken ct = default)
+    {
+        var cmdDtl = _connections.CreateCommandDetail(controller);
+        var cmd = new HoldDoor(cmdDtl);
+        await _allocator.AddCommandAsync(cmd);
+    }
+
+    public async Task LockDoorAsync(Controller controller, CancellationToken ct = default)
+    {
+        var cmdDtl = _connections.CreateCommandDetail(controller);
+        var cmd = new LockDoor(cmdDtl);
+        await _allocator.AddCommandAsync(cmd);
+    }
+
+    public async Task UnlockDoorAsync(Controller controller, CancellationToken ct = default)
+    {
+        var cmdDtl = _connections.CreateCommandDetail(controller);
+        var cmd = new UnlockDoor(cmdDtl);
         await _allocator.AddCommandAsync(cmd);
     }
 

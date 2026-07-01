@@ -1,0 +1,119 @@
+@page "/usergroups"
+@rendermode InteractiveServer
+@using HospitalAccess.Web.Services
+@inject ApiClient Api
+@inject AuthState AuthState
+@inject NavigationManager Nav
+
+<PageTitle>Grupos de Usuários</PageTitle>
+
+<h3>Grupos de usuários</h3>
+<p class="text-muted">Organização de usuários permanentes (ex.: "Enfermagem", "Manutenção"). Não afeta o dispositivo.</p>
+
+<EditForm Model="_model" FormName="GroupForm" OnValidSubmit="SaveAsync" class="row g-2 mb-4 align-items-end">
+    <div class="col-md-3">
+        <label class="form-label">Nome</label>
+        <InputText class="form-control" @bind-Value="_model.Name" />
+    </div>
+    <div class="col-md-5">
+        <label class="form-label">Descrição</label>
+        <InputText class="form-control" @bind-Value="_model.Description" />
+    </div>
+    <div class="col-md-2">
+        <button class="btn btn-primary" type="submit">@(_editingId is null ? "Adicionar" : "Salvar")</button>
+        @if (_editingId is not null)
+        {
+            <button class="btn btn-outline-secondary" type="button" @onclick="CancelEdit">Cancelar</button>
+        }
+    </div>
+</EditForm>
+@if (_error is not null)
+{
+    <div class="alert alert-danger">@_error</div>
+}
+
+<table class="table table-hover align-middle">
+    <thead>
+        <tr><th>Nome</th><th>Descrição</th><th>Usuários</th><th>Ações</th></tr>
+    </thead>
+    <tbody>
+        @foreach (var g in _groups)
+        {
+            <tr>
+                <td>@g.Name</td>
+                <td>@g.Description</td>
+                <td><span class="badge bg-secondary">@g.UserCount</span></td>
+                <td>
+                    <button class="btn btn-sm btn-outline-secondary" @onclick="() => Edit(g)">Editar</button>
+                    <button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteAsync(g.Id)">Excluir</button>
+                </td>
+            </tr>
+        }
+    </tbody>
+</table>
+
+@code {
+    private List<UserGroupDto> _groups = [];
+    private readonly FormModel _model = new();
+    private Guid? _editingId;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!AuthState.IsAuthenticated) { Nav.NavigateTo("/login"); return; }
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync() => _groups = await Api.GetUserGroupsAsync();
+
+    private void Edit(UserGroupDto g)
+    {
+        _editingId = g.Id;
+        _model.Name = g.Name;
+        _model.Description = g.Description ?? string.Empty;
+    }
+
+    private void CancelEdit()
+    {
+        _editingId = null;
+        _model.Name = string.Empty;
+        _model.Description = string.Empty;
+    }
+
+    private async Task SaveAsync()
+    {
+        _error = null;
+        var request = new UserGroupRequest(_model.Name, string.IsNullOrWhiteSpace(_model.Description) ? null : _model.Description);
+
+        var response = _editingId is null
+            ? await Api.CreateUserGroupAsync(request)
+            : await Api.UpdateUserGroupAsync(_editingId.Value, request);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            _error = await response.Content.ReadAsStringAsync();
+            return;
+        }
+
+        CancelEdit();
+        await LoadAsync();
+    }
+
+    private async Task DeleteAsync(Guid id)
+    {
+        _error = null;
+        var response = await Api.DeleteUserGroupAsync(id);
+        if (!response.IsSuccessStatusCode)
+        {
+            _error = await response.Content.ReadAsStringAsync();
+            return;
+        }
+        await LoadAsync();
+    }
+
+    private sealed class FormModel
+    {
+        public string Name { get; set; } = string.Empty;
+        public string Description { get; set; } = string.Empty;
+    }
+}

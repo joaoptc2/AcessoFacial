@@ -12,8 +12,8 @@ public class AccessDbContext : DbContext
     public AccessDbContext(DbContextOptions<AccessDbContext> options) : base(options) { }
 
     public DbSet<User> Users => Set<User>();
+    public DbSet<UserGroup> UserGroups => Set<UserGroup>();
     public DbSet<Controller> Controllers => Set<Controller>();
-    public DbSet<Door> Doors => Set<Door>();
     public DbSet<AccessPermission> Permissions => Set<AccessPermission>();
     public DbSet<DeviceSyncStatus> SyncStatuses => Set<DeviceSyncStatus>();
     public DbSet<AccessLog> AccessLogs => Set<AccessLog>();
@@ -22,6 +22,12 @@ public class AccessDbContext : DbContext
     protected override void OnModelCreating(ModelBuilder b)
     {
         b.Entity<User>().HasIndex(u => u.UserCode).IsUnique();
+        b.Entity<User>()
+            .HasOne(u => u.Group)
+            .WithMany(g => g.Users)
+            .HasForeignKey(u => u.GroupId)
+            .OnDelete(DeleteBehavior.SetNull);
+
         b.Entity<Controller>().HasIndex(c => c.SerialNumber).IsUnique();
 
         b.Entity<DeviceSyncStatus>()

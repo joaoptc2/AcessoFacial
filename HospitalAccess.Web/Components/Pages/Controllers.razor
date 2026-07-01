@@ -5,30 +5,52 @@
 @inject AuthState AuthState
 @inject NavigationManager Nav
 
-<PageTitle>Controladores</PageTitle>
+<PageTitle>Controladores / Portas</PageTitle>
 
 <h3>Controladores (8190H / A33_Face)</h3>
+<p class="text-muted">Cada controlador representa fisicamente uma única porta — não há cadastro de porta separado.</p>
 
-<EditForm Model="_model" FormName="ControllerForm" OnValidSubmit="CreateAsync" class="row g-2 mb-4">
-    <div class="col-md-2"><InputText class="form-control" @bind-Value="_model.Name" placeholder="Nome" /></div>
-    <div class="col-md-2"><InputText class="form-control" @bind-Value="_model.IpAddress" placeholder="IP" /></div>
-    <div class="col-md-1"><InputNumber class="form-control" @bind-Value="_model.Port" placeholder="Porta" /></div>
-    <div class="col-md-2"><InputText class="form-control" @bind-Value="_model.SerialNumber" placeholder="SN (16 dígitos)" /></div>
-    <div class="col-md-2"><InputText class="form-control" @bind-Value="_model.CommunicationPassword" placeholder="Senha (8 hex)" /></div>
-    <div class="col-md-2 form-check">
+<EditForm Model="_model" FormName="ControllerForm" OnValidSubmit="SaveAsync" class="row g-2 mb-4 align-items-end">
+    <div class="col-md-2">
+        <label class="form-label">Nome</label>
+        <InputText class="form-control" @bind-Value="_model.Name" placeholder="Ex.: Portaria Principal" />
+    </div>
+    <div class="col-md-2">
+        <label class="form-label">IP</label>
+        <InputText class="form-control" @bind-Value="_model.IpAddress" />
+    </div>
+    <div class="col-md-1">
+        <label class="form-label">Porta</label>
+        <InputNumber class="form-control" @bind-Value="_model.Port" />
+    </div>
+    <div class="col-md-2">
+        <label class="form-label">SN (16 dígitos)</label>
+        <InputText class="form-control" @bind-Value="_model.SerialNumber" />
+    </div>
+    <div class="col-md-2">
+        <label class="form-label">Senha (8 hex)</label>
+        <InputText class="form-control" @bind-Value="_model.CommunicationPassword" />
+    </div>
+    <div class="col-md-1 form-check">
         <InputCheckbox class="form-check-input" @bind-Value="_model.SupportsWaitRepeatMessage" id="waitRepeat" />
         <label class="form-check-label" for="waitRepeat">Firmware &gt;= v4.28</label>
     </div>
-    <div class="col-md-1"><button class="btn btn-primary" type="submit">Adicionar</button></div>
+    <div class="col-md-2">
+        <button class="btn btn-primary" type="submit">@(_editingId is null ? "Adicionar" : "Salvar")</button>
+        @if (_editingId is not null)
+        {
+            <button class="btn btn-outline-secondary" type="button" @onclick="CancelEdit">Cancelar</button>
+        }
+    </div>
 </EditForm>
-@if (_createError is not null)
+@if (_formError is not null)
 {
-    <p class="text-danger">@_createError</p>
+    <div class="alert alert-danger">@_formError</div>
 }
 
-<table class="table">
+<table class="table table-hover align-middle">
     <thead>
-        <tr><th>Nome</th><th>IP:Porta</th><th>SN</th><th>Portas</th><th></th></tr>
+        <tr><th>Nome</th><th>IP:Porta</th><th>SN</th><th>Usuários</th><th>Ações</th></tr>
     </thead>
     <tbody>
         @foreach (var c in _controllers)
@@ -36,31 +58,48 @@
             <tr>
                 <td>@c.Name</td>
                 <td>@c.IpAddress:@c.Port</td>
-                <td>@c.SerialNumber</td>
-                <td>@string.Join(", ", c.Doors.Select(d => d.Name))</td>
+                <td><code>@c.SerialNumber</code></td>
+                <td><span class="badge bg-secondary">@c.UserCount</span></td>
                 <td>
-                    <button class="btn btn-sm btn-outline-secondary" @onclick="() => TestConnectionAsync(c.Id)">Testar conexão</button>
-                    <button class="btn btn-sm btn-outline-info" @onclick="() => ToggleSyncStatusAsync(c.Id)">Status de sincronização</button>
+                    <div class="btn-group btn-group-sm mb-1" role="group">
+                        <button class="btn btn-success" title="Abrir" @onclick="() => DoorCommandAsync(c.Id, Api.OpenDoorAsync)">Abrir</button>
+                        <button class="btn btn-outline-secondary" title="Fechar" @onclick="() => DoorCommandAsync(c.Id, Api.CloseDoorAsync)">Fechar</button>
+                        @if (IsAdminOrOperator)
+                        {
+                            <button class="btn btn-outline-warning" title="Manter aberta" @onclick="() => DoorCommandAsync(c.Id, Api.HoldDoorOpenAsync)">Manter aberta</button>
+                            <button class="btn btn-outline-danger" title="Trancar" @onclick="() => DoorCommandAsync(c.Id, Api.LockDoorAsync)">Trancar</button>
+                            <button class="btn btn-outline-dark" title="Destrancar" @onclick="() => DoorCommandAsync(c.Id, Api.UnlockDoorAsync)">Destrancar</button>
+                        }
+                    </div>
+                    <div class="btn-group btn-group-sm mb-1" role="group">
+                        <button class="btn btn-outline-info" @onclick="() => TestConnectionAsync(c.Id)">Testar conexão</button>
+                        <button class="btn btn-outline-info" @onclick="() => ToggleSyncStatusAsync(c.Id)">Status</button>
+                        @if (IsAdminOrOperator)
+                        {
+                            <button class="btn btn-outline-secondary" @onclick="() => EditAsync(c.Id)">Editar</button>
+                            <button class="btn btn-outline-danger" @onclick="() => DeleteAsync(c.Id)">Excluir</button>
+                        }
+                    </div>
                 </td>
             </tr>
             @if (_selectedController == c.Id)
             {
                 <tr>
-                    <td colspan="5">
+                    <td colspan="5" class="bg-light">
+                        @if (_doorCommandResult is not null)
+                        {
+                            <p class="mb-1">@_doorCommandResult</p>
+                        }
                         @if (_testResult is not null)
                         {
-                            <p>@_testResult</p>
+                            <p class="mb-1">@_testResult</p>
                         }
-                        @if (_syncStatuses.Count == 0)
+                        @if (_syncStatuses.Count > 0)
                         {
-                            <em>Nenhum usuário sincronizado neste controlador ainda.</em>
-                        }
-                        else
-                        {
-                            <ul>
+                            <ul class="mb-0">
                                 @foreach (var s in _syncStatuses)
                                 {
-                                    <li>@s.UserName — @s.State (retries: @s.RetryCount) @(s.LastError is null ? "" : $"— {s.LastError}")</li>
+                                    <li>@s.UserName — <span class="badge @SyncBadgeClass(s.State)">@s.State</span> (retries: @s.RetryCount) @(s.LastError is null ? "" : $"— {s.LastError}")</li>
                                 }
                             </ul>
                         }
@@ -73,11 +112,15 @@
 
 @code {
     private List<ControllerDto> _controllers = [];
-    private readonly CreateModel _model = new();
-    private string? _createError;
+    private readonly FormModel _model = new();
+    private Guid? _editingId;
+    private string? _formError;
     private Guid? _selectedController;
     private string? _testResult;
+    private string? _doorCommandResult;
     private List<SyncStatusDto> _syncStatuses = [];
+
+    private bool IsAdminOrOperator => AuthState.Role is "Admin" or "Operator";
 
     protected override async Task OnInitializedAsync()
     {
@@ -87,19 +130,71 @@
 
     private async Task LoadAsync() => _controllers = await Api.GetControllersAsync();
 
-    private async Task CreateAsync()
+    private async Task SaveAsync()
     {
-        _createError = null;
-        var response = await Api.CreateControllerAsync(new CreateControllerRequest(
-            _model.Name, _model.IpAddress, _model.Port, _model.SerialNumber,
-            _model.CommunicationPassword, _model.SupportsWaitRepeatMessage));
+        _formError = null;
 
-        if (!response.IsSuccessStatusCode)
+        if (_editingId is null)
         {
-            _createError = await response.Content.ReadAsStringAsync();
-            return;
+            var response = await Api.CreateControllerAsync(new CreateControllerRequest(
+                _model.Name, _model.IpAddress, _model.Port, _model.SerialNumber,
+                _model.CommunicationPassword, _model.SupportsWaitRepeatMessage));
+            if (!response.IsSuccessStatusCode)
+            {
+                _formError = await response.Content.ReadAsStringAsync();
+                return;
+            }
+        }
+        else
+        {
+            var response = await Api.UpdateControllerAsync(_editingId.Value, new UpdateControllerRequest(
+                _model.Name, _model.IpAddress, _model.Port, _model.SerialNumber,
+                _model.CommunicationPassword, _model.SupportsWaitRepeatMessage, 0, 3000, 3));
+            if (!response.IsSuccessStatusCode)
+            {
+                _formError = await response.Content.ReadAsStringAsync();
+                return;
+            }
         }
 
+        CancelEdit();
+        await LoadAsync();
+    }
+
+    private async Task EditAsync(Guid id)
+    {
+        var detail = await Api.GetControllerAsync(id);
+        if (detail is null) return;
+
+        _editingId = id;
+        _model.Name = detail.Name;
+        _model.IpAddress = detail.IpAddress;
+        _model.Port = detail.Port;
+        _model.SerialNumber = detail.SerialNumber;
+        _model.CommunicationPassword = detail.CommunicationPassword;
+        _model.SupportsWaitRepeatMessage = detail.SupportsWaitRepeatMessage;
+    }
+
+    private void CancelEdit()
+    {
+        _editingId = null;
+        _model.Name = string.Empty;
+        _model.IpAddress = string.Empty;
+        _model.Port = 8101;
+        _model.SerialNumber = string.Empty;
+        _model.CommunicationPassword = "FFFFFFFF";
+        _model.SupportsWaitRepeatMessage = false;
+    }
+
+    private async Task DeleteAsync(Guid id)
+    {
+        _formError = null;
+        var response = await Api.DeleteControllerAsync(id);
+        if (!response.IsSuccessStatusCode)
+        {
+            _formError = await response.Content.ReadAsStringAsync();
+            return;
+        }
         await LoadAsync();
     }
 
@@ -107,6 +202,7 @@
     {
         _selectedController = id;
         _syncStatuses = [];
+        _doorCommandResult = null;
         var (ok, message) = await Api.TestConnectionAsync(id);
         _testResult = ok ? $"OK: {message}" : $"Falha: {message}";
     }
@@ -115,10 +211,28 @@
     {
         _selectedController = id;
         _testResult = null;
+        _doorCommandResult = null;
         _syncStatuses = await Api.GetSyncStatusAsync(id);
     }
 
-    private sealed class CreateModel
+    private async Task DoorCommandAsync(Guid id, Func<Guid, Task<(bool ok, string message)>> command)
+    {
+        _selectedController = id;
+        _testResult = null;
+        _syncStatuses = [];
+        var (ok, message) = await command(id);
+        _doorCommandResult = ok ? "Comando enviado com sucesso." : $"Falha: {message}";
+    }
+
+    private static string SyncBadgeClass(string state) => state switch
+    {
+        "Synced" => "bg-success",
+        "Failed" => "bg-danger",
+        "Revoked" => "bg-secondary",
+        _ => "bg-warning text-dark",
+    };
+
+    private sealed class FormModel
     {
         public string Name { get; set; } = string.Empty;
         public string IpAddress { get; set; } = string.Empty;

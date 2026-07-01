@@ -31,7 +31,7 @@ public sealed class UserSyncService : IUserSyncService
     public async Task SyncUserAsync(Guid userId, CancellationToken ct = default)
     {
         var user = await _db.Users
-            .Include(u => u.Permissions).ThenInclude(p => p.Door)
+            .Include(u => u.Permissions)
             .FirstOrDefaultAsync(u => u.Id == userId, ct);
         if (user is null) return;
 
@@ -49,7 +49,7 @@ public sealed class UserSyncService : IUserSyncService
         }
 
         var desiredControllerIds = user.Permissions
-            .Select(p => p.Door!.ControllerId)
+            .Select(p => p.ControllerId)
             .Distinct()
             .ToHashSet();
 

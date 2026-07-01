@@ -9,46 +9,89 @@
 
 <h3>Usuários permanentes (acesso por face)</h3>
 
-<EditForm Model="_model" FormName="UserForm" OnValidSubmit="CreateAsync" class="col-md-6">
+<EditForm Model="_model" FormName="UserForm" OnValidSubmit="SaveAsync" class="col-md-7 border rounded p-3 mb-4 bg-light">
+    <h5>@(_editingId is null ? "Novo usuário" : $"Editando: {_originalName}")</h5>
     <div class="mb-3">
         <label class="form-label">Nome</label>
         <InputText class="form-control" @bind-Value="_model.Name" />
     </div>
-    <div class="mb-3">
-        <label class="form-label">Grupo de horário (1-64)</label>
-        <InputNumber class="form-control" @bind-Value="_model.TimeGroup" />
+    <div class="row">
+        <div class="col-md-6 mb-3">
+            <label class="form-label">Grupo de horário do dispositivo (1-64)</label>
+            <InputNumber class="form-control" @bind-Value="_model.TimeGroup" />
+        </div>
+        <div class="col-md-6 mb-3">
+            <label class="form-label">Grupo organizacional</label>
+            <select class="form-select" @bind="_model.GroupIdText">
+                <option value="">(sem grupo)</option>
+                @foreach (var g in _groups)
+                {
+                    <option value="@g.Id">@g.Name</option>
+                }
+            </select>
+        </div>
     </div>
     <div class="mb-3">
-        <label class="form-label">Portas permitidas</label>
-        @foreach (var d in _doors)
+        <label class="form-label">Portas com acesso permitido</label>
+        @foreach (var c in _controllers)
         {
             <div class="form-check">
-                <input class="form-check-input" type="checkbox" id="@d.Id"
-                       checked="@_selectedDoors.Contains(d.Id)"
-                       @onchange="e => ToggleDoor(d.Id, (bool)e.Value!)" />
-                <label class="form-check-label" for="@d.Id">@d.Name (@d.ControllerName)</label>
+                <input class="form-check-input" type="checkbox" id="ctrl-@c.Id"
+                       checked="@_selectedControllers.Contains(c.Id)"
+                       @onchange="e => ToggleController(c.Id, (bool)e.Value!)" />
+                <label class="form-check-label" for="ctrl-@c.Id">@c.Name (@c.IpAddress)</label>
             </div>
         }
     </div>
     <div class="mb-3">
-        <label class="form-label">Foto de face (JPG)</label>
+        <label class="form-label">Foto de face (JPG)@(_editingId is not null ? " — deixe em branco para manter a atual" : "")</label>
         <InputFile OnChange="OnFileSelected" accept="image/jpeg" />
     </div>
     @if (_error is not null)
     {
-        <p class="text-danger">@_error</p>
+        <div class="alert alert-danger">@_error</div>
     }
     @if (_success is not null)
     {
-        <p class="text-success">@_success</p>
+        <div class="alert alert-success">@_success</div>
     }
-    <button type="submit" class="btn btn-primary" disabled="@_busy">Cadastrar</button>
+    <button type="submit" class="btn btn-primary" disabled="@_busy">@(_editingId is null ? "Cadastrar" : "Salvar")</button>
+    @if (_editingId is not null)
+    {
+        <button type="button" class="btn btn-outline-secondary" @onclick="CancelEdit">Cancelar</button>
+    }
 </EditForm>
 
+<table class="table table-hover align-middle">
+    <thead>
+        <tr><th>Nome</th><th>Código</th><th>Grupo</th><th>Portas</th><th>Foto</th><th>Ações</th></tr>
+    </thead>
+    <tbody>
+        @foreach (var u in _users)
+        {
+            <tr class="@(u.RevokedAtUtc is not null ? "table-secondary" : "")">
+                <td>@u.Name</td>
+                <td>@u.UserCode</td>
+                <td>@(u.GroupName ?? "—")</td>
+                <td>@string.Join(", ", u.Controllers.Select(c => c.ControllerName))</td>
+                <td>@(u.HasFacePhoto ? "✔" : "—")</td>
+                <td>
+                    <button class="btn btn-sm btn-outline-secondary" @onclick="() => EditAsync(u.Id)">Editar</button>
+                    <button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteAsync(u.Id)">Excluir</button>
+                </td>
+            </tr>
+        }
+    </tbody>
+</table>
+
 @code {
-    private readonly CreateModel _model = new();
-    private List<DoorDto> _doors = [];
-    private readonly HashSet<Guid> _selectedDoors = [];
+    private List<UserListItemDto> _users = [];
+    private List<UserGroupDto> _groups = [];
+    private List<ControllerDto> _controllers = [];
+    private readonly HashSet<Guid> _selectedControllers = [];
+    private readonly FormModel _model = new();
+    private Guid? _editingId;
+    private string _originalName = string.Empty;
     private IBrowserFile? _photo;
     private string? _error;
     private string? _success;
@@ -57,24 +100,60 @@
     protected override async Task OnInitializedAsync()
     {
         if (!AuthState.IsAuthenticated) { Nav.NavigateTo("/login"); return; }
-        _doors = await Api.GetDoorsAsync();
+        await LoadAsync();
     }
 
-    private void ToggleDoor(Guid doorId, bool isChecked)
+    private async Task LoadAsync()
     {
-        if (isChecked) _selectedDoors.Add(doorId);
-        else _selectedDoors.Remove(doorId);
+        _users = await Api.GetUsersAsync();
+        _groups = await Api.GetUserGroupsAsync();
+        _controllers = await Api.GetControllersAsync();
+    }
+
+    private void ToggleController(Guid controllerId, bool isChecked)
+    {
+        if (isChecked) _selectedControllers.Add(controllerId);
+        else _selectedControllers.Remove(controllerId);
     }
 
     private void OnFileSelected(InputFileChangeEventArgs e) => _photo = e.File;
 
-    private async Task CreateAsync()
+    private async Task EditAsync(Guid id)
+    {
+        var detail = await Api.GetUserAsync(id);
+        if (detail is null) return;
+
+        _editingId = id;
+        _originalName = detail.Name;
+        _model.Name = detail.Name;
+        _model.TimeGroup = detail.TimeGroup;
+        _model.GroupIdText = detail.GroupId?.ToString() ?? string.Empty;
+        _selectedControllers.Clear();
+        foreach (var cId in detail.ControllerIds) _selectedControllers.Add(cId);
+        _photo = null;
+        _error = null;
+        _success = null;
+    }
+
+    private void CancelEdit()
+    {
+        _editingId = null;
+        _model.Name = string.Empty;
+        _model.TimeGroup = 1;
+        _model.GroupIdText = string.Empty;
+        _selectedControllers.Clear();
+        _photo = null;
+    }
+
+    private async Task SaveAsync()
     {
         _error = null;
         _success = null;
 
-        if (_photo is null) { _error = "Selecione uma foto de face."; return; }
+        if (_editingId is null && _photo is null) { _error = "Selecione uma foto de face."; return; }
         if (_model.TimeGroup is < 1 or > 64) { _error = "Grupo de horário deve estar entre 1 e 64."; return; }
+
+        Guid.TryParse(_model.GroupIdText, out var groupId);
 
         _busy = true;
         using var content = new MultipartFormDataContent
@@ -82,15 +161,22 @@
             { new StringContent(_model.Name), "Name" },
             { new StringContent(_model.TimeGroup.ToString()), "TimeGroup" },
         };
-        foreach (var doorId in _selectedDoors)
-            content.Add(new StringContent(doorId.ToString()), "DoorIds");
+        if (groupId != Guid.Empty)
+            content.Add(new StringContent(groupId.ToString()), "GroupId");
+        foreach (var controllerId in _selectedControllers)
+            content.Add(new StringContent(controllerId.ToString()), "ControllerIds");
 
-        var stream = _photo.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024);
-        var fileContent = new StreamContent(stream);
-        fileContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(_photo.ContentType);
-        content.Add(fileContent, "facePhoto", _photo.Name);
+        if (_photo is not null)
+        {
+            var stream = _photo.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024);
+            var fileContent = new StreamContent(stream);
+            fileContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(_photo.ContentType);
+            content.Add(fileContent, "facePhoto", _photo.Name);
+        }
 
-        var response = await Api.CreateUserAsync(content);
+        var response = _editingId is null
+            ? await Api.CreateUserAsync(content)
+            : await Api.UpdateUserAsync(_editingId.Value, content);
         _busy = false;
 
         if (!response.IsSuccessStatusCode)
@@ -99,15 +185,27 @@
             return;
         }
 
-        _success = "Usuário cadastrado e sincronização disparada.";
-        _model.Name = string.Empty;
-        _selectedDoors.Clear();
-        _photo = null;
+        _success = _editingId is null ? "Usuário cadastrado e sincronização disparada." : "Usuário atualizado.";
+        CancelEdit();
+        await LoadAsync();
     }
 
-    private sealed class CreateModel
+    private async Task DeleteAsync(Guid id)
+    {
+        _error = null;
+        var response = await Api.DeleteUserAsync(id);
+        if (!response.IsSuccessStatusCode)
+        {
+            _error = await response.Content.ReadAsStringAsync();
+            return;
+        }
+        await LoadAsync();
+    }
+
+    private sealed class FormModel
     {
         public string Name { get; set; } = string.Empty;
         public int TimeGroup { get; set; } = 1;
+        public string GroupIdText { get; set; } = string.Empty;
     }
 }

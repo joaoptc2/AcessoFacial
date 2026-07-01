@@ -39,12 +39,29 @@ public sealed class ApiClient
         return response.IsSuccessStatusCode ? await response.Content.ReadFromJsonAsync<LoginResponse>() : null;
     }
 
+    // ---- Controladores (= portas) ----
+
     public Task<List<ControllerDto>> GetControllersAsync() => GetJsonOrDefaultAsync("api/controllers", new List<ControllerDto>());
+
+    public Task<ControllerDetailDto?> GetControllerAsync(Guid id) =>
+        GetJsonOrDefaultAsync<ControllerDetailDto?>($"api/controllers/{id}", null);
 
     public async Task<HttpResponseMessage> CreateControllerAsync(CreateControllerRequest request)
     {
         ApplyAuthHeader();
         return await _http.PostAsJsonAsync("api/controllers", request);
+    }
+
+    public async Task<HttpResponseMessage> UpdateControllerAsync(Guid id, UpdateControllerRequest request)
+    {
+        ApplyAuthHeader();
+        return await _http.PutAsJsonAsync($"api/controllers/{id}", request);
+    }
+
+    public async Task<HttpResponseMessage> DeleteControllerAsync(Guid id)
+    {
+        ApplyAuthHeader();
+        return await _http.DeleteAsync($"api/controllers/{id}");
     }
 
     public async Task<(bool ok, string message)> TestConnectionAsync(Guid controllerId)
@@ -58,19 +75,47 @@ public sealed class ApiClient
     public Task<List<SyncStatusDto>> GetSyncStatusAsync(Guid controllerId) =>
         GetJsonOrDefaultAsync($"api/controllers/{controllerId}/sync-status", new List<SyncStatusDto>());
 
-    public Task<List<DoorDto>> GetDoorsAsync() => GetJsonOrDefaultAsync("api/doors", new List<DoorDto>());
+    public Task<(bool ok, string message)> OpenDoorAsync(Guid controllerId) => RunDoorCommand(controllerId, "open");
+    public Task<(bool ok, string message)> CloseDoorAsync(Guid controllerId) => RunDoorCommand(controllerId, "close");
+    public Task<(bool ok, string message)> HoldDoorOpenAsync(Guid controllerId) => RunDoorCommand(controllerId, "hold-open");
+    public Task<(bool ok, string message)> LockDoorAsync(Guid controllerId) => RunDoorCommand(controllerId, "lock");
+    public Task<(bool ok, string message)> UnlockDoorAsync(Guid controllerId) => RunDoorCommand(controllerId, "unlock");
 
-    public async Task<HttpResponseMessage> CreateDoorAsync(CreateDoorRequest request)
+    private async Task<(bool ok, string message)> RunDoorCommand(Guid controllerId, string action)
     {
         ApplyAuthHeader();
-        return await _http.PostAsJsonAsync("api/doors", request);
+        var response = await _http.PostAsync($"api/controllers/{controllerId}/{action}", null);
+        var body = response.IsSuccessStatusCode ? "" : await response.Content.ReadAsStringAsync();
+        return (response.IsSuccessStatusCode, body);
     }
 
-    public async Task<HttpResponseMessage> OpenDoorAsync(Guid doorId)
+    // ---- Grupos de usuários ----
+
+    public Task<List<UserGroupDto>> GetUserGroupsAsync() => GetJsonOrDefaultAsync("api/usergroups", new List<UserGroupDto>());
+
+    public async Task<HttpResponseMessage> CreateUserGroupAsync(UserGroupRequest request)
     {
         ApplyAuthHeader();
-        return await _http.PostAsync($"api/doors/{doorId}/open", null);
+        return await _http.PostAsJsonAsync("api/usergroups", request);
     }
+
+    public async Task<HttpResponseMessage> UpdateUserGroupAsync(Guid id, UserGroupRequest request)
+    {
+        ApplyAuthHeader();
+        return await _http.PutAsJsonAsync($"api/usergroups/{id}", request);
+    }
+
+    public async Task<HttpResponseMessage> DeleteUserGroupAsync(Guid id)
+    {
+        ApplyAuthHeader();
+        return await _http.DeleteAsync($"api/usergroups/{id}");
+    }
+
+    // ---- Usuários permanentes ----
+
+    public Task<List<UserListItemDto>> GetUsersAsync() => GetJsonOrDefaultAsync("api/users", new List<UserListItemDto>());
+
+    public Task<UserDetailDto?> GetUserAsync(Guid id) => GetJsonOrDefaultAsync<UserDetailDto?>($"api/users/{id}", null);
 
     public async Task<HttpResponseMessage> CreateUserAsync(MultipartFormDataContent content)
     {
@@ -78,11 +123,22 @@ public sealed class ApiClient
         return await _http.PostAsync("api/users", content);
     }
 
-    public async Task<HttpResponseMessage> RevokeUserAsync(Guid userId)
+    public async Task<HttpResponseMessage> UpdateUserAsync(Guid id, MultipartFormDataContent content)
     {
         ApplyAuthHeader();
-        return await _http.DeleteAsync($"api/users/{userId}");
+        var request = new HttpRequestMessage(HttpMethod.Put, $"api/users/{id}") { Content = content };
+        return await _http.SendAsync(request);
     }
+
+    public async Task<HttpResponseMessage> DeleteUserAsync(Guid id)
+    {
+        ApplyAuthHeader();
+        return await _http.DeleteAsync($"api/users/{id}");
+    }
+
+    // ---- Visitantes / temporários ----
+
+    public Task<List<VisitorListItemDto>> GetVisitorsAsync() => GetJsonOrDefaultAsync("api/visitors", new List<VisitorListItemDto>());
 
     public async Task<HttpResponseMessage> CreateVisitorAsync(CreateVisitorRequest request)
     {
@@ -96,6 +152,14 @@ public sealed class ApiClient
         var response = await _http.PostAsync($"api/visitors/{visitorId}/qrcode", null);
         return response.IsSuccessStatusCode ? await response.Content.ReadAsByteArrayAsync() : null;
     }
+
+    public async Task<HttpResponseMessage> RevokeVisitorAsync(Guid id)
+    {
+        ApplyAuthHeader();
+        return await _http.DeleteAsync($"api/visitors/{id}");
+    }
+
+    // ---- Log de acessos ----
 
     public Task<AccessLogPage?> QueryAccessLogAsync(
         DateTime? from, DateTime? to, uint? userCode, Guid? controllerId, int page, int pageSize)

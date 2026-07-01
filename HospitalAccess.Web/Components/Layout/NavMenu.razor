@@ -18,22 +18,23 @@
                 <NavLink class="nav-link" href="" Match="NavLinkMatch.All">Início</NavLink>
             </div>
             <div class="nav-item px-3">
-                <NavLink class="nav-link" href="controllers">Controladores</NavLink>
-            </div>
-            <div class="nav-item px-3">
-                <NavLink class="nav-link" href="doors">Portas</NavLink>
+                <NavLink class="nav-link" href="controllers">Controladores / Portas</NavLink>
             </div>
             <div class="nav-item px-3">
                 <NavLink class="nav-link" href="users">Usuários</NavLink>
             </div>
             <div class="nav-item px-3">
-                <NavLink class="nav-link" href="visitors">Visitantes / QR</NavLink>
+                <NavLink class="nav-link" href="usergroups">Grupos de Usuários</NavLink>
+            </div>
+            <div class="nav-item px-3">
+                <NavLink class="nav-link" href="visitors">Visitantes / Temporários</NavLink>
             </div>
             <div class="nav-item px-3">
                 <NavLink class="nav-link" href="accesslog">Log de Acessos</NavLink>
             </div>
+            <hr class="text-white-50 mx-3" />
             <div class="nav-item px-3">
-                <span class="nav-link">@AuthState.Username (@AuthState.Role)</span>
+                <span class="nav-link">@AuthState.Username <span class="badge bg-primary">@AuthState.Role</span></span>
             </div>
         }
         else
