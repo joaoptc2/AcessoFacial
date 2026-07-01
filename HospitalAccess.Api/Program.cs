@@ -37,6 +37,7 @@ builder.Services.AddHostedService<VisitorExpirationBackgroundService>();
 
 // Escuta de eventos em tempo real -> AccessLog (append-only).
 builder.Services.AddHostedService<AccessEventRecorder>();
+builder.Services.AddHostedService<AlarmEventRecorder>();
 
 // Autenticação/autorização por papéis (admin, operador, recepção).
 // Jwt:Key DEVE vir de secrets/config protegida (user-secrets em dev, env var/Key Vault em produção).

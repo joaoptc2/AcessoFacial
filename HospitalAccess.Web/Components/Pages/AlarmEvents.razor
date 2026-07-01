@@ -1,0 +1,92 @@
+@page "/alarmevents"
+@rendermode InteractiveServer
+@using HospitalAccess.Web.Services
+@inject ApiClient Api
+@inject IJSRuntime Js
+@inject AuthState AuthState
+@inject NavigationManager Nav
+
+<PageTitle>Log de Alarmes</PageTitle>
+
+<h3>Log de alarmes de hardware</h3>
+<p class="text-muted">Incêndio, coação, sabotagem, arrombamento, lista negra, timeout de abertura etc.</p>
+
+<div class="row g-2 mb-3">
+    <div class="col-md-3">
+        <label class="form-label">De</label>
+        <input type="datetime-local" class="form-control" @bind="_from" />
+    </div>
+    <div class="col-md-3">
+        <label class="form-label">Até</label>
+        <input type="datetime-local" class="form-control" @bind="_to" />
+    </div>
+    <div class="col-md-2 align-self-end">
+        <button class="btn btn-primary w-100" @onclick="SearchAsync">Filtrar</button>
+    </div>
+    <div class="col-md-2 align-self-end">
+        <button class="btn btn-outline-secondary w-100" @onclick="ExportCsvAsync">Exportar CSV</button>
+    </div>
+</div>
+
+@if (_page is not null)
+{
+    <p>@_page.Total registro(s) — página @_page.Page</p>
+    <table class="table table-sm">
+        <thead>
+            <tr><th>Data/Hora</th><th>Controlador</th><th>Tipo</th><th>Código bruto</th><th>Status</th></tr>
+        </thead>
+        <tbody>
+            @foreach (var item in _page.Items)
+            {
+                <tr class="@(item.Cleared ? "" : "table-danger")">
+                    <td>@item.TimestampUtc.ToLocalTime().ToString("g")</td>
+                    <td>@item.ControllerName</td>
+                    <td>@item.Kind</td>
+                    <td>@item.RawEventCode</td>
+                    <td>@(item.Cleared ? "Encerrado" : "Disparado")</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+
+    <button class="btn btn-outline-secondary btn-sm" disabled="@(_currentPage <= 1)" @onclick="() => ChangePageAsync(-1)">Anterior</button>
+    <button class="btn btn-outline-secondary btn-sm" disabled="@(_currentPage * _pageSize >= _page.Total)" @onclick="() => ChangePageAsync(1)">Próxima</button>
+}
+
+@code {
+    private DateTime? _from;
+    private DateTime? _to;
+    private int _currentPage = 1;
+    private readonly int _pageSize = 25;
+    private AlarmEventPage? _page;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!AuthState.IsAuthenticated) { Nav.NavigateTo("/login"); return; }
+        await SearchAsync();
+    }
+
+    private async Task SearchAsync()
+    {
+        _currentPage = 1;
+        await LoadAsync();
+    }
+
+    private async Task ChangePageAsync(int delta)
+    {
+        _currentPage += delta;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _page = await Api.QueryAlarmEventsAsync(_from?.ToUniversalTime(), _to?.ToUniversalTime(), null, _currentPage, _pageSize);
+    }
+
+    private async Task ExportCsvAsync()
+    {
+        var bytes = await Api.ExportAlarmEventsCsvAsync(_from?.ToUniversalTime(), _to?.ToUniversalTime());
+        var base64 = Convert.ToBase64String(bytes);
+        await Js.InvokeVoidAsync("downloadFileFromBase64", $"alarm-events-{DateTime.UtcNow:yyyyMMddHHmmss}.csv", "text/csv", base64);
+    }
+}

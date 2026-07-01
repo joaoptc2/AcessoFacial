@@ -99,6 +99,66 @@ controla nem pode controlar esse comportamento — ele só comanda abertura/fech
 operação normal. **Documente a decisão tomada para cada porta fisicamente**, fora deste
 repositório (ex.: planilha de portas do projeto elétrico/predial).
 
+### 10. Rede/descoberta, relógio, feriados, grade horária, alarmes, ajustes locais, foto de evento, leitura reversa e Mifare
+Funções adicionadas depois da auditoria inicial do protocolo (ver seção "Funções do protocolo
+não implementadas" mais abaixo — a maioria virou item desta lista):
+
+- **Rede** (`ReadTCPSetting`/`WriteTCPSetting`, namespace `Door.Door8800.SystemParameter.TCPSetting`):
+  ver/reconfigurar IP/máscara/gateway/DNS/portas de um controlador já cadastrado, em
+  `GET/PUT /api/controllers/{id}/network` (aba "Rede" na tela de detalhes do controlador).
+- **Descoberta** (`SearchControltor`, broadcast UDP com SN especial `0000000000000000` e senha
+  `FFFFFFFF`): `POST /api/controllers/discover` varre a rede por alguns segundos e coleta as
+  respostas via `CommandCompleteEvent`. **Não validado contra hardware real** — é o item de
+  maior risco desta leva, já que broadcast UDP multi-resposta é um padrão diferente do
+  request/response usual do restante do gateway.
+- **Relógio** (`ReadTime`/`WriteTime`, namespace `Door.Door8800.Time`): `WriteTime` sem
+  parâmetro grava o horário atual deste servidor no controlador. `GET/POST /api/controllers/{id}/clock[/sync]`,
+  aba "Relógio".
+- **Feriados** (Classe V, `Door.Door8800.Holiday`) e **grade horária** (Classe VI,
+  `Door.Door8800.TimeGroup` + `Door.Door8800.Data.TimeGroup.WeekTimeGroup/DayTimeGroup/TimeSegment`):
+  definições globais mantidas no banco (`Holiday`, `TimeGroupSchedule`/`TimeGroupSegment`) e
+  empurradas para **todos** os controladores sob demanda (`POST /api/holidays/sync-all`,
+  `POST /api/timegroups/sync-all` — em segundo plano, mesmo padrão fire-and-forget do item 8).
+  A tela de grade horária simplifica para uma janela por dia (o dispositivo suporta até 8);
+  o domínio (`TimeGroupSegment.SegmentIndex`) já comporta mais, se precisar no futuro.
+  Antes disso, o campo `TimeGroup` do usuário era gravado no dispositivo mas **nada definia o
+  que ele significava em termos de horário** — essa é a lacuna que este item fecha.
+- **Alarmes** (Classe IIII, `Fingerprint.Alarm.*`): configuração liga/desliga por tipo
+  (incêndio, lista negra, sabotagem, credencial inválida, coação, timeout de abertura,
+  liberação por credencial válida) em `GET/PUT /api/controllers/{id}/alarm-settings`, mais
+  `POST /api/controllers/{id}/alarm-clear` para silenciar. O alarme de sensor de porta
+  (magnético) não tem tela de configuração (a escrita exige uma grade horária completa no
+  protocolo — desproporcional para esta função), mas o **evento** ainda é capturado em
+  tempo real. Eventos de alarme chegam pelo mesmo `TransactionMessage` do SDK, discriminados
+  pelo tipo concreto `AlarmTransaction` (`DoNetDriveGateway.OnTransactionMessage`), gravados
+  em `AlarmEvent` (`AlarmEventRecorder`, mesmo padrão do `AccessEventRecorder`) e consultáveis
+  em `/api/alarmevents` (com CSV).
+- **Ajustes locais do quiosque** (`Fingerprint.SystemParameter.*`: idioma, volume, luz de
+  preenchimento, detecção de máscara, temperatura — detecção/alarme/exibição —, distância de
+  reconhecimento facial, detecção de vida/liveness): `GET/PUT /api/controllers/{id}/kiosk-settings`,
+  aba "Ajustes Locais". "Não perturbe"/clima/indicador de limpeza do protocolo original **não
+  têm classe correspondente neste SDK** (provavelmente uma versão de firmware/SDK mais nova) —
+  não implementados.
+- **Foto do evento** (Classe XI, `ReadTransactionAndImageDatabase`): o SDK grava as fotos em
+  disco (pasta temporária por controlador), não em memória — o gateway lê os arquivos depois
+  e associa a cada registro **pela ordem cronológica** (o nome de arquivo gerado pelo SDK não
+  é documentado no material de referência disponível). `POST /api/controllers/{id}/event-photos/download`
+  + `GET .../event-photos` + `GET .../event-photos/{photoId}/image`, persistidas em `EventPhoto`.
+- **Leitura reversa / auditoria** (`ReadPersonDataBase`, Classe VII): compara os `UserCode`
+  efetivamente cadastrados no controlador com as permissões do banco, sem persistir nada —
+  auditoria sob demanda em `GET /api/controllers/{id}/personnel-audit`.
+- **Cartões Mifare**: o SDK **não abstrai a estrutura de setor Mifare** (Apêndices 10-13 do
+  protocolo) — só expõe `Person.CardData` (um `uint`). Por isso o suporte aqui se limita a
+  associar um número de cartão a um usuário (`User.CardNumber`), enviado ao controlador
+  junto com o cadastro de face normal. Programar/formatar o cartão físico (senha dinâmica de
+  setor, código de rolagem) exigiria um leitor/gravador de cartão dedicado, fora do alcance
+  deste sistema.
+
+⚠️ Estas 8 áreas foram implementadas contra as DLLs reais do SDK (compilação verificada,
+nomes de classe/propriedade confirmados via `monodis` quando o código de exemplo não deixava
+claro), mas **nenhuma delas foi testada contra um 8190H físico** — mesma limitação já
+registrada nas seções 1-2 para o restante do gateway.
+
 ---
 
 ## Arquitetura
@@ -189,22 +249,40 @@ dotnet test HospitalAccess.Tests/HospitalAccess.Tests.csproj
 - Build completo da solução (0 erros/warnings) e suíte de testes (10 passando, 1 golden
   vector `Skip` intencional).
 - API rodando contra PostgreSQL real: login JWT, CRUD de controladores (com comandos de
-  porta), usuários (com grupo organizacional e foto), grupos de usuários e visitantes,
-  geração de QR (PNG real, byte-mode), exportação CSV do log de acessos.
+  porta), usuários (com grupo organizacional, cartão Mifare opcional e foto), grupos de
+  usuários e visitantes, geração de QR (PNG real, byte-mode), feriados e grade horária
+  (com sincronização em massa para todos os controladores), exportação CSV do log de
+  acessos e do log de alarmes.
 - Front-end Blazor Server testado num Chromium real (Playwright): login → cadastro de
   controlador → comandos de porta (abrir/fechar/manter aberta/trancar/destrancar) → editar
-  controlador → cadastro de grupo de usuários → cadastro de usuário com foto/grupo/porta →
-  editar/excluir usuário → visitante com QR exibido na tela → revogar visitante → log de
-  acessos → refresh de página degrada graciosamente para o login (não há crash).
+  controlador → descoberta de controladores na rede → tela de detalhes do controlador (abas
+  Rede/Relógio/Alarmes/Ajustes Locais/Auditoria/Fotos de Evento, todas navegáveis sem travar
+  mesmo com o controlador inacessível) → cadastro de grupo de usuários → cadastro de usuário
+  com foto/grupo/porta/cartão → editar/excluir usuário → visitante com QR exibido na tela →
+  revogar visitante → feriado e grade horária cadastrados e sincronizados → log de acessos →
+  log de alarmes → refresh de página degrada graciosamente para o login (não há crash).
 - Corrigido durante o teste end-to-end: `POST/PUT/DELETE /api/users` travava a requisição
   por tempo indefinido quando um controlador associado estava inacessível (a sincronização
   era síncrona). Agora roda em segundo plano — ver item 8 acima.
+- Corrigido durante o teste end-to-end (rodada das 8 áreas novas): a tela de detalhes do
+  controlador (`ControllerDetail.razor`) ficava presa em "Carregando..." indefinidamente —
+  não travada de verdade, mas sem re-renderizar — porque o Blazor só atualiza a UI depois que
+  `OnInitializedAsync` termina por completo, e a segunda chamada (`SelectTabAsync`) podia
+  levar dezenas de segundos contra um controlador inacessível. Corrigido com um
+  `StateHasChanged()` explícito logo após o primeiro `await`, para mostrar cabeçalho/abas
+  imediatamente enquanto os dados de cada aba carregam (ou falham) em segundo plano.
+- Corrigido durante o mesmo teste: o Blazor `InputNumber<T>` **não suporta `byte`** como tipo
+  genérico ("The type 'System.Byte' is not a supported numeric type") — derruba o circuito
+  inteiro com exceção não tratada. Afetava os campos `Index`/`HolidayType` de `Holidays.razor`
+  e `Tentativas` (config. de alarme) de `ControllerDetail.razor`; trocados para `int` no
+  modelo de formulário, convertendo para `byte` só ao montar a requisição.
 - Gateway: `dotnet build` compila contra as DLLs reais do SDK (todas as assinaturas
-  usadas existem e batem com a engenharia reversa do IL); uma chamada de teste de conexão
-  contra um IP inexistente confirmou que o timeout/retry funciona e a API não derruba —
-  devolve 502 controlado. **Não foi possível testar contra um 8190H físico** (não há um na
-  rede deste ambiente) — isso é o item mais importante a validar ao ligar o primeiro
-  controlador real (ver caveat da seção 2 acima).
+  usadas existem e batem com a engenharia reversa do IL/`monodis`); uma chamada de teste de
+  conexão contra um IP inexistente confirmou que o timeout/retry funciona e a API não
+  derruba — devolve 502 controlado. **Não foi possível testar contra um 8190H físico** (não
+  há um na rede deste ambiente) — isso é o item mais importante a validar ao ligar o primeiro
+  controlador real (ver caveat da seção 2 acima), especialmente a descoberta por broadcast
+  UDP (item 10) que usa um padrão de comando diferente do resto do gateway.
 
 ## Limitações conhecidas / próximos passos
 - **Exportação em PDF** do log de acessos: não implementada (só CSV). Toda biblioteca PDF
@@ -219,3 +297,13 @@ dotnet test HospitalAccess.Tests/HospitalAccess.Tests.csproj
   banco por enquanto; não há endpoint/tela dedicada.
 - **Integração HIS/AD**: fora de escopo por pedido explícito — não implementada.
 - **Golden vector do QR** (item 5 acima): pendente de um QR real do fabricante.
+- **Descoberta por broadcast UDP** (item 10): implementada mas não validada contra hardware
+  real — é um padrão de comando (multi-resposta) diferente do restante do gateway.
+- **Ajustes locais "não perturbe", clima e indicador de limpeza**: sem classe correspondente
+  no SDK disponível (item 10) — não implementados.
+- **Cartões Mifare**: só o número do cartão é gravado (`Person.CardData`); a estrutura
+  completa de setor (Apêndices 10-13) não é abstraída pelo SDK e exigiria um leitor/gravador
+  de cartão dedicado (item 10).
+- **Foto do evento**: a correlação foto↔registro é por ordem cronológica, não por um
+  identificador explícito (o SDK grava os arquivos em disco com um nome não documentado no
+  material de referência disponível) — ver item 10.

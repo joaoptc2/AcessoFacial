@@ -61,7 +61,7 @@ public class ControllersController : ControllerBase
         {
             controller.Id, controller.Name, controller.IpAddress, controller.Port, controller.SerialNumber,
             controller.CommunicationPassword, controller.SupportsWaitRepeatMessage, controller.RelayIndex,
-            controller.TimeoutMs, controller.RestartCount,
+            controller.TimeoutMs, controller.RestartCount, controller.LastClockSyncAtUtc,
         });
     }
 
@@ -192,6 +192,183 @@ public class ControllersController : ControllerBase
         try
         {
             await command(controller, ct);
+            return NoContent();
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(502, new { error = ex.Message });
+        }
+    }
+
+    // --- Rede ---
+
+    [HttpGet("{id:guid}/network")]
+    public Task<IActionResult> GetNetwork(Guid id, CancellationToken ct) => RunReadAsync(id, _gateway.ReadNetworkSettingsAsync, ct);
+
+    [HttpPut("{id:guid}/network")]
+    public Task<IActionResult> PutNetwork(Guid id, [FromBody] ControllerNetworkInfo info, CancellationToken ct) =>
+        RunWriteAsync(id, (c, ct2) => _gateway.WriteNetworkSettingsAsync(c, info, ct2), ct);
+
+    /// <summary>Varredura por broadcast UDP para descobrir controladores desconhecidos na rede local. Não validado contra hardware real.</summary>
+    [HttpPost("discover")]
+    public async Task<IActionResult> Discover([FromQuery] int udpPort = 60000, [FromQuery] int scanSeconds = 4, CancellationToken ct = default)
+    {
+        var found = await _gateway.DiscoverControllersAsync(udpPort, TimeSpan.FromSeconds(scanSeconds), ct);
+        return Ok(found);
+    }
+
+    // --- Relógio ---
+
+    [HttpGet("{id:guid}/clock")]
+    public Task<IActionResult> GetClock(Guid id, CancellationToken ct) => RunReadAsync(id, _gateway.ReadControllerTimeAsync, ct);
+
+    [HttpPost("{id:guid}/clock/sync")]
+    public async Task<IActionResult> SyncClock(Guid id, CancellationToken ct)
+    {
+        var controller = await _db.Controllers.FirstOrDefaultAsync(c => c.Id == id, ct);
+        if (controller is null) return NotFound();
+
+        try
+        {
+            await _gateway.SyncControllerTimeAsync(controller, ct);
+            controller.LastClockSyncAtUtc = DateTime.UtcNow;
+            await _db.SaveChangesAsync(ct);
+            return NoContent();
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(502, new { error = ex.Message });
+        }
+    }
+
+    // --- Alarmes ---
+
+    [HttpGet("{id:guid}/alarm-settings")]
+    public Task<IActionResult> GetAlarmSettings(Guid id, CancellationToken ct) => RunReadAsync(id, _gateway.ReadAlarmSettingsAsync, ct);
+
+    [HttpPut("{id:guid}/alarm-settings")]
+    public Task<IActionResult> PutAlarmSettings(Guid id, [FromBody] AlarmSettingsSnapshot settings, CancellationToken ct) =>
+        RunWriteAsync(id, (c, ct2) => _gateway.WriteAlarmSettingsAsync(c, settings, ct2), ct);
+
+    [HttpPost("{id:guid}/alarm-clear")]
+    public Task<IActionResult> ClearAlarm(Guid id, CancellationToken ct) => RunWriteAsync(id, _gateway.ClearAlarmAsync, ct);
+
+    // --- Ajustes locais (quiosque) ---
+
+    [HttpGet("{id:guid}/kiosk-settings")]
+    public Task<IActionResult> GetKioskSettings(Guid id, CancellationToken ct) => RunReadAsync(id, _gateway.ReadKioskSettingsAsync, ct);
+
+    [HttpPut("{id:guid}/kiosk-settings")]
+    public Task<IActionResult> PutKioskSettings(Guid id, [FromBody] KioskSettingsSnapshot settings, CancellationToken ct) =>
+        RunWriteAsync(id, (c, ct2) => _gateway.WriteKioskSettingsAsync(c, settings, ct2), ct);
+
+    // --- Leitura reversa / auditoria ---
+
+    /// <summary>Compara os usuários efetivamente cadastrados no controlador com as permissões no banco.</summary>
+    [HttpGet("{id:guid}/personnel-audit")]
+    public async Task<IActionResult> PersonnelAudit(Guid id, CancellationToken ct)
+    {
+        var controller = await _db.Controllers.FirstOrDefaultAsync(c => c.Id == id, ct);
+        if (controller is null) return NotFound();
+
+        try
+        {
+            var onDevice = (await _gateway.ReadRegisteredUserCodesAsync(controller, ct)).ToHashSet();
+            var expected = (await _db.Permissions
+                .Where(p => p.ControllerId == id)
+                .Select(p => p.User!.UserCode)
+                .ToListAsync(ct)).ToHashSet();
+
+            return Ok(new
+            {
+                MissingOnDevice = expected.Except(onDevice).ToList(),
+                ExtraOnDevice = onDevice.Except(expected).ToList(),
+                DeviceCount = onDevice.Count,
+                ExpectedCount = expected.Count,
+            });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(502, new { error = ex.Message });
+        }
+    }
+
+    // --- Foto do evento ---
+
+    [HttpPost("{id:guid}/event-photos/download")]
+    public async Task<IActionResult> DownloadEventPhotos(Guid id, [FromQuery] int quantity, CancellationToken ct)
+    {
+        if (quantity is < 1 or > 500) quantity = 20;
+
+        var controller = await _db.Controllers.FirstOrDefaultAsync(c => c.Id == id, ct);
+        if (controller is null) return NotFound();
+
+        try
+        {
+            var photos = await _gateway.ReadRecentEventPhotosAsync(controller, quantity, ct);
+            foreach (var p in photos)
+            {
+                _db.EventPhotos.Add(new EventPhoto
+                {
+                    ControllerId = controller.Id,
+                    ControllerName = controller.Name,
+                    UserCode = p.UserCode,
+                    CapturedAtUtc = p.CapturedAtUtc,
+                    RawEventCode = p.RawEventCode,
+                    ImageJpg = p.ImageJpg,
+                });
+            }
+            await _db.SaveChangesAsync(ct);
+            return Ok(new { downloaded = photos.Count });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(502, new { error = ex.Message });
+        }
+    }
+
+    [HttpGet("{id:guid}/event-photos")]
+    public async Task<IActionResult> ListEventPhotos(Guid id, CancellationToken ct)
+    {
+        var photos = await _db.EventPhotos
+            .Where(p => p.ControllerId == id)
+            .OrderByDescending(p => p.CapturedAtUtc)
+            .Select(p => new { p.Id, p.UserCode, p.CapturedAtUtc, p.RawEventCode, p.DownloadedAtUtc })
+            .ToListAsync(ct);
+        return Ok(photos);
+    }
+
+    [HttpGet("event-photos/{photoId:guid}/image")]
+    public async Task<IActionResult> GetEventPhotoImage(Guid photoId, CancellationToken ct)
+    {
+        var photo = await _db.EventPhotos.FirstOrDefaultAsync(p => p.Id == photoId, ct);
+        if (photo is null) return NotFound();
+        return File(photo.ImageJpg, "image/jpeg");
+    }
+
+    private async Task<IActionResult> RunReadAsync<T>(Guid id, Func<Domain.Entities.Controller, CancellationToken, Task<T>> read, CancellationToken ct)
+    {
+        var controller = await _db.Controllers.FirstOrDefaultAsync(c => c.Id == id, ct);
+        if (controller is null) return NotFound();
+
+        try
+        {
+            return Ok(await read(controller, ct));
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(502, new { error = ex.Message });
+        }
+    }
+
+    private async Task<IActionResult> RunWriteAsync(Guid id, Func<Domain.Entities.Controller, CancellationToken, Task> write, CancellationToken ct)
+    {
+        var controller = await _db.Controllers.FirstOrDefaultAsync(c => c.Id == id, ct);
+        if (controller is null) return NotFound();
+
+        try
+        {
+            await write(controller, ct);
             return NoContent();
         }
         catch (Exception ex)

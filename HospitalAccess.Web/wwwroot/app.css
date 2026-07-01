@@ -49,3 +49,43 @@ h1:focus {
 .darker-border-checkbox.form-check-input {
     border-color: #929292;
 }
+
+/* Polish geral: cards, seções do dashboard e tabelas mais confortáveis de ler. */
+.dashboard-section-title {
+    color: #6c757d;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-size: 0.78rem;
+    font-weight: 700;
+    border-bottom: 1px solid #e9ecef;
+    padding-bottom: 0.35rem;
+}
+
+.card {
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+    transition: box-shadow 0.15s ease-in-out;
+}
+
+.card:hover {
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+}
+
+.table-responsive-wrap {
+    overflow-x: auto;
+}
+
+.table thead th {
+    background-color: #f8f9fa;
+    position: sticky;
+    top: 0;
+}
+
+.nav-tabs .nav-link {
+    cursor: pointer;
+}
+
+@media (max-width: 640.98px) {
+    .btn-group.btn-group-sm {
+        flex-wrap: wrap;
+    }
+}

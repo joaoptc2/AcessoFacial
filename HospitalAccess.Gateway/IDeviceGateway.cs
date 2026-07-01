@@ -36,11 +36,69 @@ public interface IDeviceGateway
     /// <summary>Destranca a porta (reverte LockDoorAsync), voltando à operação normal.</summary>
     Task UnlockDoorAsync(Controller controller, CancellationToken ct = default);
 
+    /// <summary>Lê a configuração de rede atual do controlador (Classe I / TCPSetting).</summary>
+    Task<ControllerNetworkInfo> ReadNetworkSettingsAsync(Controller controller, CancellationToken ct = default);
+
+    /// <summary>Reconfigura a rede do controlador remotamente. Cuidado: IP errado torna o controlador inacessível até acesso físico.</summary>
+    Task WriteNetworkSettingsAsync(Controller controller, ControllerNetworkInfo info, CancellationToken ct = default);
+
+    /// <summary>
+    /// Varredura por broadcast UDP para descobrir controladores na rede local (Apêndices 3/5).
+    /// Não validado contra hardware real neste ambiente — ver README.
+    /// </summary>
+    Task<IReadOnlyList<DiscoveredController>> DiscoverControllersAsync(int udpPort, TimeSpan scanDuration, CancellationToken ct = default);
+
+    /// <summary>Lê o relógio atual do controlador (Classe II).</summary>
+    Task<DateTime> ReadControllerTimeAsync(Controller controller, CancellationToken ct = default);
+
+    /// <summary>Sincroniza o relógio do controlador com o horário deste servidor.</summary>
+    Task SyncControllerTimeAsync(Controller controller, CancellationToken ct = default);
+
+    /// <summary>Substitui todos os feriados do controlador (Classe V) pela lista informada.</summary>
+    Task SyncHolidaysAsync(Controller controller, IReadOnlyList<HolidayEntry> holidays, CancellationToken ct = default);
+
+    /// <summary>Substitui os 64 grupos de horário do controlador (Classe VI) pela definição informada.</summary>
+    Task SyncTimeGroupsAsync(Controller controller, IReadOnlyList<TimeGroupEntry> groups, CancellationToken ct = default);
+
+    /// <summary>Lê a configuração atual dos alarmes de hardware (Classe IIII).</summary>
+    Task<AlarmSettingsSnapshot> ReadAlarmSettingsAsync(Controller controller, CancellationToken ct = default);
+
+    /// <summary>Grava a configuração dos alarmes de hardware.</summary>
+    Task WriteAlarmSettingsAsync(Controller controller, AlarmSettingsSnapshot settings, CancellationToken ct = default);
+
+    /// <summary>Silencia/encerra alarmes ativos no controlador.</summary>
+    Task ClearAlarmAsync(Controller controller, CancellationToken ct = default);
+
+    /// <summary>Baixa as fotos mais recentes capturadas em eventos de acesso (Classe XI).</summary>
+    Task<IReadOnlyList<CapturedEventPhoto>> ReadRecentEventPhotosAsync(Controller controller, int quantity, CancellationToken ct = default);
+
+    /// <summary>Lê os códigos de usuário efetivamente cadastrados no controlador (Classe VII), para auditoria/detecção de divergência.</summary>
+    Task<IReadOnlyList<uint>> ReadRegisteredUserCodesAsync(Controller controller, CancellationToken ct = default);
+
+    /// <summary>Lê os ajustes locais do quiosque (idioma, volume, luz, máscara, temperatura etc.).</summary>
+    Task<KioskSettingsSnapshot> ReadKioskSettingsAsync(Controller controller, CancellationToken ct = default);
+
+    /// <summary>Grava os ajustes locais do quiosque.</summary>
+    Task WriteKioskSettingsAsync(Controller controller, KioskSettingsSnapshot settings, CancellationToken ct = default);
+
     /// <summary>
     /// Evento de acesso em tempo real empurrado por um controlador.
     /// A implementação assina os eventos do SDK e dispara este callback.
     /// </summary>
     event EventHandler<DeviceAccessEvent> AccessEventReceived;
+
+    /// <summary>Evento de alarme de hardware em tempo real empurrado por um controlador.</summary>
+    event EventHandler<DeviceAlarmEvent> AlarmEventReceived;
+}
+
+/// <summary>Evento de alarme normalizado, traduzido do AlarmTransaction do protocolo.</summary>
+public sealed class DeviceAlarmEvent
+{
+    public required string ControllerSerialNumber { get; init; }
+    public DateTime TimestampUtc { get; init; }
+    public Domain.Enums.AlarmKind Kind { get; init; }
+    public int RawEventCode { get; init; }
+    public bool Cleared { get; init; }
 }
 
 /// <summary>Resultado do cadastro de face, mapeando os códigos de retorno do protocolo.</summary>

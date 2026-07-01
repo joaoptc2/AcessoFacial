@@ -1,0 +1,178 @@
+@page "/timegroups"
+@rendermode InteractiveServer
+@using HospitalAccess.Web.Services
+@inject ApiClient Api
+@inject AuthState AuthState
+@inject NavigationManager Nav
+
+<PageTitle>Grade Horária</PageTitle>
+
+<h3>Grade horária</h3>
+<p class="text-muted">
+    Define o que cada grupo de horário (1-64, usado no cadastro de usuários) significa em termos de
+    dias/horários de acesso. O dispositivo suporta até 8 janelas por dia; esta tela simplifica para
+    uma janela por dia (o mais comum na prática) — abertura mais granular pode ser feita via API.
+</p>
+
+<EditForm Model="_model" FormName="TimeGroupForm" OnValidSubmit="SaveAsync" class="mb-3">
+    <div class="row g-2 align-items-end mb-2">
+        <div class="col-md-2">
+            <label class="form-label">Grupo (1-64)</label>
+            <InputNumber class="form-control" @bind-Value="_model.GroupNumber" />
+        </div>
+        <div class="col-md-4">
+            <label class="form-label">Nome</label>
+            <InputText class="form-control" @bind-Value="_model.Name" placeholder="Ex.: Dias úteis 7h-19h" />
+        </div>
+    </div>
+
+    <table class="table table-sm">
+        <thead><tr><th>Dia</th><th>Ativo</th><th>Início</th><th>Fim</th></tr></thead>
+        <tbody>
+            @for (var i = 0; i < 7; i++)
+            {
+                var day = _model.Days[i];
+                <tr>
+                    <td>@WeekdayNames[i]</td>
+                    <td><input type="checkbox" class="form-check-input" @bind="day.Enabled" /></td>
+                    <td><input type="time" class="form-control form-control-sm" @bind="day.Begin" /></td>
+                    <td><input type="time" class="form-control form-control-sm" @bind="day.End" /></td>
+                </tr>
+            }
+        </tbody>
+    </table>
+
+    <button class="btn btn-primary" type="submit">@(_editingId is null ? "Adicionar" : "Salvar")</button>
+    @if (_editingId is not null)
+    {
+        <button class="btn btn-outline-secondary" type="button" @onclick="CancelEdit">Cancelar</button>
+    }
+</EditForm>
+@if (_error is not null)
+{
+    <div class="alert alert-danger">@_error</div>
+}
+
+<button class="btn btn-outline-primary btn-sm mb-3" @onclick="SyncAllAsync" disabled="@_syncing">
+    @(_syncing ? "Sincronizando..." : "Aplicar em todos os controladores")
+</button>
+@if (_syncMessage is not null)
+{
+    <p class="text-muted">@_syncMessage</p>
+}
+
+<table class="table table-hover align-middle">
+    <thead><tr><th>Grupo</th><th>Nome</th><th>Dias configurados</th><th>Ações</th></tr></thead>
+    <tbody>
+        @foreach (var t in _schedules)
+        {
+            <tr>
+                <td>@t.GroupNumber</td>
+                <td>@t.Name</td>
+                <td>@t.Segments.Count</td>
+                <td>
+                    <button class="btn btn-sm btn-outline-secondary" @onclick="() => EditAsync(t)">Editar</button>
+                    <button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteAsync(t.Id)">Excluir</button>
+                </td>
+            </tr>
+        }
+    </tbody>
+</table>
+
+@code {
+    private static readonly string[] WeekdayNames = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"];
+
+    private List<TimeGroupScheduleDto> _schedules = [];
+    private readonly FormModel _model = new();
+    private Guid? _editingId;
+    private string? _error;
+    private bool _syncing;
+    private string? _syncMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!AuthState.IsAuthenticated) { Nav.NavigateTo("/login"); return; }
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync() => _schedules = await Api.GetTimeGroupsAsync();
+
+    private async Task SaveAsync()
+    {
+        _error = null;
+        var segments = _model.Days
+            .Select((d, weekday) => (d, weekday))
+            .Where(x => x.d.Enabled)
+            .Select(x => new TimeGroupSegmentRequest((byte)x.weekday, 0, x.d.Begin, x.d.End))
+            .ToList();
+
+        var request = new TimeGroupScheduleRequest(_model.GroupNumber, _model.Name, segments);
+
+        var response = _editingId is null
+            ? await Api.CreateTimeGroupAsync(request)
+            : await Api.UpdateTimeGroupAsync(_editingId.Value, request);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            _error = await response.Content.ReadAsStringAsync();
+            return;
+        }
+
+        CancelEdit();
+        await LoadAsync();
+    }
+
+    private void EditAsync(TimeGroupScheduleDto t)
+    {
+        _editingId = t.Id;
+        _model.GroupNumber = t.GroupNumber;
+        _model.Name = t.Name;
+        foreach (var day in _model.Days) { day.Enabled = false; day.Begin = new TimeOnly(0, 0); day.End = new TimeOnly(0, 0); }
+        foreach (var seg in t.Segments.Where(s => s.SegmentIndex == 0))
+        {
+            var day = _model.Days[seg.Weekday];
+            day.Enabled = true;
+            day.Begin = seg.BeginTime;
+            day.End = seg.EndTime;
+        }
+    }
+
+    private void CancelEdit()
+    {
+        _editingId = null;
+        _model.GroupNumber = 1;
+        _model.Name = string.Empty;
+        _model.Days = Enumerable.Range(0, 7).Select(_ => new DayModel()).ToArray();
+    }
+
+    private async Task DeleteAsync(Guid id)
+    {
+        _error = null;
+        var response = await Api.DeleteTimeGroupAsync(id);
+        if (!response.IsSuccessStatusCode) { _error = await response.Content.ReadAsStringAsync(); return; }
+        await LoadAsync();
+    }
+
+    private async Task SyncAllAsync()
+    {
+        _syncing = true;
+        _syncMessage = null;
+        var (ok, message) = await Api.SyncAllTimeGroupsAsync();
+        _syncing = false;
+        _syncMessage = ok ? "Sincronização disparada em segundo plano para todos os controladores." : $"Falha: {message}";
+    }
+
+    private sealed class FormModel
+    {
+        public int GroupNumber { get; set; } = 1;
+        public string Name { get; set; } = string.Empty;
+        public DayModel[] Days { get; set; } = Enumerable.Range(0, 7).Select(_ => new DayModel()).ToArray();
+    }
+
+    private sealed class DayModel
+    {
+        public bool Enabled { get; set; }
+        public TimeOnly Begin { get; set; } = new(7, 0);
+        public TimeOnly End { get; set; } = new(19, 0);
+    }
+}

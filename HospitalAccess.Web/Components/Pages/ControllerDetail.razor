@@ -1,0 +1,325 @@
+@page "/controllers/{Id:guid}"
+@rendermode InteractiveServer
+@using HospitalAccess.Web.Services
+@inject ApiClient Api
+@inject AuthState AuthState
+@inject NavigationManager Nav
+
+<PageTitle>Detalhes do controlador</PageTitle>
+
+@if (_controller is null)
+{
+    <p class="text-muted">Carregando...</p>
+}
+else
+{
+    <h3>@_controller.Name</h3>
+    <p class="text-muted">@_controller.IpAddress:@_controller.Port — SN <code>@_controller.SerialNumber</code></p>
+    <a class="btn btn-outline-secondary btn-sm mb-3" href="controllers">&larr; Voltar para controladores</a>
+
+    <ul class="nav nav-tabs mb-3">
+        @foreach (var tab in Tabs)
+        {
+            <li class="nav-item">
+                <button class="nav-link @(_activeTab == tab ? "active" : "")" @onclick="() => SelectTabAsync(tab)">@tab</button>
+            </li>
+        }
+    </ul>
+
+    @if (_error is not null)
+    {
+        <div class="alert alert-danger">@_error</div>
+    }
+
+    @if (_activeTab == "Rede")
+    {
+        @if (_network is null)
+        {
+            <p class="text-muted">Carregando configuração de rede...</p>
+        }
+        else
+        {
+            <EditForm Model="_network" FormName="NetworkForm" OnValidSubmit="SaveNetworkAsync" class="row g-2 col-md-8">
+                <div class="col-md-6"><label class="form-label">IP</label><InputText class="form-control" @bind-Value="_network.Ip" /></div>
+                <div class="col-md-6"><label class="form-label">Máscara</label><InputText class="form-control" @bind-Value="_network.IpMask" /></div>
+                <div class="col-md-6"><label class="form-label">Gateway</label><InputText class="form-control" @bind-Value="_network.IpGateway" /></div>
+                <div class="col-md-6"><label class="form-label">MAC</label><InputText class="form-control" @bind-Value="_network.Mac" /></div>
+                <div class="col-md-6"><label class="form-label">DNS</label><InputText class="form-control" @bind-Value="_network.Dns" /></div>
+                <div class="col-md-6"><label class="form-label">DNS secundário</label><InputText class="form-control" @bind-Value="_network.DnsBackup" /></div>
+                <div class="col-md-4"><label class="form-label">Porta UDP</label><InputNumber class="form-control" @bind-Value="_network.UdpPort" /></div>
+                <div class="col-md-4"><label class="form-label">IP do servidor (phone-home)</label><InputText class="form-control" @bind-Value="_network.ServerIp" /></div>
+                <div class="col-md-4"><label class="form-label">Porta do servidor</label><InputNumber class="form-control" @bind-Value="_network.ServerPort" /></div>
+                <div class="col-md-6 form-check mt-3">
+                    <InputCheckbox class="form-check-input" id="autoIp" @bind-Value="_network.AutoIp" />
+                    <label class="form-check-label" for="autoIp">Obter IP automaticamente (DHCP)</label>
+                </div>
+                <div class="col-12">
+                    <div class="alert alert-warning">Cuidado: um IP incorreto torna o controlador inacessível pela rede até acesso físico.</div>
+                    <button class="btn btn-primary" type="submit" disabled="@_busy">Salvar configuração de rede</button>
+                </div>
+            </EditForm>
+        }
+    }
+    else if (_activeTab == "Relógio")
+    {
+        <p>Horário do controlador: <strong>@(_clock?.ToString("g") ?? "—")</strong></p>
+        <p>Horário deste servidor: <strong>@DateTime.Now.ToString("g")</strong></p>
+        <p class="text-muted">Última sincronização registrada: @(_controller.LastClockSyncAtUtc?.ToLocalTime().ToString("g") ?? "nunca")</p>
+        <button class="btn btn-primary" @onclick="SyncClockAsync" disabled="@_busy">Sincronizar com o horário deste servidor</button>
+    }
+    else if (_activeTab == "Alarmes")
+    {
+        @if (_alarmSettings is null)
+        {
+            <p class="text-muted">Carregando configuração de alarmes...</p>
+        }
+        else
+        {
+            <EditForm Model="_alarmSettings" FormName="AlarmForm" OnValidSubmit="SaveAlarmSettingsAsync" class="row g-2 col-md-8">
+                <div class="col-md-6 form-check"><InputCheckbox class="form-check-input" id="fire" @bind-Value="_alarmSettings.FireAlarmEnabled" /><label class="form-check-label" for="fire">Alarme de incêndio</label></div>
+                <div class="col-md-6 form-check"><InputCheckbox class="form-check-input" id="blk" @bind-Value="_alarmSettings.BlacklistAlarmEnabled" /><label class="form-check-label" for="blk">Alarme de lista negra</label></div>
+                <div class="col-md-6 form-check"><InputCheckbox class="form-check-input" id="tmp" @bind-Value="_alarmSettings.TamperAlarmEnabled" /><label class="form-check-label" for="tmp">Alarme de sabotagem (tamper)</label></div>
+                <div class="col-md-6 form-check"><InputCheckbox class="form-check-input" id="legal" @bind-Value="_alarmSettings.LegalVerificationCloseAlarmEnabled" /><label class="form-check-label" for="legal">Alarme em abertura por credencial válida</label></div>
+                <div class="col-md-4 form-check"><InputCheckbox class="form-check-input" id="illegal" @bind-Value="_alarmSettings.IllegalVerificationAlarmEnabled" /><label class="form-check-label" for="illegal">Alarme de credencial inválida</label></div>
+                <div class="col-md-2"><label class="form-label">Tentativas</label><InputNumber class="form-control" @bind-Value="_illegalTimes" /></div>
+                <div class="col-md-4 form-check"><InputCheckbox class="form-check-input" id="duress" @bind-Value="_alarmSettings.DuressAlarmEnabled" /><label class="form-check-label" for="duress">Alarme de coação (senha de pânico)</label></div>
+                <div class="col-md-2"><label class="form-label">Senha</label><InputText class="form-control" @bind-Value="_duressPassword" /></div>
+                <div class="col-md-4 form-check"><InputCheckbox class="form-check-input" id="timeout" @bind-Value="_alarmSettings.OpenDoorTimeoutAlarmEnabled" /><label class="form-check-label" for="timeout">Porta aberta além do tempo</label></div>
+                <div class="col-md-2"><label class="form-label">Segundos</label><InputNumber class="form-control" @bind-Value="_alarmSettings.OpenDoorTimeoutSeconds" /></div>
+                <div class="col-12 mt-2">
+                    <button class="btn btn-primary" type="submit" disabled="@_busy">Salvar configuração de alarmes</button>
+                    <button class="btn btn-outline-danger" type="button" @onclick="ClearAlarmAsync" disabled="@_busy">Silenciar alarmes ativos</button>
+                    <a class="btn btn-outline-secondary" href="alarmevents">Ver log de alarmes</a>
+                </div>
+            </EditForm>
+        }
+    }
+    else if (_activeTab == "Ajustes Locais")
+    {
+        @if (_kiosk is null)
+        {
+            <p class="text-muted">Carregando ajustes locais...</p>
+        }
+        else
+        {
+            <EditForm Model="_kiosk" FormName="KioskForm" OnValidSubmit="SaveKioskSettingsAsync" class="row g-2 col-md-8">
+                <div class="col-md-4"><label class="form-label">Idioma (código)</label><InputNumber class="form-control" @bind-Value="_kiosk.Language" /></div>
+                <div class="col-md-4"><label class="form-label">Volume (0-10)</label><InputNumber class="form-control" @bind-Value="_kiosk.Volume" /></div>
+                <div class="col-md-4"><label class="form-label">Luz de preenchimento (modo)</label><InputNumber class="form-control" @bind-Value="_kiosk.FillLightMode" /></div>
+                <div class="col-md-4"><label class="form-label">Detecção de máscara (modo)</label><InputNumber class="form-control" @bind-Value="_kiosk.MaskDetectionMode" /></div>
+                <div class="col-md-4"><label class="form-label">Detecção de temperatura (modo)</label><InputNumber class="form-control" @bind-Value="_kiosk.TemperatureDetectionMode" /></div>
+                <div class="col-md-4"><label class="form-label">Limiar de alarme de temperatura (°C x10)</label><InputNumber class="form-control" @bind-Value="_kiosk.TemperatureAlarmThresholdX10" /></div>
+                <div class="col-md-4"><label class="form-label">Exibição de temperatura (modo)</label><InputNumber class="form-control" @bind-Value="_kiosk.TemperatureDisplayMode" /></div>
+                <div class="col-md-4"><label class="form-label">Distância de reconhecimento facial</label><InputNumber class="form-control" @bind-Value="_kiosk.FaceIdentifyRange" /></div>
+                <div class="col-md-4"><label class="form-label">Detecção de vida (modo)</label><InputNumber class="form-control" @bind-Value="_kiosk.LivenessDetectionMode" /></div>
+                <div class="col-md-4"><label class="form-label">Limiar de detecção de vida</label><InputNumber class="form-control" @bind-Value="_kiosk.LivenessSimilarity" /></div>
+                <div class="col-12 mt-2">
+                    <button class="btn btn-primary" type="submit" disabled="@_busy">Salvar ajustes locais</button>
+                </div>
+            </EditForm>
+        }
+    }
+    else if (_activeTab == "Auditoria")
+    {
+        <p class="text-muted">Compara os usuários efetivamente cadastrados no controlador com as permissões no nosso banco.</p>
+        <button class="btn btn-primary mb-3" @onclick="RunAuditAsync" disabled="@_busy">Comparar agora</button>
+        @if (_audit is not null)
+        {
+            <p>No dispositivo: <strong>@_audit.DeviceCount</strong> — Esperado no banco: <strong>@_audit.ExpectedCount</strong></p>
+            <div class="row">
+                <div class="col-md-6">
+                    <h6>Faltando no dispositivo</h6>
+                    @if (_audit.MissingOnDevice.Count == 0)
+                    {
+                        <p class="text-muted">Nenhum.</p>
+                    }
+                    else
+                    {
+                        <ul>@foreach (var userCode in _audit.MissingOnDevice) { <li>@userCode</li> }</ul>
+                    }
+                </div>
+                <div class="col-md-6">
+                    <h6>Extra no dispositivo (não esperado)</h6>
+                    @if (_audit.ExtraOnDevice.Count == 0)
+                    {
+                        <p class="text-muted">Nenhum.</p>
+                    }
+                    else
+                    {
+                        <ul>@foreach (var userCode in _audit.ExtraOnDevice) { <li>@userCode</li> }</ul>
+                    }
+                </div>
+            </div>
+        }
+    }
+    else if (_activeTab == "Fotos de Evento")
+    {
+        <p class="text-muted">Baixa as fotos capturadas pelo controlador nos eventos de acesso mais recentes.</p>
+        <button class="btn btn-primary mb-3" @onclick="DownloadPhotosAsync" disabled="@_busy">Baixar fotos recentes</button>
+        @if (_photos.Count == 0)
+        {
+            <p class="text-muted">Nenhuma foto baixada ainda.</p>
+        }
+        else
+        {
+            <div class="row row-cols-2 row-cols-md-4 g-3">
+                @foreach (var p in _photos)
+                {
+                    <div class="col">
+                        <div class="card h-100">
+                            @if (_photoImages.TryGetValue(p.Id, out var base64))
+                            {
+                                <img src="data:image/jpeg;base64,@base64" class="card-img-top" alt="Foto do evento" />
+                            }
+                            <div class="card-body p-2">
+                                <p class="card-text small mb-0">Usuário: @(p.UserCode?.ToString() ?? "?")</p>
+                                <p class="card-text small text-muted mb-0">@p.CapturedAtUtc.ToLocalTime().ToString("g")</p>
+                            </div>
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+    }
+}
+
+@code {
+    [Parameter] public Guid Id { get; set; }
+
+    private static readonly string[] Tabs = ["Rede", "Relógio", "Alarmes", "Ajustes Locais", "Auditoria", "Fotos de Evento"];
+
+    private ControllerDetailDto? _controller;
+    private string _activeTab = "Rede";
+    private bool _busy;
+    private string? _error;
+
+    private ControllerNetworkInfo? _network;
+    private DateTime? _clock;
+    private AlarmSettings? _alarmSettings;
+    private int _illegalTimes;
+    private string? _duressPassword;
+    private KioskSettings? _kiosk;
+    private PersonnelAudit? _audit;
+    private List<EventPhotoListItem> _photos = [];
+    private readonly Dictionary<Guid, string> _photoImages = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!AuthState.IsAuthenticated) { Nav.NavigateTo("/login"); return; }
+        _controller = await Api.GetControllerAsync(Id);
+        StateHasChanged(); // mostra o cabeçalho/abas imediatamente, sem esperar a leitura de rede (pode ser lenta contra hardware inacessível)
+        await SelectTabAsync("Rede");
+    }
+
+    private async Task SelectTabAsync(string tab)
+    {
+        _activeTab = tab;
+        _error = null;
+
+        switch (tab)
+        {
+            case "Rede":
+                _network ??= await Api.GetNetworkAsync(Id);
+                break;
+            case "Relógio":
+                _clock = await Api.GetClockAsync(Id);
+                break;
+            case "Alarmes":
+                if (_alarmSettings is null)
+                {
+                    _alarmSettings = await Api.GetAlarmSettingsAsync(Id);
+                    _illegalTimes = _alarmSettings?.IllegalVerificationTimes ?? 3;
+                    _duressPassword = _alarmSettings?.DuressPassword;
+                }
+                break;
+            case "Ajustes Locais":
+                _kiosk ??= await Api.GetKioskSettingsAsync(Id);
+                break;
+            case "Fotos de Evento":
+                _photos = await Api.GetEventPhotosAsync(Id);
+                await LoadPhotoImagesAsync();
+                break;
+        }
+    }
+
+    private async Task LoadPhotoImagesAsync()
+    {
+        foreach (var p in _photos)
+        {
+            if (_photoImages.ContainsKey(p.Id)) continue;
+            var bytes = await Api.GetEventPhotoImageAsync(p.Id);
+            if (bytes is not null) _photoImages[p.Id] = Convert.ToBase64String(bytes);
+        }
+    }
+
+    private async Task SaveNetworkAsync()
+    {
+        if (_network is null) return;
+        _busy = true;
+        _error = null;
+        var response = await Api.UpdateNetworkAsync(Id, _network);
+        _busy = false;
+        if (!response.IsSuccessStatusCode) _error = await response.Content.ReadAsStringAsync();
+    }
+
+    private async Task SyncClockAsync()
+    {
+        _busy = true;
+        _error = null;
+        var (ok, message) = await Api.SyncClockAsync(Id);
+        _busy = false;
+        if (!ok) { _error = message; return; }
+        _clock = await Api.GetClockAsync(Id);
+        _controller = await Api.GetControllerAsync(Id);
+    }
+
+    private async Task SaveAlarmSettingsAsync()
+    {
+        if (_alarmSettings is null) return;
+        _busy = true;
+        _error = null;
+        _alarmSettings.IllegalVerificationTimes = (byte)_illegalTimes;
+        _alarmSettings.DuressPassword = _duressPassword;
+        var response = await Api.UpdateAlarmSettingsAsync(Id, _alarmSettings);
+        _busy = false;
+        if (!response.IsSuccessStatusCode) _error = await response.Content.ReadAsStringAsync();
+    }
+
+    private async Task ClearAlarmAsync()
+    {
+        _busy = true;
+        _error = null;
+        var (ok, message) = await Api.ClearAlarmAsync(Id);
+        _busy = false;
+        if (!ok) _error = message;
+    }
+
+    private async Task SaveKioskSettingsAsync()
+    {
+        if (_kiosk is null) return;
+        _busy = true;
+        _error = null;
+        var response = await Api.UpdateKioskSettingsAsync(Id, _kiosk);
+        _busy = false;
+        if (!response.IsSuccessStatusCode) _error = await response.Content.ReadAsStringAsync();
+    }
+
+    private async Task RunAuditAsync()
+    {
+        _busy = true;
+        _error = null;
+        _audit = await Api.GetPersonnelAuditAsync(Id);
+        _busy = false;
+    }
+
+    private async Task DownloadPhotosAsync()
+    {
+        _busy = true;
+        _error = null;
+        var (ok, message) = await Api.DownloadEventPhotosAsync(Id, 20);
+        _busy = false;
+        if (!ok) { _error = message; return; }
+        _photos = await Api.GetEventPhotosAsync(Id);
+        await LoadPhotoImagesAsync();
+    }
+}

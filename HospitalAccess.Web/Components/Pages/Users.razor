@@ -32,6 +32,10 @@
         </div>
     </div>
     <div class="mb-3">
+        <label class="form-label">Número do cartão Mifare/IC (opcional)</label>
+        <InputText class="form-control" @bind-Value="_model.CardNumberText" placeholder="Deixe em branco se o usuário só usa face" />
+    </div>
+    <div class="mb-3">
         <label class="form-label">Portas com acesso permitido</label>
         @foreach (var c in _controllers)
         {
@@ -64,7 +68,7 @@
 
 <table class="table table-hover align-middle">
     <thead>
-        <tr><th>Nome</th><th>Código</th><th>Grupo</th><th>Portas</th><th>Foto</th><th>Ações</th></tr>
+        <tr><th>Nome</th><th>Código</th><th>Grupo</th><th>Cartão</th><th>Portas</th><th>Foto</th><th>Ações</th></tr>
     </thead>
     <tbody>
         @foreach (var u in _users)
@@ -73,6 +77,7 @@
                 <td>@u.Name</td>
                 <td>@u.UserCode</td>
                 <td>@(u.GroupName ?? "—")</td>
+                <td>@(u.CardNumber?.ToString() ?? "—")</td>
                 <td>@string.Join(", ", u.Controllers.Select(c => c.ControllerName))</td>
                 <td>@(u.HasFacePhoto ? "✔" : "—")</td>
                 <td>
@@ -128,6 +133,7 @@
         _model.Name = detail.Name;
         _model.TimeGroup = detail.TimeGroup;
         _model.GroupIdText = detail.GroupId?.ToString() ?? string.Empty;
+        _model.CardNumberText = detail.CardNumber?.ToString() ?? string.Empty;
         _selectedControllers.Clear();
         foreach (var cId in detail.ControllerIds) _selectedControllers.Add(cId);
         _photo = null;
@@ -141,6 +147,7 @@
         _model.Name = string.Empty;
         _model.TimeGroup = 1;
         _model.GroupIdText = string.Empty;
+        _model.CardNumberText = string.Empty;
         _selectedControllers.Clear();
         _photo = null;
     }
@@ -153,6 +160,13 @@
         if (_editingId is null && _photo is null) { _error = "Selecione uma foto de face."; return; }
         if (_model.TimeGroup is < 1 or > 64) { _error = "Grupo de horário deve estar entre 1 e 64."; return; }
 
+        uint? cardNumber = null;
+        if (!string.IsNullOrWhiteSpace(_model.CardNumberText))
+        {
+            if (!uint.TryParse(_model.CardNumberText, out var parsed)) { _error = "Número do cartão inválido."; return; }
+            cardNumber = parsed;
+        }
+
         Guid.TryParse(_model.GroupIdText, out var groupId);
 
         _busy = true;
@@ -163,6 +177,8 @@
         };
         if (groupId != Guid.Empty)
             content.Add(new StringContent(groupId.ToString()), "GroupId");
+        if (cardNumber is not null)
+            content.Add(new StringContent(cardNumber.Value.ToString()), "CardNumber");
         foreach (var controllerId in _selectedControllers)
             content.Add(new StringContent(controllerId.ToString()), "ControllerIds");
 
@@ -207,5 +223,6 @@
         public string Name { get; set; } = string.Empty;
         public int TimeGroup { get; set; } = 1;
         public string GroupIdText { get; set; } = string.Empty;
+        public string CardNumberText { get; set; } = string.Empty;
     }
 }

@@ -30,6 +30,14 @@ public class User
     /// <summary>Foto de face (JPG). Convertida p/ 480x640 / <=120KB antes do upload.</summary>
     public byte[]? FacePhoto { get; set; }
 
+    /// <summary>
+    /// Número do cartão Mifare/IC, se o usuário também tiver um cartão físico (além da face).
+    /// Mapeia para Person.CardData no SDK. A estrutura completa de setor Mifare (Apêndices
+    /// 10-13 do protocolo) não é abstraída pelo SDK e exigiria um leitor/gravador de cartão
+    /// dedicado — fora do alcance deste sistema, que só grava o número no controlador.
+    /// </summary>
+    public uint? CardNumber { get; set; }
+
     /// <summary>Rastreabilidade: username (StaffUser) que cadastrou esta credencial.</summary>
     public string? CreatedByUsername { get; set; }
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;

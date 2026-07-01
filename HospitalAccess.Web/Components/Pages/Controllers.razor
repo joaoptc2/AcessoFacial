@@ -10,6 +10,29 @@
 <h3>Controladores (8190H / A33_Face)</h3>
 <p class="text-muted">Cada controlador representa fisicamente uma única porta — não há cadastro de porta separado.</p>
 
+@if (IsAdminOrOperator)
+{
+    <button class="btn btn-outline-primary btn-sm mb-3" @onclick="DiscoverAsync" disabled="@_discovering">
+        @(_discovering ? "Procurando..." : "Descobrir controladores na rede")
+    </button>
+    @if (_discovered is not null)
+    {
+        @if (_discovered.Count == 0)
+        {
+            <p class="text-muted">Nenhum controlador respondeu à varredura (isso é esperado se não houver hardware real acessível neste ambiente).</p>
+        }
+        else
+        {
+            <ul class="mb-3">
+                @foreach (var d in _discovered)
+                {
+                    <li><code>@d.SerialNumber</code> — @d.IpAddress</li>
+                }
+            </ul>
+        }
+    }
+}
+
 <EditForm Model="_model" FormName="ControllerForm" OnValidSubmit="SaveAsync" class="row g-2 mb-4 align-items-end">
     <div class="col-md-2">
         <label class="form-label">Nome</label>
@@ -74,6 +97,7 @@
                     <div class="btn-group btn-group-sm mb-1" role="group">
                         <button class="btn btn-outline-info" @onclick="() => TestConnectionAsync(c.Id)">Testar conexão</button>
                         <button class="btn btn-outline-info" @onclick="() => ToggleSyncStatusAsync(c.Id)">Status</button>
+                        <a class="btn btn-outline-dark" href="@($"controllers/{c.Id}")">Detalhes</a>
                         @if (IsAdminOrOperator)
                         {
                             <button class="btn btn-outline-secondary" @onclick="() => EditAsync(c.Id)">Editar</button>
@@ -119,6 +143,8 @@
     private string? _testResult;
     private string? _doorCommandResult;
     private List<SyncStatusDto> _syncStatuses = [];
+    private bool _discovering;
+    private List<DiscoveredController>? _discovered;
 
     private bool IsAdminOrOperator => AuthState.Role is "Admin" or "Operator";
 
@@ -184,6 +210,15 @@
         _model.SerialNumber = string.Empty;
         _model.CommunicationPassword = "FFFFFFFF";
         _model.SupportsWaitRepeatMessage = false;
+    }
+
+    private async Task DiscoverAsync()
+    {
+        _discovering = true;
+        _discovered = null;
+        StateHasChanged();
+        _discovered = await Api.DiscoverControllersAsync(60000, 4);
+        _discovering = false;
     }
 
     private async Task DeleteAsync(Guid id)

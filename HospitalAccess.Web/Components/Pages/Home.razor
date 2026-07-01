@@ -15,21 +15,26 @@ else
     <h1>Controle de Acesso Hospitalar</h1>
     <p class="text-muted">Bem-vindo(a), @AuthState.Username (@AuthState.Role).</p>
 
-    <div class="row row-cols-1 row-cols-md-3 g-3 mt-2">
+    <h6 class="dashboard-section-title mt-4">Dispositivos</h6>
+    <div class="row row-cols-1 row-cols-md-3 g-3 mt-1">
         <div class="col">
             <div class="card h-100">
                 <div class="card-body">
                     <h5 class="card-title">Controladores / Portas</h5>
-                    <p class="card-text">Cadastro dos controladores 8190H, status de sincronização e comando remoto de porta (abrir, fechar, manter aberta, trancar, destrancar).</p>
+                    <p class="card-text">Cadastro dos controladores 8190H, comando remoto de porta e — na tela de detalhes de cada um — rede, relógio, alarmes, ajustes locais, auditoria e fotos de evento.</p>
                     <a href="controllers" class="btn btn-primary btn-sm">Abrir</a>
                 </div>
             </div>
         </div>
+    </div>
+
+    <h6 class="dashboard-section-title mt-4">Acesso</h6>
+    <div class="row row-cols-1 row-cols-md-3 g-3 mt-1">
         <div class="col">
             <div class="card h-100">
                 <div class="card-body">
                     <h5 class="card-title">Usuários</h5>
-                    <p class="card-text">Lista, cadastro (foto de face), edição e exclusão de usuários permanentes, organizados por grupo.</p>
+                    <p class="card-text">Lista, cadastro (foto de face + cartão Mifare opcional), edição e exclusão de usuários permanentes, organizados por grupo.</p>
                     <a href="users" class="btn btn-primary btn-sm">Abrir</a>
                 </div>
             </div>
@@ -55,9 +60,40 @@ else
         <div class="col">
             <div class="card h-100">
                 <div class="card-body">
+                    <h5 class="card-title">Grade Horária</h5>
+                    <p class="card-text">Define o que cada grupo de horário (1-64) significa em dias/janelas de acesso, aplicado a todos os controladores.</p>
+                    <a href="timegroups" class="btn btn-primary btn-sm">Abrir</a>
+                </div>
+            </div>
+        </div>
+        <div class="col">
+            <div class="card h-100">
+                <div class="card-body">
+                    <h5 class="card-title">Feriados</h5>
+                    <p class="card-text">Calendário de feriados (até 30), aplicado a todos os controladores.</p>
+                    <a href="holidays" class="btn btn-primary btn-sm">Abrir</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <h6 class="dashboard-section-title mt-4">Auditoria</h6>
+    <div class="row row-cols-1 row-cols-md-3 g-3 mt-1 mb-3">
+        <div class="col">
+            <div class="card h-100">
+                <div class="card-body">
                     <h5 class="card-title">Log de Acessos</h5>
                     <p class="card-text">Auditoria dos eventos de acesso em tempo real, com filtros e exportação CSV.</p>
                     <a href="accesslog" class="btn btn-primary btn-sm">Abrir</a>
+                </div>
+            </div>
+        </div>
+        <div class="col">
+            <div class="card h-100">
+                <div class="card-body">
+                    <h5 class="card-title">Log de Alarmes</h5>
+                    <p class="card-text">Incêndio, coação, sabotagem, arrombamento, lista negra, timeout de abertura — com filtros e exportação CSV.</p>
+                    <a href="alarmevents" class="btn btn-primary btn-sm">Abrir</a>
                 </div>
             </div>
         </div>

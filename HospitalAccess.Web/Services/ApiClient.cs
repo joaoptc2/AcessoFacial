@@ -89,6 +89,175 @@ public sealed class ApiClient
         return (response.IsSuccessStatusCode, body);
     }
 
+    // ---- Rede ----
+
+    public Task<ControllerNetworkInfo?> GetNetworkAsync(Guid controllerId) =>
+        GetJsonOrDefaultAsync<ControllerNetworkInfo?>($"api/controllers/{controllerId}/network", null);
+
+    public async Task<HttpResponseMessage> UpdateNetworkAsync(Guid controllerId, ControllerNetworkInfo info)
+    {
+        ApplyAuthHeader();
+        return await _http.PutAsJsonAsync($"api/controllers/{controllerId}/network", info);
+    }
+
+    public async Task<List<DiscoveredController>> DiscoverControllersAsync(int udpPort, int scanSeconds)
+    {
+        ApplyAuthHeader();
+        var response = await _http.PostAsync($"api/controllers/discover?udpPort={udpPort}&scanSeconds={scanSeconds}", null);
+        if (!response.IsSuccessStatusCode) return [];
+        return await response.Content.ReadFromJsonAsync<List<DiscoveredController>>() ?? [];
+    }
+
+    // ---- Relógio ----
+
+    public Task<DateTime?> GetClockAsync(Guid controllerId) => GetJsonOrDefaultAsync<DateTime?>($"api/controllers/{controllerId}/clock", null);
+
+    public async Task<(bool ok, string message)> SyncClockAsync(Guid controllerId)
+    {
+        ApplyAuthHeader();
+        var response = await _http.PostAsync($"api/controllers/{controllerId}/clock/sync", null);
+        var body = response.IsSuccessStatusCode ? "" : await response.Content.ReadAsStringAsync();
+        return (response.IsSuccessStatusCode, body);
+    }
+
+    // ---- Alarmes (configuração por controlador) ----
+
+    public Task<AlarmSettings?> GetAlarmSettingsAsync(Guid controllerId) =>
+        GetJsonOrDefaultAsync<AlarmSettings?>($"api/controllers/{controllerId}/alarm-settings", null);
+
+    public async Task<HttpResponseMessage> UpdateAlarmSettingsAsync(Guid controllerId, AlarmSettings settings)
+    {
+        ApplyAuthHeader();
+        return await _http.PutAsJsonAsync($"api/controllers/{controllerId}/alarm-settings", settings);
+    }
+
+    public async Task<(bool ok, string message)> ClearAlarmAsync(Guid controllerId)
+    {
+        ApplyAuthHeader();
+        var response = await _http.PostAsync($"api/controllers/{controllerId}/alarm-clear", null);
+        var body = response.IsSuccessStatusCode ? "" : await response.Content.ReadAsStringAsync();
+        return (response.IsSuccessStatusCode, body);
+    }
+
+    // ---- Ajustes locais (quiosque) ----
+
+    public Task<KioskSettings?> GetKioskSettingsAsync(Guid controllerId) =>
+        GetJsonOrDefaultAsync<KioskSettings?>($"api/controllers/{controllerId}/kiosk-settings", null);
+
+    public async Task<HttpResponseMessage> UpdateKioskSettingsAsync(Guid controllerId, KioskSettings settings)
+    {
+        ApplyAuthHeader();
+        return await _http.PutAsJsonAsync($"api/controllers/{controllerId}/kiosk-settings", settings);
+    }
+
+    // ---- Leitura reversa / auditoria ----
+
+    public Task<PersonnelAudit?> GetPersonnelAuditAsync(Guid controllerId) =>
+        GetJsonOrDefaultAsync<PersonnelAudit?>($"api/controllers/{controllerId}/personnel-audit", null);
+
+    // ---- Foto do evento ----
+
+    public async Task<(bool ok, string message)> DownloadEventPhotosAsync(Guid controllerId, int quantity)
+    {
+        ApplyAuthHeader();
+        var response = await _http.PostAsync($"api/controllers/{controllerId}/event-photos/download?quantity={quantity}", null);
+        var body = await response.Content.ReadAsStringAsync();
+        return (response.IsSuccessStatusCode, body);
+    }
+
+    public Task<List<EventPhotoListItem>> GetEventPhotosAsync(Guid controllerId) =>
+        GetJsonOrDefaultAsync($"api/controllers/{controllerId}/event-photos", new List<EventPhotoListItem>());
+
+    public async Task<byte[]?> GetEventPhotoImageAsync(Guid photoId)
+    {
+        ApplyAuthHeader();
+        var response = await _http.GetAsync($"api/controllers/event-photos/{photoId}/image");
+        return response.IsSuccessStatusCode ? await response.Content.ReadAsByteArrayAsync() : null;
+    }
+
+    // ---- Feriados ----
+
+    public Task<List<HolidayDto>> GetHolidaysAsync() => GetJsonOrDefaultAsync("api/holidays", new List<HolidayDto>());
+
+    public async Task<HttpResponseMessage> CreateHolidayAsync(HolidayRequest request)
+    {
+        ApplyAuthHeader();
+        return await _http.PostAsJsonAsync("api/holidays", request);
+    }
+
+    public async Task<HttpResponseMessage> UpdateHolidayAsync(Guid id, HolidayRequest request)
+    {
+        ApplyAuthHeader();
+        return await _http.PutAsJsonAsync($"api/holidays/{id}", request);
+    }
+
+    public async Task<HttpResponseMessage> DeleteHolidayAsync(Guid id)
+    {
+        ApplyAuthHeader();
+        return await _http.DeleteAsync($"api/holidays/{id}");
+    }
+
+    public async Task<(bool ok, string message)> SyncAllHolidaysAsync()
+    {
+        ApplyAuthHeader();
+        var response = await _http.PostAsync("api/holidays/sync-all", null);
+        var body = await response.Content.ReadAsStringAsync();
+        return (response.IsSuccessStatusCode, body);
+    }
+
+    // ---- Grade horária ----
+
+    public Task<List<TimeGroupScheduleDto>> GetTimeGroupsAsync() => GetJsonOrDefaultAsync("api/timegroups", new List<TimeGroupScheduleDto>());
+
+    public async Task<HttpResponseMessage> CreateTimeGroupAsync(TimeGroupScheduleRequest request)
+    {
+        ApplyAuthHeader();
+        return await _http.PostAsJsonAsync("api/timegroups", request);
+    }
+
+    public async Task<HttpResponseMessage> UpdateTimeGroupAsync(Guid id, TimeGroupScheduleRequest request)
+    {
+        ApplyAuthHeader();
+        return await _http.PutAsJsonAsync($"api/timegroups/{id}", request);
+    }
+
+    public async Task<HttpResponseMessage> DeleteTimeGroupAsync(Guid id)
+    {
+        ApplyAuthHeader();
+        return await _http.DeleteAsync($"api/timegroups/{id}");
+    }
+
+    public async Task<(bool ok, string message)> SyncAllTimeGroupsAsync()
+    {
+        ApplyAuthHeader();
+        var response = await _http.PostAsync("api/timegroups/sync-all", null);
+        var body = await response.Content.ReadAsStringAsync();
+        return (response.IsSuccessStatusCode, body);
+    }
+
+    // ---- Log de alarmes ----
+
+    public Task<AlarmEventPage?> QueryAlarmEventsAsync(DateTime? from, DateTime? to, Guid? controllerId, int page, int pageSize)
+    {
+        var query = new List<string> { $"page={page}", $"pageSize={pageSize}" };
+        if (from is not null) query.Add($"from={from:O}");
+        if (to is not null) query.Add($"to={to:O}");
+        if (controllerId is not null) query.Add($"controllerId={controllerId}");
+
+        return GetJsonOrDefaultAsync<AlarmEventPage?>($"api/alarmevents?{string.Join('&', query)}", null);
+    }
+
+    public async Task<byte[]> ExportAlarmEventsCsvAsync(DateTime? from, DateTime? to)
+    {
+        ApplyAuthHeader();
+        var query = new List<string>();
+        if (from is not null) query.Add($"from={from:O}");
+        if (to is not null) query.Add($"to={to:O}");
+
+        var response = await _http.GetAsync($"api/alarmevents/export?{string.Join('&', query)}");
+        return response.IsSuccessStatusCode ? await response.Content.ReadAsByteArrayAsync() : [];
+    }
+
     // ---- Grupos de usuários ----
 
     public Task<List<UserGroupDto>> GetUserGroupsAsync() => GetJsonOrDefaultAsync("api/usergroups", new List<UserGroupDto>());

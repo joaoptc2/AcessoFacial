@@ -1,0 +1,155 @@
+@page "/holidays"
+@rendermode InteractiveServer
+@using HospitalAccess.Web.Services
+@inject ApiClient Api
+@inject AuthState AuthState
+@inject NavigationManager Nav
+
+<PageTitle>Feriados</PageTitle>
+
+<h3>Feriados</h3>
+<p class="text-muted">Calendário de feriados (até 30 slots), empurrado para os controladores sob demanda.</p>
+
+<EditForm Model="_model" FormName="HolidayForm" OnValidSubmit="SaveAsync" class="row g-2 mb-3 align-items-end">
+    <div class="col-md-2">
+        <label class="form-label">Slot (1-30)</label>
+        <InputNumber class="form-control" @bind-Value="_model.Index" />
+    </div>
+    <div class="col-md-3">
+        <label class="form-label">Nome</label>
+        <InputText class="form-control" @bind-Value="_model.Name" />
+    </div>
+    <div class="col-md-2">
+        <label class="form-label">Data</label>
+        <InputDate class="form-control" @bind-Value="_model.Date" />
+    </div>
+    <div class="col-md-2 form-check">
+        <InputCheckbox class="form-check-input" id="repeat" @bind-Value="_model.RepeatsYearly" />
+        <label class="form-check-label" for="repeat">Repete todo ano</label>
+    </div>
+    <div class="col-md-1">
+        <label class="form-label">Tipo</label>
+        <InputNumber class="form-control" @bind-Value="_model.HolidayType" />
+    </div>
+    <div class="col-md-2">
+        <button class="btn btn-primary" type="submit">@(_editingId is null ? "Adicionar" : "Salvar")</button>
+        @if (_editingId is not null)
+        {
+            <button class="btn btn-outline-secondary" type="button" @onclick="CancelEdit">Cancelar</button>
+        }
+    </div>
+</EditForm>
+@if (_error is not null)
+{
+    <div class="alert alert-danger">@_error</div>
+}
+
+<button class="btn btn-outline-primary btn-sm mb-3" @onclick="SyncAllAsync" disabled="@_syncing">
+    @(_syncing ? "Sincronizando..." : "Aplicar em todos os controladores")
+</button>
+@if (_syncMessage is not null)
+{
+    <p class="text-muted">@_syncMessage</p>
+}
+
+<table class="table table-hover align-middle">
+    <thead><tr><th>Slot</th><th>Nome</th><th>Data</th><th>Repete</th><th>Tipo</th><th>Ações</th></tr></thead>
+    <tbody>
+        @foreach (var h in _holidays)
+        {
+            <tr>
+                <td>@h.Index</td>
+                <td>@h.Name</td>
+                <td>@h.Date.ToString("dd/MM/yyyy")</td>
+                <td>@(h.RepeatsYearly ? "Sim" : "Não")</td>
+                <td>@h.HolidayType</td>
+                <td>
+                    <button class="btn btn-sm btn-outline-secondary" @onclick="() => EditAsync(h)">Editar</button>
+                    <button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteAsync(h.Id)">Excluir</button>
+                </td>
+            </tr>
+        }
+    </tbody>
+</table>
+
+@code {
+    private List<HolidayDto> _holidays = [];
+    private readonly FormModel _model = new();
+    private Guid? _editingId;
+    private string? _error;
+    private bool _syncing;
+    private string? _syncMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!AuthState.IsAuthenticated) { Nav.NavigateTo("/login"); return; }
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync() => _holidays = await Api.GetHolidaysAsync();
+
+    private async Task SaveAsync()
+    {
+        _error = null;
+        var request = new HolidayRequest((byte)_model.Index, _model.Name, _model.Date.ToUniversalTime(), _model.RepeatsYearly, (byte)_model.HolidayType);
+
+        var response = _editingId is null
+            ? await Api.CreateHolidayAsync(request)
+            : await Api.UpdateHolidayAsync(_editingId.Value, request);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            _error = await response.Content.ReadAsStringAsync();
+            return;
+        }
+
+        CancelEdit();
+        await LoadAsync();
+    }
+
+    private void EditAsync(HolidayDto h)
+    {
+        _editingId = h.Id;
+        _model.Index = h.Index;
+        _model.Name = h.Name;
+        _model.Date = h.Date;
+        _model.RepeatsYearly = h.RepeatsYearly;
+        _model.HolidayType = h.HolidayType;
+    }
+
+    private void CancelEdit()
+    {
+        _editingId = null;
+        _model.Index = 1;
+        _model.Name = string.Empty;
+        _model.Date = DateTime.Today;
+        _model.RepeatsYearly = true;
+        _model.HolidayType = 1;
+    }
+
+    private async Task DeleteAsync(Guid id)
+    {
+        _error = null;
+        var response = await Api.DeleteHolidayAsync(id);
+        if (!response.IsSuccessStatusCode) { _error = await response.Content.ReadAsStringAsync(); return; }
+        await LoadAsync();
+    }
+
+    private async Task SyncAllAsync()
+    {
+        _syncing = true;
+        _syncMessage = null;
+        var (ok, message) = await Api.SyncAllHolidaysAsync();
+        _syncing = false;
+        _syncMessage = ok ? "Sincronização disparada em segundo plano para todos os controladores." : $"Falha: {message}";
+    }
+
+    private sealed class FormModel
+    {
+        public int Index { get; set; } = 1;
+        public string Name { get; set; } = string.Empty;
+        public DateTime Date { get; set; } = DateTime.Today;
+        public bool RepeatsYearly { get; set; } = true;
+        public int HolidayType { get; set; } = 1;
+    }
+}

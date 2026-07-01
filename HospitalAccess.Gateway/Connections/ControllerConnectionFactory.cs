@@ -34,4 +34,25 @@ public sealed class ControllerConnectionFactory
         cmdDtl.RestartCount = controller.RestartCount;
         return cmdDtl;
     }
+
+    /// <summary>
+    /// Monta um CommandDetail de broadcast UDP para descoberta de controladores desconhecidos
+    /// na rede local (SN "0000000000000000" e senha "FFFFFFFF" são os valores especiais de
+    /// broadcast usados pelo próprio SDK — ver FrmMain.cs/SearchCommandDetail do projeto de
+    /// exemplo). Não validado contra hardware real.
+    /// </summary>
+    public INCommandDetail CreateBroadcastDetail(int udpPort)
+    {
+        var cmdDtl = CommandDetailFactory.CreateDetail(
+            CommandDetailFactory.ConnectType.UDPClient,
+            "255.255.255.255",
+            udpPort,
+            CommandDetailFactory.ControllerType.A33_Face,
+            "0000000000000000",
+            "FFFFFFFF");
+
+        cmdDtl.Timeout = 2000;
+        cmdDtl.RestartCount = 1;
+        return cmdDtl;
+    }
 }

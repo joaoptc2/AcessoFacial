@@ -10,8 +10,8 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace HospitalAccess.Api.Controllers;
 
-public record CreateUserRequest(string Name, int TimeGroup, Guid? GroupId, Guid[]? ControllerIds = null);
-public record UpdateUserRequest(string Name, int TimeGroup, Guid? GroupId, Guid[]? ControllerIds = null);
+public record CreateUserRequest(string Name, int TimeGroup, Guid? GroupId, Guid[]? ControllerIds = null, uint? CardNumber = null);
+public record UpdateUserRequest(string Name, int TimeGroup, Guid? GroupId, Guid[]? ControllerIds = null, uint? CardNumber = null);
 
 /// <summary>Cadastro/gestão de usuários permanentes (acesso por face) e disparo de sincronização.</summary>
 [ApiController]
@@ -47,6 +47,7 @@ public class UsersController : ControllerBase
                 u.TimeGroup,
                 u.GroupId,
                 GroupName = u.Group != null ? u.Group.Name : null,
+                u.CardNumber,
                 HasFacePhoto = u.FacePhoto != null,
                 u.CreatedByUsername,
                 u.CreatedAtUtc,
@@ -73,6 +74,7 @@ public class UsersController : ControllerBase
             user.Name,
             user.TimeGroup,
             user.GroupId,
+            user.CardNumber,
             HasFacePhoto = user.FacePhoto != null,
             ControllerIds = user.Permissions.Select(p => p.ControllerId),
         });
@@ -103,6 +105,7 @@ public class UsersController : ControllerBase
             Type = UserType.Permanent,
             TimeGroup = request.TimeGroup,
             GroupId = request.GroupId,
+            CardNumber = request.CardNumber,
             FacePhoto = ms.ToArray(),
             CreatedByUsername = CurrentUsername(),
         };
@@ -141,6 +144,7 @@ public class UsersController : ControllerBase
         user.Name = request.Name;
         user.TimeGroup = request.TimeGroup;
         user.GroupId = request.GroupId;
+        user.CardNumber = request.CardNumber;
 
         if (facePhoto is { Length: > 0 })
         {

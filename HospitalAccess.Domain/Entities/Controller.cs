@@ -34,5 +34,8 @@ public class Controller
     /// <summary>Índice do relé de porta no controlador. Mantido por completude do protocolo; hoje sempre 0.</summary>
     public int RelayIndex { get; set; }
 
+    /// <summary>Última vez que o relógio deste controlador foi sincronizado com o servidor.</summary>
+    public DateTime? LastClockSyncAtUtc { get; set; }
+
     public ICollection<AccessPermission> Permissions { get; set; } = new List<AccessPermission>();
 }

@@ -18,6 +18,11 @@ public class AccessDbContext : DbContext
     public DbSet<DeviceSyncStatus> SyncStatuses => Set<DeviceSyncStatus>();
     public DbSet<AccessLog> AccessLogs => Set<AccessLog>();
     public DbSet<StaffUser> StaffUsers => Set<StaffUser>();
+    public DbSet<AlarmEvent> AlarmEvents => Set<AlarmEvent>();
+    public DbSet<EventPhoto> EventPhotos => Set<EventPhoto>();
+    public DbSet<Holiday> Holidays => Set<Holiday>();
+    public DbSet<TimeGroupSchedule> TimeGroupSchedules => Set<TimeGroupSchedule>();
+    public DbSet<TimeGroupSegment> TimeGroupSegments => Set<TimeGroupSegment>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -36,6 +41,19 @@ public class AccessDbContext : DbContext
         b.Entity<AccessLog>().HasIndex(l => l.TimestampUtc);
 
         b.Entity<StaffUser>().HasIndex(s => s.Username).IsUnique();
+
+        b.Entity<AlarmEvent>().HasIndex(a => a.TimestampUtc);
+
+        b.Entity<Holiday>().HasIndex(h => h.Index).IsUnique();
+
+        b.Entity<TimeGroupSchedule>().HasIndex(t => t.GroupNumber).IsUnique();
+        b.Entity<TimeGroupSegment>()
+            .HasOne(s => s.Schedule)
+            .WithMany(t => t.Segments)
+            .HasForeignKey(s => s.TimeGroupScheduleId)
+            .OnDelete(DeleteBehavior.Cascade);
+        b.Entity<TimeGroupSegment>()
+            .HasIndex(s => new { s.TimeGroupScheduleId, s.Weekday, s.SegmentIndex }).IsUnique();
 
         // TODO: senhas de comunicação NÃO devem ser persistidas em claro.
         //       Carregar de secrets/config, ou criptografar em repouso.
