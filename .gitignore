@@ -1,0 +1,26 @@
+# Build output
+[Bb]in/
+[Oo]bj/
+
+# Visual Studio / Rider / VS Code
+.vs/
+.vscode/
+*.user
+*.suo
+
+# Rider
+.idea/
+
+# EF Core
+*.db
+
+# Node (front-end helpers, se algum)
+node_modules/
+
+# Secrets (nunca versionar)
+appsettings.Development.json
+appsettings.Production.json
+*.pfx
+
+# macOS / OS junk
+.DS_Store

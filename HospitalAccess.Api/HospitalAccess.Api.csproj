@@ -1,0 +1,22 @@
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UserSecretsId>ccf33596-affe-43b6-8ef9-1e041b431a95</UserSecretsId>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="6.9.0" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.10" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.10">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\HospitalAccess.Application\HospitalAccess.Application.csproj" />
+    <ProjectReference Include="..\HospitalAccess.Infrastructure\HospitalAccess.Infrastructure.csproj" />
+    <ProjectReference Include="..\HospitalAccess.Gateway\HospitalAccess.Gateway.csproj" />
+    <ProjectReference Include="..\HospitalAccess.Domain\HospitalAccess.Domain.csproj" />
+  </ItemGroup>
+</Project>

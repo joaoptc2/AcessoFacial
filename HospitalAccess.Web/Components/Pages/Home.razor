@@ -1,0 +1,24 @@
+@page "/"
+@rendermode InteractiveServer
+@using HospitalAccess.Web.Services
+@inject AuthState AuthState
+@inject NavigationManager Nav
+
+<PageTitle>Início</PageTitle>
+
+@if (!AuthState.IsAuthenticated)
+{
+    Nav.NavigateTo("/login");
+}
+else
+{
+    <h1>Controle de Acesso Hospitalar</h1>
+    <p>Bem-vindo(a), @AuthState.Username.</p>
+    <ul>
+        <li><a href="controllers">Controladores</a> — cadastro dos 30 controladores 8190H e status de sincronização.</li>
+        <li><a href="doors">Portas</a> — abertura remota e gestão de portas.</li>
+        <li><a href="users">Usuários</a> — cadastro de face (usuários permanentes).</li>
+        <li><a href="visitors">Visitantes / QR</a> — cadastro e geração de QR de acesso.</li>
+        <li><a href="accesslog">Log de Acessos</a> — auditoria, filtros e exportação CSV.</li>
+    </ul>
+}

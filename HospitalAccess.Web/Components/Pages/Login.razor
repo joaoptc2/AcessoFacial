@@ -1,0 +1,55 @@
+@page "/login"
+@rendermode InteractiveServer
+@using HospitalAccess.Web.Services
+@inject ApiClient Api
+@inject AuthState AuthState
+@inject NavigationManager Nav
+
+<PageTitle>Login</PageTitle>
+
+<h3>Login</h3>
+
+<EditForm Model="_model" FormName="LoginForm" OnValidSubmit="SubmitAsync" class="col-md-4">
+    <div class="mb-3">
+        <label class="form-label">Usuário</label>
+        <InputText class="form-control" @bind-Value="_model.Username" />
+    </div>
+    <div class="mb-3">
+        <label class="form-label">Senha</label>
+        <InputText type="password" class="form-control" @bind-Value="_model.Password" />
+    </div>
+    @if (_error is not null)
+    {
+        <p class="text-danger">@_error</p>
+    }
+    <button type="submit" class="btn btn-primary" disabled="@_busy">Entrar</button>
+</EditForm>
+
+@code {
+    private readonly LoginModel _model = new();
+    private string? _error;
+    private bool _busy;
+
+    private async Task SubmitAsync()
+    {
+        _busy = true;
+        _error = null;
+        var result = await Api.LoginAsync(_model.Username, _model.Password);
+        _busy = false;
+
+        if (result is null)
+        {
+            _error = "Usuário ou senha inválidos.";
+            return;
+        }
+
+        AuthState.SignIn(result.Token, result.Role, _model.Username);
+        Nav.NavigateTo("/");
+    }
+
+    private sealed class LoginModel
+    {
+        public string Username { get; set; } = string.Empty;
+        public string Password { get; set; } = string.Empty;
+    }
+}

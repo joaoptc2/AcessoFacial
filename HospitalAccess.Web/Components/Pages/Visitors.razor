@@ -1,0 +1,86 @@
+@page "/visitors"
+@rendermode InteractiveServer
+@using HospitalAccess.Web.Services
+@inject ApiClient Api
+@inject AuthState AuthState
+@inject NavigationManager Nav
+
+<PageTitle>Visitantes</PageTitle>
+
+<h3>Visitantes (acesso por QR)</h3>
+
+<EditForm Model="_model" FormName="VisitorForm" OnValidSubmit="CreateAsync" class="col-md-6">
+    <div class="mb-3">
+        <label class="form-label">Nome</label>
+        <InputText class="form-control" @bind-Value="_model.Name" />
+    </div>
+    <div class="mb-3">
+        <label class="form-label">Válido até</label>
+        <InputDate Type="InputDateType.DateTimeLocal" class="form-control" @bind-Value="_model.ValidUntil" />
+    </div>
+    <div class="mb-3">
+        <label class="form-label">Grupo de horário (1-64)</label>
+        <InputNumber class="form-control" @bind-Value="_model.TimeGroup" />
+    </div>
+    @if (_error is not null)
+    {
+        <p class="text-danger">@_error</p>
+    }
+    <button type="submit" class="btn btn-primary" disabled="@_busy">Cadastrar e gerar QR</button>
+</EditForm>
+
+@if (_qrImageBase64 is not null)
+{
+    <h4 class="mt-4">QR de acesso — @_model.Name</h4>
+    <img src="data:image/png;base64,@_qrImageBase64" alt="QR de acesso" style="max-width: 300px;" />
+    <p class="text-muted">Válido até @_model.ValidUntil.ToString("g")</p>
+}
+
+@code {
+    private readonly CreateModel _model = new() { ValidUntil = DateTime.Now.AddDays(1) };
+    private string? _error;
+    private string? _qrImageBase64;
+    private bool _busy;
+
+    protected override void OnInitialized()
+    {
+        if (!AuthState.IsAuthenticated) Nav.NavigateTo("/login");
+    }
+
+    private async Task CreateAsync()
+    {
+        _error = null;
+        _qrImageBase64 = null;
+
+        if (_model.ValidUntil <= DateTime.Now) { _error = "Validade deve ser no futuro."; return; }
+        if (_model.TimeGroup is < 1 or > 64) { _error = "Grupo de horário deve estar entre 1 e 64."; return; }
+
+        _busy = true;
+        var createResponse = await Api.CreateVisitorAsync(new CreateVisitorRequest(_model.Name, _model.ValidUntil.ToUniversalTime(), _model.TimeGroup));
+        if (!createResponse.IsSuccessStatusCode)
+        {
+            _busy = false;
+            _error = await createResponse.Content.ReadAsStringAsync();
+            return;
+        }
+
+        var created = await createResponse.Content.ReadFromJsonAsync<CreateUserResponse>();
+        var png = created is null ? null : await Api.GenerateVisitorQrAsync(created.Id);
+        _busy = false;
+
+        if (png is null)
+        {
+            _error = "Visitante criado, mas falha ao gerar o QR.";
+            return;
+        }
+
+        _qrImageBase64 = Convert.ToBase64String(png);
+    }
+
+    private sealed class CreateModel
+    {
+        public string Name { get; set; } = string.Empty;
+        public DateTime ValidUntil { get; set; }
+        public int TimeGroup { get; set; } = 1;
+    }
+}

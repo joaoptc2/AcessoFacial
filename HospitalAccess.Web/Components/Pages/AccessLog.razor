@@ -1,0 +1,93 @@
+@page "/accesslog"
+@rendermode InteractiveServer
+@using HospitalAccess.Web.Services
+@inject ApiClient Api
+@inject IJSRuntime Js
+@inject AuthState AuthState
+@inject NavigationManager Nav
+
+<PageTitle>Log de Acessos</PageTitle>
+
+<h3>Log de Acessos (auditoria)</h3>
+
+<div class="row g-2 mb-3">
+    <div class="col-md-3">
+        <label class="form-label">De</label>
+        <input type="datetime-local" class="form-control" @bind="_from" />
+    </div>
+    <div class="col-md-3">
+        <label class="form-label">Até</label>
+        <input type="datetime-local" class="form-control" @bind="_to" />
+    </div>
+    <div class="col-md-2 align-self-end">
+        <button class="btn btn-primary w-100" @onclick="SearchAsync">Filtrar</button>
+    </div>
+    <div class="col-md-2 align-self-end">
+        <button class="btn btn-outline-secondary w-100" @onclick="ExportCsvAsync">Exportar CSV</button>
+    </div>
+</div>
+
+@if (_page is not null)
+{
+    <p>@_page.Total registro(s) — página @_page.Page</p>
+    <table class="table table-sm">
+        <thead>
+            <tr><th>Data/Hora (UTC)</th><th>Usuário</th><th>Controlador</th><th>Método</th><th>Direção</th><th>Concedido</th></tr>
+        </thead>
+        <tbody>
+            @foreach (var item in _page.Items)
+            {
+                <tr class="@(item.Granted ? "" : "table-danger")">
+                    <td>@item.TimestampUtc.ToString("g")</td>
+                    <td>@(item.UserName ?? item.UserCode?.ToString() ?? "—")</td>
+                    <td>@item.ControllerName</td>
+                    <td>@item.Method</td>
+                    <td>@(item.Direction == 1 ? "Entrada" : item.Direction == 2 ? "Saída" : "—")</td>
+                    <td>@(item.Granted ? "Sim" : "Não")</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+
+    <button class="btn btn-outline-secondary btn-sm" disabled="@(_currentPage <= 1)" @onclick="() => ChangePageAsync(-1)">Anterior</button>
+    <button class="btn btn-outline-secondary btn-sm" disabled="@(_currentPage * _pageSize >= _page.Total)" @onclick="() => ChangePageAsync(1)">Próxima</button>
+}
+
+@code {
+    private DateTime? _from;
+    private DateTime? _to;
+    private int _currentPage = 1;
+    private readonly int _pageSize = 25;
+    private AccessLogPage? _page;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!AuthState.IsAuthenticated) { Nav.NavigateTo("/login"); return; }
+        await SearchAsync();
+    }
+
+    private async Task SearchAsync()
+    {
+        _currentPage = 1;
+        await LoadAsync();
+    }
+
+    private async Task ChangePageAsync(int delta)
+    {
+        _currentPage += delta;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _page = await Api.QueryAccessLogAsync(
+            _from?.ToUniversalTime(), _to?.ToUniversalTime(), null, null, _currentPage, _pageSize);
+    }
+
+    private async Task ExportCsvAsync()
+    {
+        var bytes = await Api.ExportAccessLogCsvAsync(_from?.ToUniversalTime(), _to?.ToUniversalTime());
+        var base64 = Convert.ToBase64String(bytes);
+        await Js.InvokeVoidAsync("downloadFileFromBase64", $"access-log-{DateTime.UtcNow:yyyyMMddHHmmss}.csv", "text/csv", base64);
+    }
+}

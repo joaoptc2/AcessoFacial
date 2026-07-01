@@ -1,0 +1,113 @@
+@page "/users"
+@rendermode InteractiveServer
+@using HospitalAccess.Web.Services
+@inject ApiClient Api
+@inject AuthState AuthState
+@inject NavigationManager Nav
+
+<PageTitle>Usuários</PageTitle>
+
+<h3>Usuários permanentes (acesso por face)</h3>
+
+<EditForm Model="_model" FormName="UserForm" OnValidSubmit="CreateAsync" class="col-md-6">
+    <div class="mb-3">
+        <label class="form-label">Nome</label>
+        <InputText class="form-control" @bind-Value="_model.Name" />
+    </div>
+    <div class="mb-3">
+        <label class="form-label">Grupo de horário (1-64)</label>
+        <InputNumber class="form-control" @bind-Value="_model.TimeGroup" />
+    </div>
+    <div class="mb-3">
+        <label class="form-label">Portas permitidas</label>
+        @foreach (var d in _doors)
+        {
+            <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="@d.Id"
+                       checked="@_selectedDoors.Contains(d.Id)"
+                       @onchange="e => ToggleDoor(d.Id, (bool)e.Value!)" />
+                <label class="form-check-label" for="@d.Id">@d.Name (@d.ControllerName)</label>
+            </div>
+        }
+    </div>
+    <div class="mb-3">
+        <label class="form-label">Foto de face (JPG)</label>
+        <InputFile OnChange="OnFileSelected" accept="image/jpeg" />
+    </div>
+    @if (_error is not null)
+    {
+        <p class="text-danger">@_error</p>
+    }
+    @if (_success is not null)
+    {
+        <p class="text-success">@_success</p>
+    }
+    <button type="submit" class="btn btn-primary" disabled="@_busy">Cadastrar</button>
+</EditForm>
+
+@code {
+    private readonly CreateModel _model = new();
+    private List<DoorDto> _doors = [];
+    private readonly HashSet<Guid> _selectedDoors = [];
+    private IBrowserFile? _photo;
+    private string? _error;
+    private string? _success;
+    private bool _busy;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!AuthState.IsAuthenticated) { Nav.NavigateTo("/login"); return; }
+        _doors = await Api.GetDoorsAsync();
+    }
+
+    private void ToggleDoor(Guid doorId, bool isChecked)
+    {
+        if (isChecked) _selectedDoors.Add(doorId);
+        else _selectedDoors.Remove(doorId);
+    }
+
+    private void OnFileSelected(InputFileChangeEventArgs e) => _photo = e.File;
+
+    private async Task CreateAsync()
+    {
+        _error = null;
+        _success = null;
+
+        if (_photo is null) { _error = "Selecione uma foto de face."; return; }
+        if (_model.TimeGroup is < 1 or > 64) { _error = "Grupo de horário deve estar entre 1 e 64."; return; }
+
+        _busy = true;
+        using var content = new MultipartFormDataContent
+        {
+            { new StringContent(_model.Name), "Name" },
+            { new StringContent(_model.TimeGroup.ToString()), "TimeGroup" },
+        };
+        foreach (var doorId in _selectedDoors)
+            content.Add(new StringContent(doorId.ToString()), "DoorIds");
+
+        var stream = _photo.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024);
+        var fileContent = new StreamContent(stream);
+        fileContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(_photo.ContentType);
+        content.Add(fileContent, "facePhoto", _photo.Name);
+
+        var response = await Api.CreateUserAsync(content);
+        _busy = false;
+
+        if (!response.IsSuccessStatusCode)
+        {
+            _error = await response.Content.ReadAsStringAsync();
+            return;
+        }
+
+        _success = "Usuário cadastrado e sincronização disparada.";
+        _model.Name = string.Empty;
+        _selectedDoors.Clear();
+        _photo = null;
+    }
+
+    private sealed class CreateModel
+    {
+        public string Name { get; set; } = string.Empty;
+        public int TimeGroup { get; set; } = 1;
+    }
+}

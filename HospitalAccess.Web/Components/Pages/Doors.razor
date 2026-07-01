@@ -1,0 +1,98 @@
+@page "/doors"
+@rendermode InteractiveServer
+@using HospitalAccess.Web.Services
+@inject ApiClient Api
+@inject AuthState AuthState
+@inject NavigationManager Nav
+
+<PageTitle>Portas</PageTitle>
+
+<h3>Portas</h3>
+
+<EditForm Model="_model" FormName="DoorForm" OnValidSubmit="CreateAsync" class="row g-2 mb-4">
+    <div class="col-md-3"><InputText class="form-control" @bind-Value="_model.Name" placeholder="Nome da porta" /></div>
+    <div class="col-md-4">
+        <select class="form-select" @bind="_model.ControllerIdText">
+            <option value="">Selecione o controlador...</option>
+            @foreach (var c in _controllers)
+            {
+                <option value="@c.Id">@c.Name (@c.IpAddress)</option>
+            }
+        </select>
+    </div>
+    <div class="col-md-2"><InputNumber class="form-control" @bind-Value="_model.RelayIndex" placeholder="Índice do relé" /></div>
+    <div class="col-md-2"><button class="btn btn-primary" type="submit">Adicionar</button></div>
+</EditForm>
+@if (_error is not null)
+{
+    <p class="text-danger">@_error</p>
+}
+
+<table class="table">
+    <thead><tr><th>Nome</th><th>Controlador</th><th>Relé</th><th></th></tr></thead>
+    <tbody>
+        @foreach (var d in _doors)
+        {
+            <tr>
+                <td>@d.Name</td>
+                <td>@d.ControllerName</td>
+                <td>@d.RelayIndex</td>
+                <td>
+                    <button class="btn btn-sm btn-success" @onclick="() => OpenAsync(d.Id)">Abrir remotamente</button>
+                </td>
+            </tr>
+        }
+    </tbody>
+</table>
+@if (_openResult is not null)
+{
+    <p>@_openResult</p>
+}
+
+@code {
+    private List<DoorDto> _doors = [];
+    private List<ControllerDto> _controllers = [];
+    private readonly CreateModel _model = new();
+    private string? _error;
+    private string? _openResult;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!AuthState.IsAuthenticated) { Nav.NavigateTo("/login"); return; }
+        _doors = await Api.GetDoorsAsync();
+        _controllers = await Api.GetControllersAsync();
+    }
+
+    private async Task CreateAsync()
+    {
+        _error = null;
+        if (!Guid.TryParse(_model.ControllerIdText, out var controllerId))
+        {
+            _error = "Selecione um controlador.";
+            return;
+        }
+
+        var response = await Api.CreateDoorAsync(new CreateDoorRequest(_model.Name, controllerId, _model.RelayIndex));
+        if (!response.IsSuccessStatusCode)
+        {
+            _error = await response.Content.ReadAsStringAsync();
+            return;
+        }
+        _doors = await Api.GetDoorsAsync();
+    }
+
+    private async Task OpenAsync(Guid doorId)
+    {
+        var response = await Api.OpenDoorAsync(doorId);
+        _openResult = response.IsSuccessStatusCode
+            ? "Comando de abertura enviado."
+            : $"Falha: {await response.Content.ReadAsStringAsync()}";
+    }
+
+    private sealed class CreateModel
+    {
+        public string Name { get; set; } = string.Empty;
+        public string ControllerIdText { get; set; } = string.Empty;
+        public int RelayIndex { get; set; }
+    }
+}

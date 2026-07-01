@@ -1,0 +1,130 @@
+@page "/controllers"
+@rendermode InteractiveServer
+@using HospitalAccess.Web.Services
+@inject ApiClient Api
+@inject AuthState AuthState
+@inject NavigationManager Nav
+
+<PageTitle>Controladores</PageTitle>
+
+<h3>Controladores (8190H / A33_Face)</h3>
+
+<EditForm Model="_model" FormName="ControllerForm" OnValidSubmit="CreateAsync" class="row g-2 mb-4">
+    <div class="col-md-2"><InputText class="form-control" @bind-Value="_model.Name" placeholder="Nome" /></div>
+    <div class="col-md-2"><InputText class="form-control" @bind-Value="_model.IpAddress" placeholder="IP" /></div>
+    <div class="col-md-1"><InputNumber class="form-control" @bind-Value="_model.Port" placeholder="Porta" /></div>
+    <div class="col-md-2"><InputText class="form-control" @bind-Value="_model.SerialNumber" placeholder="SN (16 dígitos)" /></div>
+    <div class="col-md-2"><InputText class="form-control" @bind-Value="_model.CommunicationPassword" placeholder="Senha (8 hex)" /></div>
+    <div class="col-md-2 form-check">
+        <InputCheckbox class="form-check-input" @bind-Value="_model.SupportsWaitRepeatMessage" id="waitRepeat" />
+        <label class="form-check-label" for="waitRepeat">Firmware &gt;= v4.28</label>
+    </div>
+    <div class="col-md-1"><button class="btn btn-primary" type="submit">Adicionar</button></div>
+</EditForm>
+@if (_createError is not null)
+{
+    <p class="text-danger">@_createError</p>
+}
+
+<table class="table">
+    <thead>
+        <tr><th>Nome</th><th>IP:Porta</th><th>SN</th><th>Portas</th><th></th></tr>
+    </thead>
+    <tbody>
+        @foreach (var c in _controllers)
+        {
+            <tr>
+                <td>@c.Name</td>
+                <td>@c.IpAddress:@c.Port</td>
+                <td>@c.SerialNumber</td>
+                <td>@string.Join(", ", c.Doors.Select(d => d.Name))</td>
+                <td>
+                    <button class="btn btn-sm btn-outline-secondary" @onclick="() => TestConnectionAsync(c.Id)">Testar conexão</button>
+                    <button class="btn btn-sm btn-outline-info" @onclick="() => ToggleSyncStatusAsync(c.Id)">Status de sincronização</button>
+                </td>
+            </tr>
+            @if (_selectedController == c.Id)
+            {
+                <tr>
+                    <td colspan="5">
+                        @if (_testResult is not null)
+                        {
+                            <p>@_testResult</p>
+                        }
+                        @if (_syncStatuses.Count == 0)
+                        {
+                            <em>Nenhum usuário sincronizado neste controlador ainda.</em>
+                        }
+                        else
+                        {
+                            <ul>
+                                @foreach (var s in _syncStatuses)
+                                {
+                                    <li>@s.UserName — @s.State (retries: @s.RetryCount) @(s.LastError is null ? "" : $"— {s.LastError}")</li>
+                                }
+                            </ul>
+                        }
+                    </td>
+                </tr>
+            }
+        }
+    </tbody>
+</table>
+
+@code {
+    private List<ControllerDto> _controllers = [];
+    private readonly CreateModel _model = new();
+    private string? _createError;
+    private Guid? _selectedController;
+    private string? _testResult;
+    private List<SyncStatusDto> _syncStatuses = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!AuthState.IsAuthenticated) { Nav.NavigateTo("/login"); return; }
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync() => _controllers = await Api.GetControllersAsync();
+
+    private async Task CreateAsync()
+    {
+        _createError = null;
+        var response = await Api.CreateControllerAsync(new CreateControllerRequest(
+            _model.Name, _model.IpAddress, _model.Port, _model.SerialNumber,
+            _model.CommunicationPassword, _model.SupportsWaitRepeatMessage));
+
+        if (!response.IsSuccessStatusCode)
+        {
+            _createError = await response.Content.ReadAsStringAsync();
+            return;
+        }
+
+        await LoadAsync();
+    }
+
+    private async Task TestConnectionAsync(Guid id)
+    {
+        _selectedController = id;
+        _syncStatuses = [];
+        var (ok, message) = await Api.TestConnectionAsync(id);
+        _testResult = ok ? $"OK: {message}" : $"Falha: {message}";
+    }
+
+    private async Task ToggleSyncStatusAsync(Guid id)
+    {
+        _selectedController = id;
+        _testResult = null;
+        _syncStatuses = await Api.GetSyncStatusAsync(id);
+    }
+
+    private sealed class CreateModel
+    {
+        public string Name { get; set; } = string.Empty;
+        public string IpAddress { get; set; } = string.Empty;
+        public int Port { get; set; } = 8101;
+        public string SerialNumber { get; set; } = string.Empty;
+        public string CommunicationPassword { get; set; } = "FFFFFFFF";
+        public bool SupportsWaitRepeatMessage { get; set; }
+    }
+}

@@ -1,0 +1,52 @@
+@using HospitalAccess.Web.Services
+@implements IDisposable
+@inject AuthState AuthState
+
+<div class="top-row ps-3 navbar navbar-dark">
+    <div class="container-fluid">
+        <a class="navbar-brand" href="">Controle de Acesso Hospitalar</a>
+    </div>
+</div>
+
+<input type="checkbox" title="Navigation menu" class="navbar-toggler" />
+
+<div class="nav-scrollable" onclick="document.querySelector('.navbar-toggler').click()">
+    <nav class="flex-column">
+        @if (AuthState.IsAuthenticated)
+        {
+            <div class="nav-item px-3">
+                <NavLink class="nav-link" href="" Match="NavLinkMatch.All">Início</NavLink>
+            </div>
+            <div class="nav-item px-3">
+                <NavLink class="nav-link" href="controllers">Controladores</NavLink>
+            </div>
+            <div class="nav-item px-3">
+                <NavLink class="nav-link" href="doors">Portas</NavLink>
+            </div>
+            <div class="nav-item px-3">
+                <NavLink class="nav-link" href="users">Usuários</NavLink>
+            </div>
+            <div class="nav-item px-3">
+                <NavLink class="nav-link" href="visitors">Visitantes / QR</NavLink>
+            </div>
+            <div class="nav-item px-3">
+                <NavLink class="nav-link" href="accesslog">Log de Acessos</NavLink>
+            </div>
+            <div class="nav-item px-3">
+                <span class="nav-link">@AuthState.Username (@AuthState.Role)</span>
+            </div>
+        }
+        else
+        {
+            <div class="nav-item px-3">
+                <NavLink class="nav-link" href="login">Login</NavLink>
+            </div>
+        }
+    </nav>
+</div>
+
+@code {
+    protected override void OnInitialized() => AuthState.Changed += StateHasChanged;
+
+    public void Dispose() => AuthState.Changed -= StateHasChanged;
+}

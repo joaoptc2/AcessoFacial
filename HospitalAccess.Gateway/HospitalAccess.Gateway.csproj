@@ -1,0 +1,59 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <!--
+      O SDK DoNetDrive.* é fornecido pelo fabricante (não há feed NuGet público).
+      As DLLs (versões confirmadas no packages.config do projeto de exemplo
+      DoNetDrive.Protocol.Fingerprint.Test: Core 2.9.0, Protocol 2.4.0,
+      Protocol.Door 2.8.0, Protocol.Fingerprint 2.20.0) ficam em lib/ e são
+      referenciadas diretamente. Ver README (setup on-premise) para como obtê-las
+      do fabricante ao clonar este repositório em outro ambiente.
+    -->
+    <Reference Include="DoNetDrive.Common">
+      <HintPath>lib\DoNetDrive.Common.dll</HintPath>
+    </Reference>
+    <Reference Include="DoNetDrive.Core">
+      <HintPath>lib\DoNetDrive.Core.dll</HintPath>
+    </Reference>
+    <Reference Include="DoNetDrive.Protocol">
+      <HintPath>lib\DoNetDrive.Protocol.dll</HintPath>
+    </Reference>
+    <Reference Include="DoNetDrive.Protocol.Door">
+      <HintPath>lib\DoNetDrive.Protocol.Door.dll</HintPath>
+    </Reference>
+    <Reference Include="DoNetDrive.Protocol.Fingerprint">
+      <HintPath>lib\DoNetDrive.Protocol.Fingerprint.dll</HintPath>
+    </Reference>
+    <Reference Include="DoNetDrive.Protocol.Util">
+      <HintPath>lib\DoNetDrive.Protocol.Util.dll</HintPath>
+    </Reference>
+    <Reference Include="DotNetty.Buffers">
+      <HintPath>lib\DotNetty.Buffers.dll</HintPath>
+    </Reference>
+    <Reference Include="DotNetty.Common">
+      <HintPath>lib\DotNetty.Common.dll</HintPath>
+    </Reference>
+    <Reference Include="DotNetty.Transport">
+      <HintPath>lib\DotNetty.Transport.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Dependências transitivas do SDK (disponíveis no NuGet público). -->
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.1" />
+    <!--
+      ImageSharp: porta multiplataforma do ImageTool.ConvertImage do fabricante (que usa
+      System.Drawing/GDI+, Windows-only). Fixado em 2.x (Apache-2.0) — NÃO subir para 3.x
+      sem revisar a "Six Labors Split License" (uso comercial pode exigir licença paga).
+    -->
+    <PackageReference Include="SixLabors.ImageSharp" Version="2.1.13" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\HospitalAccess.Application\HospitalAccess.Application.csproj" />
+    <ProjectReference Include="..\HospitalAccess.Domain\HospitalAccess.Domain.csproj" />
+  </ItemGroup>
+</Project>
