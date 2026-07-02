@@ -100,15 +100,13 @@ public class VisitorsController : ControllerBase
 
     /// <summary>
     /// Cria o visitante. Não é cadastrado como Person em nenhum controlador — o QR
-    /// (Appendix 8) é validado offline pelo próprio dispositivo; ver VisitorCardNumber.
+    /// (ver QrAccessTokenService) é validado pelo controlador; não cadastra Person.
     /// </summary>
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] CreateVisitorRequest request, CancellationToken ct)
     {
         if (request.ValidUntil <= DateTime.UtcNow)
             return BadRequest("ValidUntil deve ser no futuro.");
-        if (request.ValidUntil.Year > QrAccessTokenService.YearBase + 63)
-            return BadRequest($"ValidUntil não pode ultrapassar o ano {QrAccessTokenService.YearBase + 63} (limite do tempo comprimido do protocolo).");
         if (request.TimeGroup is < 1 or > 64)
             return BadRequest("TimeGroup deve estar entre 1 e 64.");
 
@@ -144,16 +142,19 @@ public class VisitorsController : ControllerBase
         return Ok(entries);
     }
 
-    /// <summary>Gera o QR de acesso (PNG) para um visitante com validade embutida.</summary>
+    /// <summary>
+    /// Gera o QR de acesso (PNG) para um visitante. O QR em si não embute a validade (ver
+    /// QrAccessTokenService) — ValidUntil continua exigido e controlado pelo nosso sistema
+    /// (IVisitorExpirationJob revoga automaticamente), não pelo conteúdo do QR.
+    /// </summary>
     [HttpPost("{visitorId:guid}/qrcode")]
     public async Task<IActionResult> GenerateQr(Guid visitorId, CancellationToken ct)
     {
         var visitor = await _db.Users.FirstOrDefaultAsync(u => u.Id == visitorId && u.Type == UserType.Visitor, ct);
         if (visitor is null) return NotFound();
-        if (visitor.ValidUntil is not { } expiration) return BadRequest("Visitante sem validade definida.");
+        if (visitor.ValidUntil is null) return BadRequest("Visitante sem validade definida.");
 
-        var card = VisitorCardNumber.FromUserCode(visitor.UserCode);
-        var token = _qr.BuildEncryptedToken(card, expiration);
+        var token = _qr.BuildAccessToken(visitor.UserCode, DateTime.UtcNow);
         var png = _encoder.EncodePng(token);
         return File(png, "image/png");
     }

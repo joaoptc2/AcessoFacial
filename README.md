@@ -46,29 +46,35 @@ usuário inexistente).
 ### 4. `WaitRepeatMessage`
 Configurável por controlador via `Controller.SupportsWaitRepeatMessage` (só firmware ≥ v4.28).
 
-### 5. QR de acesso ≠ QR de consulta
-Implementado apenas o **QR de abertura de porta (Appendix 8)**: 14 bytes (9 cartão + 4
-validade em tempo comprimido, ano base 2018 + 1 CRC8), cifrados com RC4
-(chave = ASCII de `1e30b3ec0f634874956e27627dfc2c46`). O "QR de consulta de resultado"
-(`0x35`) **não foi implementado** — é outro recurso.
+### 5. QR de acesso: formato corrigido em 2026-07-02 (era diferente do documento de protocolo)
+A implementação original seguia o Appendix 8 do documento de protocolo: 14 bytes binários
+(9 cartão + 4 validade em tempo comprimido + 1 CRC8), cifrados com RC4. O cliente enviou um
+QR real e funcional gerado pelo sistema oficial do fabricante e confirmou que **é esse QR
+que a câmera do controlador lê para abrir a porta** — e o conteúdo decodificado não bate
+nada com o formato do documento. O QR de referência (Base64 → ASCII) é:
 
-⚠️ **Pendente de validação com QR real do fabricante**: o polinômio/init do CRC8 e a ordem
-de bits do tempo comprimido não estão totalmente especificados no `.doc` do protocolo (só
-os campos e seus tamanhos em bits). A implementação atual usa a interpretação mais provável
-(CRC-8 poly 0x07/init 0x00, empacotamento big-endian dos campos). Há um teste
-"golden vector" preparado e marcado `Skip` em `QrAccessTokenServiceTests.cs` — assim que
-houver um QR de referência gerado pelo fabricante (cartão + validade conhecidos → bytes
-esperados), preencha o teste e remova o `Skip`. **Não gerar QRs de produção antes disso.**
+```
+user_id=1_time=1782921297138761
+```
 
-### 6. Convenção do "cartão" do visitante (não é do protocolo, é nossa)
-O `CardTransaction` do SDK (evento de autenticação em tempo real) não expõe um campo de
-"número de cartão" próprio — só `UserCode`. Por isso `VisitorCardNumber` embute o `UserCode`
-do visitante nos 4 bytes mais significativos do "cartão" de 9 bytes do QR (resto zerado),
-para que o evento de acesso reportado em tempo real correlacione direto com `User.UserCode`
-no nosso banco. Visitantes **não são cadastrados como `Person`** em nenhum controlador — o
-QR é validado inteiramente offline pelo firmware (RC4 + CRC8 + expiração embutida).
+Ou seja: **texto simples** `user_id={UserCode}_time={microssegundos desde a época Unix UTC}`,
+codificado em Base64. `QrAccessTokenService.BuildAccessToken(userCode, timestampUtc)` foi
+reescrito para gerar exatamente esse formato — validado por um teste golden-vector contra o
+QR de referência (`QrAccessTokenServiceTests.BuildAccessToken_MatchesVendorReferenceFormat`).
+O código RC4/CRC8/tempo-comprimido antigo (`Rc4.cs`, `VisitorCardNumber.cs`) foi removido por
+estar incorreto.
 
-### 7. Controlador = porta (não existe entidade `Door` separada)
+⚠️ **Ainda não confirmado**: este formato não tem nenhuma criptografia/checksum — qualquer
+`user_id` pode ser forjado a partir do texto decodificado. Isso só é seguro se o controlador
+validar contra um servidor (o `user_id` está autorizado agora?) em vez de confiar cegamente
+no QR offline; não temos visibilidade de qual dos dois modelos o hardware realmente usa.
+Também não está confirmado se `time` é o instante de geração (nossa leitura — o valor de
+referência bate com "agora" no momento em que o QR de teste foi gerado) ou alguma janela de
+validade/replay diferente. `Visitor.ValidUntil` continua sendo a validade que o NOSSO sistema
+controla (`IVisitorExpirationJob` revoga automaticamente) — não é (e talvez nunca tenha sido)
+o que o hardware usa para decidir se deixa a porta abrir.
+
+### 6. Controlador = porta (não existe entidade `Door` separada)
 O hardware 8190H tem **um único relé/porta por controlador** — não há como um controlador
 comandar mais de uma porta. Por isso não existe uma entidade `Door`: `Controller` já
 representa fisicamente a porta (campo `RelayIndex`, sempre `0`, mantido só por
@@ -78,7 +84,7 @@ compatibilidade futura caso surja um modelo multi-relé). `AccessPermission` lig
 e `UnlockDoor` (reverter o trancamento) — ficam em `IDeviceGateway` e são expostos por
 controlador em `POST /api/controllers/{id}/{open|close|hold-open|lock|unlock}`.
 
-### 8. Sincronização de usuário roda em segundo plano (fire-and-forget)
+### 7. Sincronização de usuário roda em segundo plano (fire-and-forget)
 Criar/editar/excluir um usuário grava no banco e dispara a sincronização com os
 controladores (`IUserSyncService`) **sem aguardar o resultado na requisição HTTP**: o
 comando ao hardware é TCP com retries e pode levar minutos se um controlador estiver
@@ -90,7 +96,7 @@ cascata) é apagada na hora, o `UserCode` e a lista de controladores são captur
 *antes* do delete, e a revogação no hardware roda depois, direto pelo `IDeviceGateway`
 (ver `UsersController.RevokeDeletedUserInBackground`).
 
-### 9. Segurança física (fora do software)
+### 8. Segurança física (fora do software)
 A política **fail-safe vs fail-secure** das portas em queda de energia/rede (isto é: se a
 fechadura trava ou libera quando falta energia ou a rede cai) é decisão de projeto físico
 predial e **deve ser definida com a equipe de segurança/manutenção do hospital**, em
@@ -99,7 +105,7 @@ controla nem pode controlar esse comportamento — ele só comanda abertura/fech
 operação normal. **Documente a decisão tomada para cada porta fisicamente**, fora deste
 repositório (ex.: planilha de portas do projeto elétrico/predial).
 
-### 10. Rede/descoberta, relógio, feriados, grade horária, alarmes, ajustes locais, foto de evento, leitura reversa e Mifare
+### 9. Rede/descoberta, relógio, feriados, grade horária, alarmes, ajustes locais, foto de evento, leitura reversa e Mifare
 Funções adicionadas depois da auditoria inicial do protocolo (ver seção "Funções do protocolo
 não implementadas" mais abaixo — a maioria virou item desta lista):
 
@@ -118,7 +124,7 @@ não implementadas" mais abaixo — a maioria virou item desta lista):
   `Door.Door8800.TimeGroup` + `Door.Door8800.Data.TimeGroup.WeekTimeGroup/DayTimeGroup/TimeSegment`):
   definições globais mantidas no banco (`Holiday`, `TimeGroupSchedule`/`TimeGroupSegment`) e
   empurradas para **todos** os controladores sob demanda (`POST /api/holidays/sync-all`,
-  `POST /api/timegroups/sync-all` — em segundo plano, mesmo padrão fire-and-forget do item 8).
+  `POST /api/timegroups/sync-all` — em segundo plano, mesmo padrão fire-and-forget do item 7).
   A tela de grade horária simplifica para uma janela por dia (o dispositivo suporta até 8);
   o domínio (`TimeGroupSegment.SegmentIndex`) já comporta mais, se precisar no futuro.
   Antes disso, o campo `TimeGroup` do usuário era gravado no dispositivo mas **nada definia o
@@ -246,8 +252,8 @@ dotnet test HospitalAccess.Tests/HospitalAccess.Tests.csproj
 ```
 
 ## O que foi verificado de ponta a ponta neste ambiente de desenvolvimento
-- Build completo da solução (0 erros/warnings) e suíte de testes (10 passando, 1 golden
-  vector `Skip` intencional).
+- Build completo da solução (0 erros/warnings) e suíte de testes (3 passando, incluindo o
+  golden vector do QR contra a referência real do fabricante — ver item 5).
 - API rodando contra PostgreSQL real: login JWT, CRUD de controladores (com comandos de
   porta), usuários (com grupo organizacional, cartão Mifare opcional e foto), grupos de
   usuários e visitantes, geração de QR (PNG real, byte-mode), feriados e grade horária
@@ -263,7 +269,7 @@ dotnet test HospitalAccess.Tests/HospitalAccess.Tests.csproj
   log de alarmes → refresh de página degrada graciosamente para o login (não há crash).
 - Corrigido durante o teste end-to-end: `POST/PUT/DELETE /api/users` travava a requisição
   por tempo indefinido quando um controlador associado estava inacessível (a sincronização
-  era síncrona). Agora roda em segundo plano — ver item 8 acima.
+  era síncrona). Agora roda em segundo plano — ver item 7 acima.
 - Corrigido durante o teste end-to-end (rodada das 8 áreas novas): a tela de detalhes do
   controlador (`ControllerDetail.razor`) ficava presa em "Carregando..." indefinidamente —
   não travada de verdade, mas sem re-renderizar — porque o Blazor só atualiza a UI depois que
@@ -282,7 +288,7 @@ dotnet test HospitalAccess.Tests/HospitalAccess.Tests.csproj
   derruba — devolve 502 controlado. **Não foi possível testar contra um 8190H físico** (não
   há um na rede deste ambiente) — isso é o item mais importante a validar ao ligar o primeiro
   controlador real (ver caveat da seção 2 acima), especialmente a descoberta por broadcast
-  UDP (item 10) que usa um padrão de comando diferente do resto do gateway.
+  UDP (item 9) que usa um padrão de comando diferente do resto do gateway.
 - Interface modernizada (paleta indigo/slate, tipografia system-ui, cards com sombra sutil,
   tela de login em card centralizado, menu lateral escuro reorganizado em seções) e filtro de
   busca adicionado em todas as listas (Controladores, Usuários, Grupos, Visitantes, Feriados,
@@ -329,14 +335,19 @@ dotnet test HospitalAccess.Tests/HospitalAccess.Tests.csproj
 - **Troca de senha do StaffUser** e cadastro de novos operadores/recepcionistas: só via
   banco por enquanto; não há endpoint/tela dedicada.
 - **Integração HIS/AD**: fora de escopo por pedido explícito — não implementada.
-- **Golden vector do QR** (item 5 acima): pendente de um QR real do fabricante.
-- **Descoberta por broadcast UDP** (item 10): implementada mas não validada contra hardware
+- **Modelo de validação do QR pelo hardware** (item 5 acima): o formato do QR em si já foi
+  confirmado contra um QR real e funcional, mas ainda não sabemos se o controlador valida
+  offline (confiando cegamente no texto do QR — inseguro, qualquer um forja um `user_id`) ou
+  online (consultando um servidor). Também não confirmamos se `time` é só o instante de
+  geração ou alguma janela de validade/replay. Só dá para esclarecer com o fabricante ou
+  testando contra hardware real.
+- **Descoberta por broadcast UDP** (item 9): implementada mas não validada contra hardware
   real — é um padrão de comando (multi-resposta) diferente do restante do gateway.
 - **Ajustes locais "não perturbe", clima e indicador de limpeza**: sem classe correspondente
-  no SDK disponível (item 10) — não implementados.
+  no SDK disponível (item 9) — não implementados.
 - **Cartões Mifare**: só o número do cartão é gravado (`Person.CardData`); a estrutura
   completa de setor (Apêndices 10-13) não é abstraída pelo SDK e exigiria um leitor/gravador
-  de cartão dedicado (item 10).
+  de cartão dedicado (item 9).
 - **Foto do evento**: a correlação foto↔registro é por ordem cronológica, não por um
   identificador explícito (o SDK grava os arquivos em disco com um nome não documentado no
-  material de referência disponível) — ver item 10.
+  material de referência disponível) — ver item 9.
