@@ -91,19 +91,8 @@
                 <td><code>@c.SerialNumber</code></td>
                 <td><span class="badge bg-secondary">@c.UserCount</span></td>
                 <td>
-                    <div class="btn-group btn-group-sm mb-1" role="group">
-                        <button class="btn btn-success" title="Abrir" @onclick="() => DoorCommandAsync(c.Id, Api.OpenDoorAsync)">Abrir</button>
-                        <button class="btn btn-outline-secondary" title="Fechar" @onclick="() => DoorCommandAsync(c.Id, Api.CloseDoorAsync)">Fechar</button>
-                        @if (IsAdminOrOperator)
-                        {
-                            <button class="btn btn-outline-warning" title="Manter aberta" @onclick="() => DoorCommandAsync(c.Id, Api.HoldDoorOpenAsync)">Manter aberta</button>
-                            <button class="btn btn-outline-danger" title="Trancar" @onclick="() => DoorCommandAsync(c.Id, Api.LockDoorAsync)">Trancar</button>
-                            <button class="btn btn-outline-dark" title="Destrancar" @onclick="() => DoorCommandAsync(c.Id, Api.UnlockDoorAsync)">Destrancar</button>
-                        }
-                    </div>
-                    <div class="btn-group btn-group-sm mb-1" role="group">
-                        <button class="btn btn-outline-info" @onclick="() => TestConnectionAsync(c.Id)">Testar conexão</button>
-                        <button class="btn btn-outline-info" @onclick="() => ToggleSyncStatusAsync(c.Id)">Status</button>
+                    <div class="btn-group btn-group-sm" role="group">
+                        <button class="btn btn-primary" @onclick="() => OpenModal(c.Id)">Controlar</button>
                         <a class="btn btn-outline-dark" href="@($"controllers/{c.Id}")">Detalhes</a>
                         @if (IsAdminOrOperator)
                         {
@@ -113,40 +102,69 @@
                     </div>
                 </td>
             </tr>
-            @if (_selectedController == c.Id)
-            {
-                <tr>
-                    <td colspan="5" class="bg-light">
-                        @if (_doorCommandResult is not null)
-                        {
-                            <p class="mb-1">@_doorCommandResult</p>
-                        }
-                        @if (_testResult is not null)
-                        {
-                            <p class="mb-1">@_testResult</p>
-                        }
-                        @if (_syncStatuses.Count > 0)
-                        {
-                            <ul class="mb-0">
-                                @foreach (var s in _syncStatuses)
-                                {
-                                    <li>@s.UserName — <span class="badge @SyncBadgeClass(s.State)">@s.State</span> (retries: @s.RetryCount) @(s.LastError is null ? "" : $"— {s.LastError}")</li>
-                                }
-                            </ul>
-                        }
-                    </td>
-                </tr>
-            }
         }
     </tbody>
 </table>
+
+@if (_modalController is not null)
+{
+    <div class="modal-backdrop-custom" @onclick="CloseModal"></div>
+    <div class="modal-dialog-custom">
+        <div class="modal-content-custom" @onclick:stopPropagation="true">
+            <div class="modal-header-custom">
+                <h5>@_modalController.Name</h5>
+                <button type="button" class="btn-close" aria-label="Fechar" @onclick="CloseModal"></button>
+            </div>
+            <div class="modal-body-custom">
+                <p class="text-muted mb-3"><code>@_modalController.IpAddress:@_modalController.Port</code> — SN <code>@_modalController.SerialNumber</code></p>
+
+                <h6>Comandos de porta</h6>
+                <div class="btn-group btn-group-sm mb-2" role="group">
+                    <button class="btn btn-success" @onclick="() => DoorCommandAsync(_modalController.Id, Api.OpenDoorAsync)">Abrir</button>
+                    <button class="btn btn-outline-secondary" @onclick="() => DoorCommandAsync(_modalController.Id, Api.CloseDoorAsync)">Fechar</button>
+                    @if (IsAdminOrOperator)
+                    {
+                        <button class="btn btn-outline-warning" @onclick="() => DoorCommandAsync(_modalController.Id, Api.HoldDoorOpenAsync)">Manter aberta</button>
+                        <button class="btn btn-outline-danger" @onclick="() => DoorCommandAsync(_modalController.Id, Api.LockDoorAsync)">Trancar</button>
+                        <button class="btn btn-outline-dark" @onclick="() => DoorCommandAsync(_modalController.Id, Api.UnlockDoorAsync)">Destrancar</button>
+                    }
+                </div>
+                @if (_doorCommandResult is not null)
+                {
+                    <p class="mb-3">@_doorCommandResult</p>
+                }
+
+                <hr />
+
+                <h6>Diagnóstico</h6>
+                <div class="btn-group btn-group-sm mb-2" role="group">
+                    <button class="btn btn-outline-info" @onclick="() => TestConnectionAsync(_modalController.Id)">Testar conexão</button>
+                    <button class="btn btn-outline-info" @onclick="() => ToggleSyncStatusAsync(_modalController.Id)">Status de sincronização</button>
+                </div>
+                @if (_testResult is not null)
+                {
+                    <p class="mb-2">@_testResult</p>
+                }
+                @if (_syncStatuses.Count > 0)
+                {
+                    <ul class="mb-0">
+                        @foreach (var s in _syncStatuses)
+                        {
+                            <li>@s.UserName — <span class="badge @SyncBadgeClass(s.State)">@s.State</span> (retries: @s.RetryCount) @(s.LastError is null ? "" : $"— {s.LastError}")</li>
+                        }
+                    </ul>
+                }
+            </div>
+        </div>
+    </div>
+}
 
 @code {
     private List<ControllerDto> _controllers = [];
     private readonly FormModel _model = new();
     private Guid? _editingId;
     private string? _formError;
-    private Guid? _selectedController;
+    private ControllerDto? _modalController;
     private string? _testResult;
     private string? _doorCommandResult;
     private List<SyncStatusDto> _syncStatuses = [];
@@ -247,9 +265,24 @@
         await LoadAsync();
     }
 
+    private void OpenModal(Guid id)
+    {
+        _modalController = _controllers.FirstOrDefault(c => c.Id == id);
+        _testResult = null;
+        _doorCommandResult = null;
+        _syncStatuses = [];
+    }
+
+    private void CloseModal()
+    {
+        _modalController = null;
+        _testResult = null;
+        _doorCommandResult = null;
+        _syncStatuses = [];
+    }
+
     private async Task TestConnectionAsync(Guid id)
     {
-        _selectedController = id;
         _syncStatuses = [];
         _doorCommandResult = null;
         var (ok, message) = await Api.TestConnectionAsync(id);
@@ -258,7 +291,6 @@
 
     private async Task ToggleSyncStatusAsync(Guid id)
     {
-        _selectedController = id;
         _testResult = null;
         _doorCommandResult = null;
         _syncStatuses = await Api.GetSyncStatusAsync(id);
@@ -266,7 +298,6 @@
 
     private async Task DoorCommandAsync(Guid id, Func<Guid, Task<(bool ok, string message)>> command)
     {
-        _selectedController = id;
         _testResult = null;
         _syncStatuses = [];
         var (ok, message) = await command(id);

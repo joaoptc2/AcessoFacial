@@ -216,3 +216,55 @@ h1:focus {
         flex-wrap: wrap;
     }
 }
+
+/* Modal simples controlado por estado do Blazor (sem depender do bootstrap.bundle.js,
+   que não é vendorizado neste projeto — só o CSS do Bootstrap está incluído). */
+.modal-backdrop-custom {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.55);
+    z-index: 1050;
+}
+
+.modal-dialog-custom {
+    position: fixed;
+    top: 3rem;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 100%;
+    max-width: 560px;
+    max-height: calc(100vh - 6rem);
+    overflow-y: auto;
+    z-index: 1051;
+}
+
+.modal-content-custom {
+    background: var(--surface);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-md);
+}
+
+.modal-header-custom {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.modal-header-custom h5 {
+    margin: 0;
+}
+
+.modal-body-custom {
+    padding: 1.25rem;
+}
+
+.modal-body-custom h6 {
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    font-size: 0.75rem;
+    letter-spacing: 0.03em;
+    margin-bottom: 0.5rem;
+}
