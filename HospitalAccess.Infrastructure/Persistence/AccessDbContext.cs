@@ -15,6 +15,7 @@ public class AccessDbContext : DbContext
     public DbSet<UserGroup> UserGroups => Set<UserGroup>();
     public DbSet<Controller> Controllers => Set<Controller>();
     public DbSet<AccessPermission> Permissions => Set<AccessPermission>();
+    public DbSet<GroupControllerDefault> GroupControllerDefaults => Set<GroupControllerDefault>();
     public DbSet<DeviceSyncStatus> SyncStatuses => Set<DeviceSyncStatus>();
     public DbSet<AccessLog> AccessLogs => Set<AccessLog>();
     public DbSet<StaffUser> StaffUsers => Set<StaffUser>();
@@ -34,6 +35,18 @@ public class AccessDbContext : DbContext
             .OnDelete(DeleteBehavior.SetNull);
 
         b.Entity<Controller>().HasIndex(c => c.SerialNumber).IsUnique();
+
+        b.Entity<GroupControllerDefault>().HasIndex(d => new { d.GroupId, d.ControllerId }).IsUnique();
+        b.Entity<GroupControllerDefault>()
+            .HasOne(d => d.Group)
+            .WithMany(g => g.DefaultControllers)
+            .HasForeignKey(d => d.GroupId)
+            .OnDelete(DeleteBehavior.Cascade);
+        b.Entity<GroupControllerDefault>()
+            .HasOne(d => d.Controller)
+            .WithMany()
+            .HasForeignKey(d => d.ControllerId)
+            .OnDelete(DeleteBehavior.Cascade);
 
         b.Entity<DeviceSyncStatus>()
             .HasIndex(s => new { s.UserId, s.ControllerId }).IsUnique();

@@ -284,6 +284,12 @@ public sealed class ApiClient
         return await _http.DeleteAsync($"api/usergroups/{id}");
     }
 
+    public async Task<HttpResponseMessage> UpdateGroupDefaultControllersAsync(Guid id, IEnumerable<Guid> controllerIds)
+    {
+        ApplyAuthHeader();
+        return await _http.PutAsJsonAsync($"api/usergroups/{id}/default-controllers", new UpdateGroupDefaultControllersRequest(controllerIds.ToArray()));
+    }
+
     // ---- Usuários permanentes ----
 
     public Task<List<UserListItemDto>> GetUsersAsync() => GetJsonOrDefaultAsync("api/users", new List<UserListItemDto>());

@@ -167,7 +167,12 @@ public class UsersController : ControllerBase
         var existingControllerIds = user.Permissions.Select(p => p.ControllerId).ToHashSet();
         foreach (var controllerId in desiredControllerIds.Where(cId => !existingControllerIds.Contains(cId)))
         {
-            user.Permissions.Add(new AccessPermission { ControllerId = controllerId, TimeGroup = request.TimeGroup });
+            // _db.Add (não user.Permissions.Add): como AccessPermission.Id já vem preenchido
+            // (Guid.NewGuid() no inicializador), o EF Core marca entidades adicionadas via fixup
+            // de uma coleção navigation já rastreada como Modified em vez de Added — gera UPDATE
+            // em vez de INSERT e lança DbUpdateConcurrencyException (0 linhas afetadas). DbSet.Add
+            // força o estado Added independente do valor da chave.
+            _db.Permissions.Add(new AccessPermission { UserId = user.Id, ControllerId = controllerId, TimeGroup = request.TimeGroup });
         }
         foreach (var p in user.Permissions.Where(p => desiredControllerIds.Contains(p.ControllerId)))
         {

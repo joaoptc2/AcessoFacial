@@ -21,8 +21,10 @@ public record UpdateControllerRequest(
     int TimeoutMs, int RestartCount);
 
 // Grupos organizacionais de usuários.
-public record UserGroupDto(Guid Id, string Name, string? Description, int UserCount);
+public record UserGroupDto(Guid Id, string Name, string? Description, int UserCount, IEnumerable<Guid> DefaultControllerIds);
 public record UserGroupRequest(string Name, string? Description);
+public record UpdateGroupDefaultControllersRequest(Guid[] ControllerIds);
+public record CreateGroupResponse(Guid Id);
 
 // Usuários permanentes.
 public record UserControllerRef(Guid ControllerId, string ControllerName);

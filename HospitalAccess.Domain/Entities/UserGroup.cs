@@ -8,4 +8,7 @@ public class UserGroup
     public string? Description { get; set; }
 
     public ICollection<User> Users { get; set; } = new List<User>();
+
+    /// <summary>Portas que os usuários deste grupo recebem por padrão (ver GroupControllerDefault).</summary>
+    public ICollection<GroupControllerDefault> DefaultControllers { get; set; } = new List<GroupControllerDefault>();
 }

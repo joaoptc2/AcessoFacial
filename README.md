@@ -295,6 +295,27 @@ dotnet test HospitalAccess.Tests/HospitalAccess.Tests.csproj
   global (`Program.cs`) resolve; validado inserindo linhas de teste direto no banco e
   conferindo que `/api/accesslog` e `/api/alarmevents` devolvem `"method": "Face"` /
   `"kind": "Fire"` (texto) e que as telas renderizam sem exceção.
+- Corrigido: em produção (`ASPNETCORE_ENVIRONMENT=Production`, sem `UseExceptionHandler`), uma
+  exceção não tratada em qualquer endpoint resultava em resposta 500 com corpo **vazio** — o
+  front-end exibia uma caixa de erro vermelha sem nenhuma mensagem. Adicionado middleware
+  global de tratamento de exceções (`Program.cs`) que sempre devolve uma mensagem legível
+  (409 com mensagem específica para violação de índice único, 500 com o texto da exceção nos
+  demais casos — aceitável aqui por ser uma ferramenta interna sempre atrás de autenticação).
+  Validado rodando a API em modo Production e reproduzindo SN duplicado e falha de banco.
+- Corrigido: **bug de dados pré-existente** encontrado durante a investigação acima — editar um
+  usuário, um grupo (portas padrão) ou uma grade horária já existente para *adicionar* um item
+  novo a uma coleção (`AccessPermission`, `GroupControllerDefault`, `TimeGroupSegment`) lançava
+  `DbUpdateConcurrencyException` ("expected 1 row, actually affected 0") e gerava UPDATE em vez
+  de INSERT. Causa: essas entidades têm PK GUID preenchida no inicializador (`Guid.NewGuid()`);
+  ao adicionar via `colecaoJaRastreada.Add(new Entidade{...})` em vez de `_db.Set.Add(...)`, o
+  EF Core interpreta a chave já preenchida como "entidade existente" e marca como `Modified`.
+  Corrigido nos três pontos usando `_db.<DbSet>.Add(...)` com a FK setada explicitamente.
+  Validado com curl (antes/depois) e Playwright.
+- Implementado: grupo de usuários agora tem **portas padrão** (`GroupControllerDefault`,
+  gerenciadas em `UserGroups.razor`). Ao escolher um grupo no cadastro/edição de usuário
+  (`Users.razor`), as portas padrão do grupo são pré-marcadas automaticamente — o admin ainda
+  pode adicionar ou remover portas individualmente antes de salvar (não é uma restrição
+  imposta pelo servidor, só uma conveniência de preenchimento). Validado com Playwright.
 
 ## Limitações conhecidas / próximos passos
 - **Exportação em PDF** do log de acessos: não implementada (só CSV). Toda biblioteca PDF

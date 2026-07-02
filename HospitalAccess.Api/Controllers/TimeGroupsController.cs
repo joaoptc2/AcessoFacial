@@ -92,8 +92,14 @@ public class TimeGroupsController : ControllerBase
         schedule.Segments.Clear();
         foreach (var seg in request.Segments)
         {
-            schedule.Segments.Add(new TimeGroupSegment
+            // _db.Add (não schedule.Segments.Add): como TimeGroupSegment.Id já vem preenchido
+            // (Guid.NewGuid() no inicializador), o EF Core marca entidades adicionadas via fixup
+            // de uma coleção navigation já rastreada como Modified em vez de Added — gera UPDATE
+            // em vez de INSERT e lança DbUpdateConcurrencyException (0 linhas afetadas). DbSet.Add
+            // força o estado Added independente do valor da chave.
+            _db.TimeGroupSegments.Add(new TimeGroupSegment
             {
+                TimeGroupScheduleId = schedule.Id,
                 Weekday = seg.Weekday,
                 SegmentIndex = seg.SegmentIndex,
                 BeginTime = seg.BeginTime,

@@ -22,7 +22,7 @@
         </div>
         <div class="col-md-6 mb-3">
             <label class="form-label">Grupo organizacional</label>
-            <select class="form-select" @bind="_model.GroupIdText">
+            <select class="form-select" @bind="_model.GroupIdText" @bind:after="OnGroupChanged">
                 <option value="">(sem grupo)</option>
                 @foreach (var g in _groups)
                 {
@@ -37,6 +37,7 @@
     </div>
     <div class="mb-3">
         <label class="form-label">Portas com acesso permitido</label>
+        <p class="text-muted small mb-1">Ao escolher um grupo acima, as portas padrão dele são marcadas automaticamente — ajuste livremente antes de salvar.</p>
         @foreach (var c in _controllers)
         {
             <div class="form-check">
@@ -144,6 +145,16 @@
     {
         if (isChecked) _selectedControllers.Add(controllerId);
         else _selectedControllers.Remove(controllerId);
+    }
+
+    /// <summary>Pré-seleciona as portas padrão do grupo escolhido, sem desmarcar portas já selecionadas.</summary>
+    private void OnGroupChanged()
+    {
+        if (!Guid.TryParse(_model.GroupIdText, out var groupId)) return;
+        var group = _groups.FirstOrDefault(g => g.Id == groupId);
+        if (group is null) return;
+
+        foreach (var controllerId in group.DefaultControllerIds) _selectedControllers.Add(controllerId);
     }
 
     private void OnFileSelected(InputFileChangeEventArgs e) => _photo = e.File;
