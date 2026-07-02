@@ -4,6 +4,7 @@ using HospitalAccess.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 
 namespace HospitalAccess.Api.Controllers;
 
@@ -98,7 +99,14 @@ public class ControllersController : ControllerBase
         };
 
         _db.Controllers.Add(controller);
-        await _db.SaveChangesAsync(ct);
+        try
+        {
+            await _db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateException ex) when (IsUniqueSerialNumberViolation(ex))
+        {
+            return Conflict($"Já existe um controlador cadastrado com o número de série {request.SerialNumber}.");
+        }
 
         return CreatedAtAction(nameof(Get), new { id = controller.Id }, new { controller.Id });
     }
@@ -121,9 +129,20 @@ public class ControllersController : ControllerBase
         controller.TimeoutMs = request.TimeoutMs;
         controller.RestartCount = request.RestartCount;
 
-        await _db.SaveChangesAsync(ct);
+        try
+        {
+            await _db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateException ex) when (IsUniqueSerialNumberViolation(ex))
+        {
+            return Conflict($"Já existe um controlador cadastrado com o número de série {request.SerialNumber}.");
+        }
+
         return NoContent();
     }
+
+    private static bool IsUniqueSerialNumberViolation(DbUpdateException ex) =>
+        ex.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation, ConstraintName: "IX_Controllers_SerialNumber" };
 
     /// <summary>Remove o controlador. Falha se ainda houver usuários com permissão nele (remova as permissões antes).</summary>
     [HttpDelete("{id:guid}")]

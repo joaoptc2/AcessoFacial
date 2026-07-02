@@ -9,9 +9,11 @@ using HospitalAccess.Gateway.Connections;
 using HospitalAccess.Infrastructure.Persistence;
 using HospitalAccess.Infrastructure.Qr;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
+using Npgsql;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -79,6 +81,28 @@ if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI();
+    app.UseDeveloperExceptionPage();
+}
+else
+{
+    // Sem isto, uma exceção não tratada em produção resulta em resposta 500 com corpo
+    // vazio (comportamento padrão do ASP.NET Core) — o front-end então exibe uma caixa
+    // vermelha sem nenhuma mensagem, já que só sabe mostrar response.Content.
+    app.UseExceptionHandler(errorApp => errorApp.Run(async context =>
+    {
+        var error = context.Features.Get<IExceptionHandlerFeature>()?.Error;
+        app.Logger.LogError(error, "Erro não tratado em {Method} {Path}", context.Request.Method, context.Request.Path);
+
+        var isUniqueViolation = error is DbUpdateException { InnerException: PostgresException { SqlState: PostgresErrorCodes.UniqueViolation } };
+
+        context.Response.StatusCode = isUniqueViolation ? StatusCodes.Status409Conflict : StatusCodes.Status500InternalServerError;
+        context.Response.ContentType = "text/plain; charset=utf-8";
+        await context.Response.WriteAsync(isUniqueViolation
+            ? "Já existe um registro com esse valor único (ex.: número de série ou código já cadastrado)."
+            // Ferramenta interna de uso administrativo (sempre atrás de autenticação) — expor a
+            // mensagem da exceção ajuda o suporte on-premise sem depender de acesso aos logs do servidor.
+            : $"Ocorreu um erro inesperado ao processar a solicitação: {error?.Message ?? "erro desconhecido"}");
+    }));
 }
 
 app.UseAuthentication();
