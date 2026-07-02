@@ -38,6 +38,7 @@ public record UserDetailDto(
     IEnumerable<Guid> ControllerIds);
 
 public record CreateUserResponse(Guid Id, uint UserCode);
+public record UserAuditLogEntry(DateTime TimestampUtc, string Action, string? PerformedByUsername, string? Details);
 
 // Visitantes/temporários.
 public record VisitorListItemDto(

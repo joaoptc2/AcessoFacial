@@ -9,6 +9,8 @@
 
 <h3>Usuários permanentes (acesso por face)</h3>
 
+@if (CanEdit)
+{
 <EditForm Model="_model" FormName="UserForm" OnValidSubmit="SaveAsync" class="col-md-7 form-panel mb-4">
     <h5>@(_editingId is null ? "Novo usuário" : $"Editando: {_originalName}")</h5>
     <div class="mb-3">
@@ -66,6 +68,11 @@
         <button type="button" class="btn btn-outline-secondary" @onclick="CancelEdit">Cancelar</button>
     }
 </EditForm>
+}
+else
+{
+    <p class="text-muted">Seu papel (Recepção) tem acesso só de leitura a usuários permanentes.</p>
+}
 
 <div class="filter-bar mb-3 row g-2 align-items-end">
     <div class="col-md-5">
@@ -86,7 +93,7 @@
 
 <table class="table table-hover align-middle">
     <thead>
-        <tr><th>Nome</th><th>Código</th><th>Grupo</th><th>Cartão</th><th>Portas</th><th>Foto</th><th>Ações</th></tr>
+        <tr><th>Nome</th><th>Código</th><th>Grupo</th><th>Cartão</th><th>Portas</th><th>Foto</th><th>Status</th><th>Ações</th></tr>
     </thead>
     <tbody>
         @foreach (var u in FilteredUsers)
@@ -99,10 +106,57 @@
                 <td>@string.Join(", ", u.Controllers.Select(c => c.ControllerName))</td>
                 <td>@(u.HasFacePhoto ? "✔" : "—")</td>
                 <td>
-                    <button class="btn btn-sm btn-outline-secondary" @onclick="() => EditAsync(u.Id)">Editar</button>
-                    <button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteAsync(u.Id)">Excluir</button>
+                    @if (u.RevokedAtUtc is not null)
+                    {
+                        <span class="badge bg-secondary">Revogado</span>
+                    }
+                    else
+                    {
+                        <span class="badge bg-success">Ativo</span>
+                    }
+                </td>
+                <td>
+                    @if (CanEdit)
+                    {
+                        <button class="btn btn-sm btn-outline-secondary" @onclick="() => EditAsync(u.Id)">Editar</button>
+                        @if (u.RevokedAtUtc is null)
+                        {
+                            <button class="btn btn-sm btn-outline-warning" @onclick="() => RevokeAsync(u.Id)">Revogar</button>
+                        }
+                        else
+                        {
+                            <button class="btn btn-sm btn-outline-success" @onclick="() => ReactivateAsync(u.Id)">Reativar</button>
+                        }
+                        <button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteAsync(u.Id)">Excluir</button>
+                    }
+                    <button class="btn btn-sm btn-outline-info" @onclick="() => ToggleHistoryAsync(u.Id)">Histórico</button>
                 </td>
             </tr>
+            @if (_historyUserId == u.Id)
+            {
+                <tr>
+                    <td colspan="8" class="bg-light">
+                        @if (_historyEntries.Count == 0)
+                        {
+                            <p class="mb-0 text-muted">Sem registros de histórico.</p>
+                        }
+                        else
+                        {
+                            <ul class="mb-0">
+                                @foreach (var entry in _historyEntries)
+                                {
+                                    <li>
+                                        @entry.TimestampUtc.ToLocalTime().ToString("g") —
+                                        <strong>@entry.Action</strong>
+                                        (@(entry.PerformedByUsername ?? "sistema"))
+                                        @(entry.Details is null ? "" : $" — {entry.Details}")
+                                    </li>
+                                }
+                            </ul>
+                        }
+                    </td>
+                </tr>
+            }
         }
     </tbody>
 </table>
@@ -121,6 +175,10 @@
     private bool _busy;
     private string _search = string.Empty;
     private string _groupFilter = string.Empty;
+    private Guid? _historyUserId;
+    private List<UserAuditLogEntry> _historyEntries = [];
+
+    private bool CanEdit => AuthState.Role is "Admin" or "Operator";
 
     private IEnumerable<UserListItemDto> FilteredUsers => _users.Where(u =>
         (string.IsNullOrWhiteSpace(_search) ||
@@ -252,6 +310,37 @@
             return;
         }
         await LoadAsync();
+    }
+
+    private async Task RevokeAsync(Guid id)
+    {
+        _error = null;
+        var response = await Api.RevokeUserAsync(id);
+        if (!response.IsSuccessStatusCode)
+        {
+            _error = await response.Content.ReadAsStringAsync();
+            return;
+        }
+        await LoadAsync();
+    }
+
+    private async Task ReactivateAsync(Guid id)
+    {
+        _error = null;
+        var response = await Api.ReactivateUserAsync(id);
+        if (!response.IsSuccessStatusCode)
+        {
+            _error = await response.Content.ReadAsStringAsync();
+            return;
+        }
+        await LoadAsync();
+    }
+
+    private async Task ToggleHistoryAsync(Guid id)
+    {
+        if (_historyUserId == id) { _historyUserId = null; return; }
+        _historyUserId = id;
+        _historyEntries = await Api.GetUserAuditLogAsync(id);
     }
 
     private sealed class FormModel

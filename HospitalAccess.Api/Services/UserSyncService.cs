@@ -42,6 +42,14 @@ public sealed class UserSyncService : IUserSyncService
             return;
         }
 
+        if (user.RevokedAtUtc is not null)
+        {
+            // Usuário revogado (mas não excluído): nunca (re)cadastrar nos controladores,
+            // mesmo que uma permissão nova tenha sido adicionada nesse meio-tempo — só volta
+            // a sincronizar depois de reativado (ver UsersController.Reactivate).
+            return;
+        }
+
         if (user.FacePhoto is null)
         {
             _logger.LogWarning("Usuário {UserId} não tem foto de face cadastrada; sync ignorado.", userId);

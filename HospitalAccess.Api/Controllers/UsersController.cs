@@ -1,3 +1,4 @@
+using HospitalAccess.Api.Services;
 using HospitalAccess.Application.Sync;
 using HospitalAccess.Domain.Entities;
 using HospitalAccess.Domain.Enums;
@@ -13,10 +14,15 @@ namespace HospitalAccess.Api.Controllers;
 public record CreateUserRequest(string Name, int TimeGroup, Guid? GroupId, Guid[]? ControllerIds = null, uint? CardNumber = null);
 public record UpdateUserRequest(string Name, int TimeGroup, Guid? GroupId, Guid[]? ControllerIds = null, uint? CardNumber = null);
 
-/// <summary>Cadastro/gestão de usuários permanentes (acesso por face) e disparo de sincronização.</summary>
+/// <summary>
+/// Cadastro/gestão de usuários permanentes (acesso por face) e disparo de sincronização.
+/// Reception tem acesso só de leitura (List/Get/histórico) — todo endpoint de escrita tem
+/// seu próprio [Authorize(Roles = "Admin,Operator")], que combinado com o da classe (AND)
+/// restringe a escrita a Admin/Operator mesmo Reception estando no nível da classe.
+/// </summary>
 [ApiController]
 [Route("api/[controller]")]
-[Authorize(Roles = "Admin,Operator")]
+[Authorize(Roles = "Admin,Operator,Reception")]
 public class UsersController : ControllerBase
 {
     private readonly AccessDbContext _db;
@@ -82,6 +88,7 @@ public class UsersController : ControllerBase
 
     /// <summary>Cria usuário com foto (JPG). A foto é convertida para 480x640/<=120KB no gateway.</summary>
     [HttpPost]
+    [Authorize(Roles = "Admin,Operator")]
     [RequestSizeLimit(10 * 1024 * 1024)]
     public async Task<IActionResult> Create(
         [FromForm] CreateUserRequest request, [FromForm] IFormFile facePhoto, CancellationToken ct)
@@ -118,6 +125,7 @@ public class UsersController : ControllerBase
         }
 
         _db.Users.Add(user);
+        UserAuditLogger.Record(_db, user, "Criado", CurrentUsername());
         await _db.SaveChangesAsync(ct);
 
         SyncInBackground(user.Id);
@@ -127,6 +135,7 @@ public class UsersController : ControllerBase
 
     /// <summary>Atualiza nome, grupo de horário, grupo organizacional, portas e (opcionalmente) a foto.</summary>
     [HttpPut("{id:guid}")]
+    [Authorize(Roles = "Admin,Operator")]
     [RequestSizeLimit(10 * 1024 * 1024)]
     public async Task<IActionResult> Update(
         Guid id, [FromForm] UpdateUserRequest request, IFormFile? facePhoto, CancellationToken ct)
@@ -161,11 +170,14 @@ public class UsersController : ControllerBase
         }
 
         // Remove permissões que não estão mais na lista desejada; adiciona as novas.
+        var existingControllerIds = user.Permissions.Select(p => p.ControllerId).ToHashSet();
+        var addedControllerIds = desiredControllerIds.Where(cId => !existingControllerIds.Contains(cId)).ToList();
+        var removedControllerIds = existingControllerIds.Where(cId => !desiredControllerIds.Contains(cId)).ToList();
+
         var toRemove = user.Permissions.Where(p => !desiredControllerIds.Contains(p.ControllerId)).ToList();
         foreach (var p in toRemove) _db.Permissions.Remove(p);
 
-        var existingControllerIds = user.Permissions.Select(p => p.ControllerId).ToHashSet();
-        foreach (var controllerId in desiredControllerIds.Where(cId => !existingControllerIds.Contains(cId)))
+        foreach (var controllerId in addedControllerIds)
         {
             // _db.Add (não user.Permissions.Add): como AccessPermission.Id já vem preenchido
             // (Guid.NewGuid() no inicializador), o EF Core marca entidades adicionadas via fixup
@@ -179,14 +191,32 @@ public class UsersController : ControllerBase
             p.TimeGroup = request.TimeGroup;
         }
 
+        UserAuditLogger.Record(_db, user, "Atualizado", CurrentUsername(),
+            await BuildControllerChangeDetailsAsync(addedControllerIds, removedControllerIds, ct));
+
         await _db.SaveChangesAsync(ct);
         SyncInBackground(user.Id);
 
         return NoContent();
     }
 
+    private async Task<string?> BuildControllerChangeDetailsAsync(List<Guid> added, List<Guid> removed, CancellationToken ct)
+    {
+        if (added.Count == 0 && removed.Count == 0) return null;
+
+        var names = await _db.Controllers
+            .Where(c => added.Contains(c.Id) || removed.Contains(c.Id))
+            .Select(c => new { c.Id, c.Name })
+            .ToDictionaryAsync(c => c.Id, c => c.Name, ct);
+
+        var parts = added.Select(id => $"+{names.GetValueOrDefault(id, "?")}")
+            .Concat(removed.Select(id => $"-{names.GetValueOrDefault(id, "?")}"));
+        return "Portas: " + string.Join(", ", parts);
+    }
+
     /// <summary>Remove o usuário: apaga o cadastro e revoga (em segundo plano) nos controladores. O log de acessos já gravado não é afetado (guarda nome/código como snapshot).</summary>
     [HttpDelete("{id:guid}")]
+    [Authorize(Roles = "Admin,Operator")]
     public async Task<IActionResult> Delete(Guid id, CancellationToken ct)
     {
         var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == id && u.Type == UserType.Permanent, ct);
@@ -201,12 +231,63 @@ public class UsersController : ControllerBase
             .Select(p => p.ControllerId)
             .ToListAsync(ct);
 
+        UserAuditLogger.Record(_db, user, "Excluído", CurrentUsername());
         _db.Users.Remove(user);
         await _db.SaveChangesAsync(ct);
 
         RevokeDeletedUserInBackground(userCode, controllerIds);
 
         return NoContent();
+    }
+
+    /// <summary>Revoga o acesso sem apagar o cadastro (ao contrário de Delete): bloqueia a sincronização e remove a pessoa dos controladores, mas o registro pode ser reativado depois.</summary>
+    [HttpPost("{id:guid}/revoke")]
+    [Authorize(Roles = "Admin,Operator")]
+    public async Task<IActionResult> Revoke(Guid id, CancellationToken ct)
+    {
+        var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == id && u.Type == UserType.Permanent, ct);
+        if (user is null) return NotFound();
+        if (user.RevokedAtUtc is not null) return Conflict("Usuário já está revogado.");
+
+        user.RevokedAtUtc = DateTime.UtcNow;
+        user.RevokedByUsername = CurrentUsername();
+        UserAuditLogger.Record(_db, user, "Revogado", CurrentUsername());
+        await _db.SaveChangesAsync(ct);
+
+        RevokeInBackground(id);
+
+        return NoContent();
+    }
+
+    /// <summary>Reverte uma revogação: o usuário volta a ser sincronizado normalmente nos controladores das portas já cadastradas.</summary>
+    [HttpPost("{id:guid}/reactivate")]
+    [Authorize(Roles = "Admin,Operator")]
+    public async Task<IActionResult> Reactivate(Guid id, CancellationToken ct)
+    {
+        var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == id && u.Type == UserType.Permanent, ct);
+        if (user is null) return NotFound();
+        if (user.RevokedAtUtc is null) return Conflict("Usuário não está revogado.");
+
+        user.RevokedAtUtc = null;
+        user.RevokedByUsername = null;
+        UserAuditLogger.Record(_db, user, "Reativado", CurrentUsername());
+        await _db.SaveChangesAsync(ct);
+
+        SyncInBackground(id);
+
+        return NoContent();
+    }
+
+    /// <summary>Histórico administrativo do usuário (criação, edições, revogação/reativação, exclusão). Sobrevive à exclusão do cadastro.</summary>
+    [HttpGet("{id:guid}/audit-log")]
+    public async Task<IActionResult> AuditLog(Guid id, CancellationToken ct)
+    {
+        var entries = await _db.UserAuditLogs
+            .Where(a => a.UserId == id)
+            .OrderByDescending(a => a.TimestampUtc)
+            .Select(a => new { a.TimestampUtc, a.Action, a.PerformedByUsername, a.Details })
+            .ToListAsync(ct);
+        return Ok(entries);
     }
 
     /// <summary>
@@ -228,6 +309,24 @@ public class UsersController : ControllerBase
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Falha ao sincronizar usuário {UserId} em segundo plano.", userId);
+            }
+        });
+    }
+
+    /// <summary>Revoga (sem excluir) um usuário ainda cadastrado no banco, via IUserSyncService — mesmo caminho usado para visitantes.</summary>
+    private void RevokeInBackground(Guid userId)
+    {
+        _ = Task.Run(async () =>
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var sync = scope.ServiceProvider.GetRequiredService<IUserSyncService>();
+            try
+            {
+                await sync.RevokeUserAsync(userId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Falha ao revogar usuário {UserId} em segundo plano.", userId);
             }
         });
     }

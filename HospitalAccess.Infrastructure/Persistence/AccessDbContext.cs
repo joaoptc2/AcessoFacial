@@ -16,6 +16,7 @@ public class AccessDbContext : DbContext
     public DbSet<Controller> Controllers => Set<Controller>();
     public DbSet<AccessPermission> Permissions => Set<AccessPermission>();
     public DbSet<GroupControllerDefault> GroupControllerDefaults => Set<GroupControllerDefault>();
+    public DbSet<UserAuditLog> UserAuditLogs => Set<UserAuditLog>();
     public DbSet<DeviceSyncStatus> SyncStatuses => Set<DeviceSyncStatus>();
     public DbSet<AccessLog> AccessLogs => Set<AccessLog>();
     public DbSet<StaffUser> StaffUsers => Set<StaffUser>();
@@ -52,6 +53,9 @@ public class AccessDbContext : DbContext
             .HasIndex(s => new { s.UserId, s.ControllerId }).IsUnique();
 
         b.Entity<AccessLog>().HasIndex(l => l.TimestampUtc);
+
+        b.Entity<UserAuditLog>().HasIndex(a => a.UserId);
+        b.Entity<UserAuditLog>().HasIndex(a => a.TimestampUtc);
 
         b.Entity<StaffUser>().HasIndex(s => s.Username).IsUnique();
 

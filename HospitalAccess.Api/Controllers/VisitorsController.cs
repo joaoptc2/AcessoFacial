@@ -1,3 +1,4 @@
+using HospitalAccess.Api.Services;
 using HospitalAccess.Application.Qr;
 using HospitalAccess.Application.Sync;
 using HospitalAccess.Domain.Entities;
@@ -73,6 +74,7 @@ public class VisitorsController : ControllerBase
 
         visitor.RevokedByUsername = User.Identity?.Name;
         visitor.RevokedAtUtc = DateTime.UtcNow;
+        UserAuditLogger.Record(_db, visitor, "Revogado", User.Identity?.Name);
         await _db.SaveChangesAsync(ct);
 
         return NoContent();
@@ -124,9 +126,22 @@ public class VisitorsController : ControllerBase
         };
 
         _db.Users.Add(visitor);
+        UserAuditLogger.Record(_db, visitor, "Criado", User.Identity?.Name);
         await _db.SaveChangesAsync(ct);
 
         return CreatedAtAction(nameof(GenerateQr), new { visitorId = visitor.Id }, new { visitor.Id, visitor.UserCode });
+    }
+
+    /// <summary>Histórico administrativo do visitante (criação, revogação). Sobrevive à exclusão do cadastro.</summary>
+    [HttpGet("{id:guid}/audit-log")]
+    public async Task<IActionResult> AuditLog(Guid id, CancellationToken ct)
+    {
+        var entries = await _db.UserAuditLogs
+            .Where(a => a.UserId == id)
+            .OrderByDescending(a => a.TimestampUtc)
+            .Select(a => new { a.TimestampUtc, a.Action, a.PerformedByUsername, a.Details })
+            .ToListAsync(ct);
+        return Ok(entries);
     }
 
     /// <summary>Gera o QR de acesso (PNG) para um visitante com validade embutida.</summary>

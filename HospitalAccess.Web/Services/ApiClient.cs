@@ -315,6 +315,21 @@ public sealed class ApiClient
         return await _http.DeleteAsync($"api/users/{id}");
     }
 
+    public async Task<HttpResponseMessage> RevokeUserAsync(Guid id)
+    {
+        ApplyAuthHeader();
+        return await _http.PostAsync($"api/users/{id}/revoke", null);
+    }
+
+    public async Task<HttpResponseMessage> ReactivateUserAsync(Guid id)
+    {
+        ApplyAuthHeader();
+        return await _http.PostAsync($"api/users/{id}/reactivate", null);
+    }
+
+    public Task<List<UserAuditLogEntry>> GetUserAuditLogAsync(Guid id) =>
+        GetJsonOrDefaultAsync($"api/users/{id}/audit-log", new List<UserAuditLogEntry>());
+
     // ---- Visitantes / temporários ----
 
     public Task<List<VisitorListItemDto>> GetVisitorsAsync() => GetJsonOrDefaultAsync("api/visitors", new List<VisitorListItemDto>());
