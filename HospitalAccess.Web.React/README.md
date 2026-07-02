@@ -1,8 +1,11 @@
 # HospitalAccess.Web.React
 
-Prova de conceito de uma interface em React para o mesmo backend (`HospitalAccess.Api`)
-que o `HospitalAccess.Web` (Blazor Server) já usa. Só a tela de **Controladores** foi
-migrada até agora — o restante do sistema continua em Blazor até essa direção ser validada.
+Interface em React para a `HospitalAccess.Api` — cobre **todas as telas** que o
+`HospitalAccess.Web` (Blazor Server) tinha: Controladores (+ detalhe com abas de
+Rede/Relógio/Alarmes/Ajustes Locais/Auditoria/Fotos de Evento), Usuários (com
+histórico/revogar/reativar/RBAC), Grupos de Usuários (com portas padrão), Visitantes
+(com QR), Feriados, Grade Horária, Log de Acessos e Log de Alarmes. O Blazor continua no
+repo por enquanto (mudança grande, mantida reversível) — ver "Próximos passos" abaixo.
 
 ## Por que React "no mesmo servidor"
 
@@ -43,7 +46,22 @@ mantém a sessão.
 ## Estrutura
 
 - `src/lib/api.ts` — cliente HTTP tipado para a API (mesma responsabilidade do
-  `ApiClient.cs` do lado Blazor).
+  `ApiClient.cs` do lado Blazor) — cobre todos os endpoints usados pelas telas abaixo.
 - `src/lib/AuthContext.tsx` — estado de autenticação (token/role/username).
 - `src/components/` — `Sidebar` (navegação) e `Modal` (usado no controle de dispositivo).
-- `src/pages/` — `LoginPage`, `HomePage`, `ControllersPage` (a tela migrada).
+- `src/pages/`:
+  - `LoginPage`, `HomePage`
+  - `ControllersPage` + `ControllerDetailPage` (abas: Rede, Relógio, Alarmes, Ajustes
+    Locais, Auditoria, Fotos de Evento)
+  - `UsersPage` (histórico, revogar/reativar, RBAC — Recepção só lê)
+  - `UserGroupsPage` (portas padrão do grupo)
+  - `VisitorsPage` (cadastro + QR + revogar)
+  - `HolidaysPage`, `TimeGroupsPage` (grade de dias/horários por grupo)
+  - `AccessLogPage`, `AlarmEventsPage` (paginação, filtros, exportação CSV)
+
+## Próximos passos
+
+- Validar visualmente todas as telas (rodar `npm run dev` + navegar) antes de decidir se
+  o `HospitalAccess.Web` (Blazor) pode ser removido do repo.
+- Nenhum teste automatizado de front-end ainda (a validação até agora foi manual +
+  Playwright ad-hoc durante o desenvolvimento, não commitado como suíte).

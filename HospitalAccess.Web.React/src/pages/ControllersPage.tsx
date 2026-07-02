@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { Link } from "react-router-dom";
 import { api, ApiError, type ControllerDto, type SyncStatusDto } from "../lib/api";
 import { Modal } from "../components/Modal";
 import { useAuth } from "../lib/AuthContext";
@@ -279,6 +280,9 @@ export function ControllersPage() {
                   <button className="btn btn-primary btn-sm" onClick={() => openModal(c)}>
                     Controlar
                   </button>
+                  <Link to={`/controllers/${c.id}`} className="btn btn-outline btn-sm">
+                    Detalhes
+                  </Link>
                   {isAdminOrOperator && (
                     <>
                       <button className="btn btn-outline btn-sm" onClick={() => startEdit(c.id)}>
