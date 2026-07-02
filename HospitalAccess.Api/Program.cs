@@ -105,7 +105,15 @@ else
     }));
 }
 
+// Serve a prova de conceito em React (HospitalAccess.Web.React, build em wwwroot/) no
+// mesmo processo/porta da API — "npm run build" nesse projeto já aponta o outDir para cá.
+// MapFallbackToFile depois de MapControllers: só assume rotas que nenhum endpoint de API
+// bateu, para que o React Router funcione em refresh de uma rota tipo /controllers.
+app.UseDefaultFiles();
+app.UseStaticFiles();
+
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
+app.MapFallbackToFile("index.html");
 app.Run();

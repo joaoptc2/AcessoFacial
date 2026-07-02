@@ -17,6 +17,11 @@
 # Node (front-end helpers, se algum)
 node_modules/
 
+# Build do HospitalAccess.Web.React (React) — "npm run build" gera aqui; HospitalAccess.Api
+# serve esses arquivos como estáticos, mas o build em si não é versionado.
+HospitalAccess.Api/wwwroot/
+HospitalAccess.Web.React/dist/
+
 # Secrets (nunca versionar)
 appsettings.Development.json
 appsettings.Production.json

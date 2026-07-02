@@ -322,16 +322,30 @@ dotnet test HospitalAccess.Tests/HospitalAccess.Tests.csproj
   (`Users.razor`), as portas padrão do grupo são pré-marcadas automaticamente — o admin ainda
   pode adicionar ou remover portas individualmente antes de salvar (não é uma restrição
   imposta pelo servidor, só uma conveniência de preenchimento). Validado com Playwright.
+- Iniciado: prova de conceito de interface em **React** (`HospitalAccess.Web.React/`),
+  servida pela **própria `HospitalAccess.Api`** no mesmo processo/porta (`npm run build`
+  gera os estáticos em `HospitalAccess.Api/wwwroot/`; ver `app.UseStaticFiles()` +
+  `app.MapFallbackToFile()` em `Program.cs`). Só a tela de Controladores foi migrada até
+  agora (lista, filtro, CRUD, descoberta de rede e o modal de controle de dispositivo) — o
+  restante do sistema continua em `HospitalAccess.Web` (Blazor) enquanto essa direção é
+  validada. Diferença notável: a sessão (JWT em `localStorage`) sobrevive a um F5, ao
+  contrário do Blazor Server. Validado com Playwright rodando contra a API na porta 5080
+  servindo os dois (API + estáticos) — ver detalhes em `HospitalAccess.Web.React/README.md`.
 
 ## Limitações conhecidas / próximos passos
 - **Exportação em PDF** do log de acessos: não implementada (só CSV). Toda biblioteca PDF
   popular para .NET tem alguma pegada de licença para uma organização do porte de um
   hospital (QuestPDF Community tem teto de receita, iText é AGPL/comercial); ficou como
   decisão em aberto — ver `AccessLogController.Export`.
-- **Sessão do front-end não sobrevive a um refresh de página** (F5): o JWT fica em memória
+- **Sessão do Blazor não sobrevive a um refresh de página** (F5): o JWT fica em memória
   por circuito Blazor Server; um refresh força um circuito novo e redireciona para o login
   (comportamento correto, sem crash — mas sem "lembrar sessão"). Persistir via
-  `ProtectedSessionStorage` é a próxima melhoria natural se isso incomodar no dia a dia.
+  `ProtectedSessionStorage` seria a melhoria natural — mas a prova de conceito em React já
+  resolve isso de graça (JWT em `localStorage`), então vale considerar migrar em vez de
+  remendar o Blazor se essa direção for confirmada.
+- **Prova de conceito em React**: só a tela de Controladores foi migrada — Usuários, Grupos,
+  Visitantes, Feriados, Grade Horária, Logs etc. continuam só em Blazor. Migrar o restante
+  é o próximo passo natural se a direção for confirmada (ver `HospitalAccess.Web.React/`).
 - **Troca de senha do StaffUser** e cadastro de novos operadores/recepcionistas: só via
   banco por enquanto; não há endpoint/tela dedicada.
 - **Integração HIS/AD**: fora de escopo por pedido explícito — não implementada.
