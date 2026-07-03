@@ -24,6 +24,13 @@ public class SystemSettings
     /// <summary>Dias para reter a trilha de auditoria de comandos de porta. 0 = nunca expurgar.</summary>
     public int ControllerAuditRetentionDays { get; set; }
 
+    /// <summary>
+    /// Formato do QR de acesso: "Appendix8Rc4" (binário documentado, cifrado com RC4 — padrão) ou
+    /// "PlainText" (Base64 de "user_id=..._time=..."). Selecionável porque firmwares diferentes
+    /// aceitam formatos diferentes; troque aqui se o aparelho recusar o QR ("QR inválido").
+    /// </summary>
+    public string QrFormat { get; set; } = "Appendix8Rc4";
+
     /// <summary>Última atualização das configurações.</summary>
     public DateTime UpdatedAtUtc { get; set; } = DateTime.UtcNow;
 

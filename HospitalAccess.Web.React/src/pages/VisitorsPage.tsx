@@ -107,6 +107,17 @@ export function VisitorsPage() {
     }
   }
 
+  async function handleDelete(id: string, visitorName: string) {
+    setError(null);
+    if (!window.confirm(`Excluir definitivamente o visitante "${visitorName}" e o QR? Remove a pessoa dos controladores e apaga o cadastro (não é reversível).`)) return;
+    try {
+      await api.deleteVisitor(id);
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Falha inesperada ao excluir.");
+    }
+  }
+
   return (
     <div>
       <h2>Visitantes / temporários (acesso por QR)</h2>
@@ -222,16 +233,21 @@ export function VisitorsPage() {
                 )}
               </td>
               <td>
-                {!v.isRevoked && (
-                  <div className="btn-group">
-                    <button className="btn btn-outline btn-sm" onClick={() => showQr(v.id, v.name)}>
-                      Ver QR
-                    </button>
-                    <button className="btn btn-danger-outline btn-sm" onClick={() => handleRevoke(v.id)}>
-                      Revogar
-                    </button>
-                  </div>
-                )}
+                <div className="btn-group">
+                  {!v.isRevoked && (
+                    <>
+                      <button className="btn btn-outline btn-sm" onClick={() => showQr(v.id, v.name)}>
+                        Ver QR
+                      </button>
+                      <button className="btn btn-danger-outline btn-sm" onClick={() => handleRevoke(v.id)}>
+                        Revogar
+                      </button>
+                    </>
+                  )}
+                  <button className="btn btn-danger btn-sm" onClick={() => handleDelete(v.id, v.name)}>
+                    Excluir
+                  </button>
+                </div>
               </td>
             </tr>
           ))}

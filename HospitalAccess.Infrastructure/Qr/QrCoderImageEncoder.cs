@@ -18,4 +18,16 @@ public sealed class QrCoderImageEncoder : IQrImageEncoder
         var pngQrCode = new PngByteQRCode(data);
         return pngQrCode.GetGraphic(PixelsPerModule);
     }
+
+    /// <summary>
+    /// Modo byte puro (CreateQrCode(byte[], ECCLevel)) — para o token binário do Apêndice 8.
+    /// NÃO converter para Base64/Hex: o leitor decodifica os bytes crus do QR e os decripta.
+    /// </summary>
+    public byte[] EncodePng(byte[] tokenBytes)
+    {
+        using var generator = new QRCodeGenerator();
+        using var data = generator.CreateQrCode(tokenBytes, QRCodeGenerator.ECCLevel.M);
+        var pngQrCode = new PngByteQRCode(data);
+        return pngQrCode.GetGraphic(PixelsPerModule);
+    }
 }
