@@ -105,12 +105,16 @@ public class VisitorsController : ControllerBase
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] CreateVisitorRequest request, CancellationToken ct)
     {
-        if (request.ValidUntil <= DateTime.UtcNow)
+        // Normaliza para UTC: um <input datetime-local> chega sem offset (Kind=Unspecified) e,
+        // se comparado/gravado como está, a validação erra por horas e o Npgsql rejeita a escrita
+        // em coluna timestamptz. Tratamos "sem offset" como horário do servidor.
+        var validUntil = ToUtc(request.ValidUntil);
+        if (validUntil <= DateTime.UtcNow)
             return BadRequest("ValidUntil deve ser no futuro.");
         if (request.TimeGroup is < 1 or > 64)
             return BadRequest("TimeGroup deve estar entre 1 e 64.");
 
-        var nextCode = (await _db.Users.MaxAsync(u => (uint?)u.UserCode, ct) ?? 0) + 1;
+        var nextCode = await NextUserCodeAsync(ct);
 
         var visitor = new User
         {
@@ -118,7 +122,7 @@ public class VisitorsController : ControllerBase
             Name = request.Name,
             Type = UserType.Visitor,
             ValidFrom = DateTime.UtcNow,
-            ValidUntil = request.ValidUntil,
+            ValidUntil = validUntil,
             TimeGroup = request.TimeGroup,
             CreatedByUsername = User.Identity?.Name,
         };
@@ -128,6 +132,22 @@ public class VisitorsController : ControllerBase
         await _db.SaveChangesAsync(ct);
 
         return CreatedAtAction(nameof(GenerateQr), new { visitorId = visitor.Id }, new { visitor.Id, visitor.UserCode });
+    }
+
+    private static DateTime ToUtc(DateTime value) => value.Kind switch
+    {
+        DateTimeKind.Utc => value,
+        DateTimeKind.Local => value.ToUniversalTime(),
+        _ => DateTime.SpecifyKind(value, DateTimeKind.Utc),
+    };
+
+    /// <summary>Próximo UserCode via sequence do PostgreSQL (atômico/monotônico). Ver UsersController.</summary>
+    private async Task<uint> NextUserCodeAsync(CancellationToken ct)
+    {
+        var next = await _db.Database
+            .SqlQueryRaw<long>($"SELECT nextval('{AccessDbContext.UserCodeSequence}') AS \"Value\"")
+            .SingleAsync(ct);
+        return (uint)next;
     }
 
     /// <summary>Histórico administrativo do visitante (criação, revogação). Sobrevive à exclusão do cadastro.</summary>
@@ -153,6 +173,10 @@ public class VisitorsController : ControllerBase
         var visitor = await _db.Users.FirstOrDefaultAsync(u => u.Id == visitorId && u.Type == UserType.Visitor, ct);
         if (visitor is null) return NotFound();
         if (visitor.ValidUntil is null) return BadRequest("Visitante sem validade definida.");
+        // Não emitir QR para visitante já revogado ou vencido — evita entregar credencial que
+        // não deveria mais abrir a porta.
+        if (visitor.RevokedAtUtc is not null) return Conflict("Visitante revogado.");
+        if (visitor.ValidUntil < DateTime.UtcNow) return Conflict("Visitante com validade expirada.");
 
         var token = _qr.BuildAccessToken(visitor.UserCode, DateTime.UtcNow);
         var png = _encoder.EncodePng(token);

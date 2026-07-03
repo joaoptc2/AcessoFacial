@@ -276,10 +276,35 @@ do hospital — é um sistema de controle de acesso físico, dado sensível).
 
 ## 13. Atualizando uma versão nova
 
+O servidor de produção só tem os binários publicados, não o código-fonte nem o `dotnet-ef`,
+então **não** rode `dotnet ef database update` lá. Gere o artefato de migração na máquina de
+build e aplique-o no servidor. Duas opções:
+
+**a) Script SQL idempotente** (aplicável com `psql`, sem .NET no servidor):
+```bash
+# Na máquina de build (com o SDK e o dotnet-ef):
+dotnet ef migrations script --idempotent \
+  --project HospitalAccess.Infrastructure --startup-project HospitalAccess.Api \
+  -o migracao.sql
+# No servidor, dentro de uma janela de manutenção e após backup:
+psql "$CONNECTION_STRING" -f migracao.sql
+```
+
+**b) Bundle de migração** (executável autônomo, não precisa do SDK no servidor):
+```bash
+# Na máquina de build:
+dotnet ef migrations bundle --self-contained -r linux-x64 \
+  --project HospitalAccess.Infrastructure --startup-project HospitalAccess.Api \
+  -o efbundle
+# No servidor:
+./efbundle --connection "$CONNECTION_STRING"
+```
+
+Fluxo completo da atualização:
 ```bash
 sudo systemctl stop hospitalaccess-api hospitalaccess-web
 # publique de novo (seção 4) e sincronize os arquivos para /opt/hospitalaccess/{api,web}
-dotnet ef database update --project HospitalAccess.Infrastructure --startup-project HospitalAccess.Api  # se houver migration nova
+# aplique a migração pelo método (a) ou (b) acima, se houver migration nova
 sudo systemctl start hospitalaccess-api hospitalaccess-web
 ```
 

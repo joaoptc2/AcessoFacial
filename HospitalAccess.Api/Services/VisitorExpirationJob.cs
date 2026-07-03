@@ -29,8 +29,12 @@ public sealed class VisitorExpirationJob : IVisitorExpirationJob
     public async Task RunAsync(CancellationToken ct = default)
     {
         var now = DateTime.UtcNow;
+        // Só visitantes vencidos que ainda NÃO foram revogados — senão o job reprocessaria os
+        // mesmos vencidos a cada execução, para sempre.
         var expired = await _db.Users
-            .Where(u => u.Type == UserType.Visitor && u.ValidUntil != null && u.ValidUntil < now)
+            .Where(u => u.Type == UserType.Visitor
+                        && u.ValidUntil != null && u.ValidUntil < now
+                        && u.RevokedAtUtc == null)
             .ToListAsync(ct);
 
         foreach (var visitor in expired)
@@ -38,6 +42,14 @@ public sealed class VisitorExpirationJob : IVisitorExpirationJob
             try
             {
                 await _sync.RevokeUserAsync(visitor.Id, ct);
+
+                // Marca a revogação por expiração no próprio cadastro (higiene de dados e para
+                // não reprocessar) e audita.
+                visitor.RevokedAtUtc = now;
+                visitor.RevokedByUsername = "sistema (expiração automática)";
+                UserAuditLogger.Record(_db, visitor, "Expirado", "sistema");
+                await _db.SaveChangesAsync(ct);
+
                 _logger.LogInformation("Visitante {UserId} ({UserCode}) expirado e revogado.", visitor.Id, visitor.UserCode);
             }
             catch (Exception ex)

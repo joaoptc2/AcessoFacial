@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  backend:
+    name: Build & test (.NET)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Restore
+        run: dotnet restore HospitalAccess.sln
+
+      - name: Build
+        run: dotnet build HospitalAccess.sln --configuration Release --no-restore
+
+      - name: Test
+        run: dotnet test HospitalAccess.Tests/HospitalAccess.Tests.csproj --configuration Release --no-build --verbosity normal
+
+      - name: Vulnerabilidades em pacotes NuGet
+        # Informativo: não quebra o build, mas registra pacotes com vulnerabilidade conhecida.
+        run: dotnet list HospitalAccess.sln package --vulnerable --include-transitive || true
+
+  frontend:
+    name: Build & typecheck (React)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: HospitalAccess.Web.React
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: HospitalAccess.Web.React/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Build (inclui typecheck do tsc)
+        run: npm run build
+
+      - name: npm audit (produção)
+        run: npm audit --omit=dev || true

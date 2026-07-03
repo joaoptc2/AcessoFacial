@@ -7,6 +7,8 @@ export interface LoginResponse {
   role: string;
 }
 
+export type ControllerConnectionMode = "TcpClient" | "TcpServerClient" | "Udp";
+
 export interface ControllerDto {
   id: string;
   name: string;
@@ -20,9 +22,20 @@ export interface ControllerDto {
   userCount: number;
 }
 
-export interface ControllerDetailDto extends ControllerDto {
-  communicationPassword: string;
+export interface ControllerDetailDto {
+  id: string;
+  name: string;
+  ipAddress: string;
+  port: number;
+  serialNumber: string;
+  supportsWaitRepeatMessage: boolean;
+  relayIndex: number;
+  timeoutMs: number;
+  restartCount: number;
+  connectionMode: ControllerConnectionMode;
   lastClockSyncAtUtc: string | null;
+  // A senha de comunicação NÃO é retornada pela API (segredo). Apenas indica se há uma definida.
+  hasCommunicationPassword: boolean;
 }
 
 export interface CreateControllerRequest {
@@ -32,9 +45,18 @@ export interface CreateControllerRequest {
   serialNumber: string;
   communicationPassword: string;
   supportsWaitRepeatMessage: boolean;
+  connectionMode: ControllerConnectionMode;
 }
 
-export interface UpdateControllerRequest extends CreateControllerRequest {
+export interface UpdateControllerRequest {
+  name: string;
+  ipAddress: string;
+  port: number;
+  serialNumber: string;
+  // Em branco/omitido mantém a senha atual (o GET não a devolve).
+  communicationPassword?: string;
+  supportsWaitRepeatMessage: boolean;
+  connectionMode: ControllerConnectionMode;
   relayIndex: number;
   timeoutMs: number;
   restartCount: number;
@@ -272,6 +294,19 @@ function authHeaders(): HeadersInit {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+// Sessão expirada / token inválido: limpa o estado e manda para o login. Sem isto, um JWT
+// vencido (expira em ~60min) deixava o app "logado" fazendo chamadas que falhavam com 401 sem
+// nunca redirecionar. Dispara um evento para o AuthProvider reagir sem recarregar a página.
+function handleUnauthorized() {
+  const wasAuthenticated = localStorage.getItem("token") !== null;
+  localStorage.removeItem("token");
+  localStorage.removeItem("role");
+  localStorage.removeItem("username");
+  if (wasAuthenticated) {
+    window.dispatchEvent(new Event("auth:unauthorized"));
+  }
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers);
   const token = getToken();
@@ -283,6 +318,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(`/api${path}`, { ...options, headers });
 
   if (!response.ok) {
+    if (response.status === 401) handleUnauthorized();
     const text = await response.text();
     throw new ApiError(response.status, text || `Erro ${response.status}`);
   }
@@ -299,6 +335,7 @@ async function requestBlob(path: string, options: RequestInit = {}): Promise<Blo
   if (token) headers.set("Authorization", `Bearer ${token}`);
   const response = await fetch(`/api${path}`, { ...options, headers });
   if (!response.ok) {
+    if (response.status === 401) handleUnauthorized();
     const text = await response.text();
     throw new ApiError(response.status, text || `Erro ${response.status}`);
   }

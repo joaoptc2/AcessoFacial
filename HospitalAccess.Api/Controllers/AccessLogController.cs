@@ -81,6 +81,11 @@ public class AccessLogController : ControllerBase
     private IQueryable<Domain.Entities.AccessLog> BuildFilteredQuery(
         DateTime? from, DateTime? to, uint? userCode, Guid? controllerId, AccessMethod? method)
     {
+        // Normaliza para UTC: um filtro sem offset (Kind=Unspecified) faz o Npgsql rejeitar o
+        // parâmetro em coluna timestamptz.
+        from = ToUtc(from);
+        to = ToUtc(to);
+
         var query = _db.AccessLogs.AsNoTracking().AsQueryable();
         if (from is not null) query = query.Where(l => l.TimestampUtc >= from);
         if (to is not null) query = query.Where(l => l.TimestampUtc <= to);
@@ -90,11 +95,22 @@ public class AccessLogController : ControllerBase
         return query;
     }
 
+    private static DateTime? ToUtc(DateTime? value) => value?.Kind switch
+    {
+        null => null,
+        DateTimeKind.Utc => value,
+        DateTimeKind.Local => value.Value.ToUniversalTime(),
+        _ => DateTime.SpecifyKind(value!.Value, DateTimeKind.Utc),
+    };
+
     private static string CsvEscape(string? value)
     {
         if (string.IsNullOrEmpty(value)) return string.Empty;
-        return value.Contains(',') || value.Contains('"') || value.Contains('\n')
-            ? $"\"{value.Replace("\"", "\"\"")}\""
-            : value;
+        // Neutraliza CSV/formula injection: célula iniciando com = + - @ (ou tab/CR) é prefixada
+        // com apóstrofo para não ser interpretada como fórmula ao abrir no Excel/Sheets.
+        var sanitized = "=+-@\t\r".Contains(value[0]) ? "'" + value : value;
+        return sanitized.Contains(',') || sanitized.Contains('"') || sanitized.Contains('\n')
+            ? $"\"{sanitized.Replace("\"", "\"\"")}\""
+            : sanitized;
     }
 }

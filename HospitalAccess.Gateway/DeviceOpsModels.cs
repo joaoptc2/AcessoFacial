@@ -42,7 +42,11 @@ public sealed record AlarmSettingsSnapshot(
     string? DuressPassword,
     bool OpenDoorTimeoutAlarmEnabled,
     int OpenDoorTimeoutSeconds,
-    bool LegalVerificationCloseAlarmEnabled);
+    bool LegalVerificationCloseAlarmEnabled,
+    // Modo da senha de coação (AlarmOption do SDK): 1 = trava+alarme, 2 = destrava+alarme,
+    // 3 = trava+alarme, só destrava por software. Preservado no roundtrip leitura↔escrita
+    // (antes era fixado em 1 na escrita e descartado na leitura). Default 1.
+    int DuressMode = 1);
 
 /// <summary>Foto capturada pelo controlador no momento de um evento (Classe XI), obtida por leitura sob demanda.</summary>
 public sealed record CapturedEventPhoto(uint? UserCode, DateTime CapturedAtUtc, int RawEventCode, byte[] ImageJpg);

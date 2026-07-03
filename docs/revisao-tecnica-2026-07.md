@@ -2,6 +2,55 @@
 
 _Data: 2026-07-03 · Base revisada: protocolo "8190H Fingerprint&Face Communication Protocol", "8190H Software Development Kit", biblioteca `DoNetDrive.Protocol.Fingerprint` (fonte do demo oficial + XMLs de API) e todo o código do repositório._
 
+## Status de correção (aplicado nesta branch)
+
+As correções abaixo foram implementadas e verificadas por compilação (`dotnet build` 0 erros) e
+testes (`dotnet test` verde) — os itens que dependem de hardware 8190H físico foram implementados
+conforme o demo/protocolo do fabricante, mas continuam marcados como "não validados contra
+hardware" (mesma ressalva já existente no README).
+
+| Item | Status |
+|------|--------|
+| C1 Monitoramento (BeginWatch) | ✅ implementado + hosted service de (re)ativação; ⚠️ validar em hardware |
+| C2 Alarmes via SystemTransaction + cast de evento corrigido | ✅ implementado; ⚠️ validar em hardware |
+| C3 Transporte configurável (TcpClient/TcpServerClient/Udp) | ✅ knob por controlador; ⚠️ modo real a confirmar em hardware |
+| C4 Verificação de status de comando | ✅ implementado (todo comando lança em falha/timeout) |
+| C5 Re-sync na edição de usuário | ✅ implementado |
+| C6 Job de retry de sincronização | ✅ hosted service periódico |
+| C7 QR de visitante | ⚠️ mitigado (S3 aplicado; bloqueia QR revogado/expirado). Redesenho para Person nativo depende do fabricante — ver seção 1 |
+| B1 RBAC (Recepção opera portas) | ✅ implementado |
+| B2 Código de evento 13 concedido | ✅ corrigido + teste |
+| B3 Foto de evento por PhotoFile | ✅ implementado |
+| B4 Bitmap de feriado por pessoa | ✅ implementado |
+| B5 UserCode por sequence | ✅ implementado (migração) |
+| B6 DateTime UTC | ✅ conversor global + normalização de borda |
+| B7 Delete revoga todas as portas | ✅ implementado |
+| B9/B10/B11 correções de gateway | ✅ implementado |
+| B12 Expiração de visitante | ✅ implementado |
+| B15/B64 Edição de controlador | ✅ React e Blazor |
+| F1/F2 RBAC/401 no React | ✅ implementado |
+| S1 Senha de comunicação criptografada + não exposta | ✅ DataProtection + Get sem senha |
+| S2 Rate limiting no login | ✅ implementado |
+| S3 QR de visitante revogado/expirado | ✅ implementado |
+| S4 Handler de exceção sem vazar detalhes | ✅ ID de correlação |
+| S5 Concorrência otimista (xmin) | ✅ Controller e User |
+| S7 CSV injection | ✅ implementado |
+| S8 Validação da chave JWT no startup | ✅ implementado |
+| L4 SendConnectTestResponse (keep-alive 0xA0) | ✅ implementado |
+| L6 Auditoria de comandos de porta | ✅ tabela ControllerAuditLog |
+| L9 Validação de JPEG na conversão de face | ✅ implementado + teste |
+| R2 Testes | ✅ classifier + conversor de imagem (32 testes) |
+| R3 CI | ✅ GitHub Actions (build/test .NET + build React) |
+| R4/R5 Docs | ✅ README/instalação/appsettings corrigidos |
+| Pendentes por decisão | L1 (coleta offline), L2 (health-check), L3 (emergência em massa), F3 (retirar Blazor), R1 (mover .rar), S6 (retenção LGPD) — ver seções abaixo |
+
+> Nota sobre o achado [1] do workflow ("cast de evento errado"): reverificado e **confirmado** —
+> o push chega como `Door8800Transaction` e o registro concreto está em `.EventData`. O gateway
+> foi corrigido para usar `transaction.EventData` (antes o `is CardTransaction` sobre o envelope
+> retornava cedo e nenhum evento seria emitido).
+
+---
+
 ## Metodologia e ressalva de verificação
 
 1. Extraí e li integralmente os 3 pacotes de referência do fabricante (protocolo de 124 páginas, SDK multi-linguagem, e o projeto de exemplo oficial `DoNetDrive.Protocol.Fingerprint.Test` com os XMLs de IntelliSense).

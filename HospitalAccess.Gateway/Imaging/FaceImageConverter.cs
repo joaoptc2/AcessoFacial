@@ -1,4 +1,5 @@
 using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Formats;
 using SixLabors.ImageSharp.Formats.Jpeg;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
@@ -24,10 +25,27 @@ public static class FaceImageConverter
 {
     public static byte[] ConvertImage(byte[] sourceJpg, int maxWidth, int maxHeight, int maxSizeBytes)
     {
-        using var image = Image.Load<Rgba32>(sourceJpg);
+        using var image = Image.Load<Rgba32>(sourceJpg, out IImageFormat format);
 
-        if (image.Width <= maxWidth && image.Height <= maxHeight && sourceJpg.Length <= maxSizeBytes)
+        // O controlador só aceita JPEG. Só devolvemos os bytes originais sem reprocessar se a
+        // imagem JÁ é JPEG e está dentro dos limites; um PNG/WebP dentro dos limites precisa ser
+        // reencodado para JPEG (antes passava direto e o device recebia formato não suportado).
+        var isJpeg = format is JpegFormat;
+        if (isJpeg && image.Width <= maxWidth && image.Height <= maxHeight && sourceJpg.Length <= maxSizeBytes)
             return sourceJpg;
+
+        // Se está dentro das dimensões mas não é JPEG (ou passou do tamanho), reencoda como JPEG
+        // sem redimensionar desnecessariamente.
+        if (image.Width <= maxWidth && image.Height <= maxHeight)
+        {
+            for (var quality = 100; quality > 0; quality -= 2)
+            {
+                using var jpegMs = new MemoryStream();
+                image.Save(jpegMs, new JpegEncoder { Quality = quality });
+                if (jpegMs.Length <= maxSizeBytes)
+                    return jpegMs.ToArray();
+            }
+        }
 
         float rateW = (float)maxWidth / image.Width;
         float rateH = (float)maxHeight / image.Height;

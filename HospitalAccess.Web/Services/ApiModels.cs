@@ -7,18 +7,23 @@ public record ControllerDto(
     Guid Id, string Name, string IpAddress, int Port, string SerialNumber,
     bool SupportsWaitRepeatMessage, int RelayIndex, int TimeoutMs, int RestartCount, int UserCount);
 
+// CommunicationPassword não é mais retornada pela API (segredo). HasCommunicationPassword indica
+// se há uma definida; ConnectionMode define como o servidor fala com o controlador.
 public record ControllerDetailDto(
-    Guid Id, string Name, string IpAddress, int Port, string SerialNumber, string CommunicationPassword,
-    bool SupportsWaitRepeatMessage, int RelayIndex, int TimeoutMs, int RestartCount, DateTime? LastClockSyncAtUtc);
+    Guid Id, string Name, string IpAddress, int Port, string SerialNumber,
+    bool SupportsWaitRepeatMessage, int RelayIndex, int TimeoutMs, int RestartCount,
+    string ConnectionMode, DateTime? LastClockSyncAtUtc, bool HasCommunicationPassword);
 
 public record CreateControllerRequest(
     string Name, string IpAddress, int Port, string SerialNumber,
-    string CommunicationPassword, bool SupportsWaitRepeatMessage, int RelayIndex = 0);
+    string CommunicationPassword, bool SupportsWaitRepeatMessage, int RelayIndex = 0,
+    string ConnectionMode = "TcpClient");
 
+// CommunicationPassword em branco/nulo na edição mantém a atual (a API não a devolve).
 public record UpdateControllerRequest(
     string Name, string IpAddress, int Port, string SerialNumber,
-    string CommunicationPassword, bool SupportsWaitRepeatMessage, int RelayIndex,
-    int TimeoutMs, int RestartCount);
+    string? CommunicationPassword, bool SupportsWaitRepeatMessage, int RelayIndex,
+    int TimeoutMs, int RestartCount, string ConnectionMode = "TcpClient");
 
 // Grupos organizacionais de usuários.
 public record UserGroupDto(Guid Id, string Name, string? Description, int UserCount, IEnumerable<Guid> DefaultControllerIds);

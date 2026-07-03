@@ -1,3 +1,5 @@
+using HospitalAccess.Domain.Enums;
+
 namespace HospitalAccess.Domain.Entities;
 
 /// <summary>
@@ -33,6 +35,13 @@ public class Controller
 
     /// <summary>Índice do relé de porta no controlador. Mantido por completude do protocolo; hoje sempre 0.</summary>
     public int RelayIndex { get; set; }
+
+    /// <summary>
+    /// Como o servidor se comunica com este controlador. Default <see cref="ControllerConnectionMode.TcpClient"/>
+    /// (servidor disca para o controlador). Se o hardware exigir modo "phone home", troque para
+    /// <see cref="ControllerConnectionMode.TcpServerClient"/>. Ver README seção 2.
+    /// </summary>
+    public ControllerConnectionMode ConnectionMode { get; set; } = ControllerConnectionMode.TcpClient;
 
     /// <summary>Última vez que o relógio deste controlador foi sincronizado com o servidor.</summary>
     public DateTime? LastClockSyncAtUtc { get; set; }

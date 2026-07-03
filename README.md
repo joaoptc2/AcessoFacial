@@ -205,8 +205,10 @@ registrada nas seções 1-2 para o restante do gateway.
   `DoNetDrive.Common` (1.17.0), `DoNetDrive.Core` (2.9.0), `DoNetDrive.Protocol` (2.4.0),
   `DoNetDrive.Protocol.Door` (2.8.0), `DoNetDrive.Protocol.Fingerprint` (2.20.0),
   `DoNetDrive.Protocol.Util` (1.16.0), `DotNetty.Buffers`/`DotNetty.Common`/`DotNetty.Transport`
-  (0.7.0) — copie-as para `HospitalAccess.Gateway/lib/` (referenciadas via `<Reference HintPath>`
-  no `.csproj`, já que não existe pacote NuGet do fabricante).
+  (0.7.0). **Já estão versionadas em `HospitalAccess.Gateway/lib/`** (referenciadas via
+  `<Reference HintPath>` no `.csproj`, pois não há pacote NuGet do fabricante) — não é preciso
+  obtê-las de novo para compilar. Ao atualizar a versão do SDK, substitua os arquivos em `lib/`
+  e registre as novas versões aqui.
 
 ### Pacotes NuGet (públicos, restauram normalmente)
 `Microsoft.EntityFrameworkCore` + `Npgsql.EntityFrameworkCore.PostgreSQL`, `QRCoder`,

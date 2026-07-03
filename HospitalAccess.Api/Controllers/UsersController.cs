@@ -103,7 +103,7 @@ public class UsersController : ControllerBase
         await using var ms = new MemoryStream();
         await facePhoto.CopyToAsync(ms, ct);
 
-        var nextCode = (await _db.Users.MaxAsync(u => (uint?)u.UserCode, ct) ?? 0) + 1;
+        var nextCode = await NextUserCodeAsync(ct);
 
         var user = new User
         {
@@ -169,6 +169,16 @@ public class UsersController : ControllerBase
                 return BadRequest($"Controlador {controllerId} não existe.");
         }
 
+        // Edição altera dados que o dispositivo já tem (foto/nome/TimeGroup) ou as portas: os
+        // status já 'Synced' precisam voltar a 'Pending', senão SyncUserAsync os pula e a
+        // alteração nunca chega ao hardware.
+        var syncStatuses = await _db.SyncStatuses.Where(s => s.UserId == id).ToListAsync(ct);
+        foreach (var status in syncStatuses.Where(s => s.State == SyncState.Synced))
+        {
+            status.State = SyncState.Pending;
+            status.UpdatedAt = DateTime.UtcNow;
+        }
+
         // Remove permissões que não estão mais na lista desejada; adiciona as novas.
         var existingControllerIds = user.Permissions.Select(p => p.ControllerId).ToHashSet();
         var addedControllerIds = desiredControllerIds.Where(cId => !existingControllerIds.Contains(cId)).ToList();
@@ -224,12 +234,20 @@ public class UsersController : ControllerBase
 
         // Captura o necessário para revogar no hardware antes de apagar a linha (e o
         // DeviceSyncStatus em cascata), já que o RevokeUserAsync(userId) depende dessas
-        // linhas ainda existirem.
+        // linhas ainda existirem. Usa a UNIÃO das portas com permissão atual E das portas onde
+        // há qualquer status de sincronização não revogado: senão, uma porta com sync
+        // pendente/falha (que não está mais na lista de permissões) ficaria com a credencial
+        // ativa no hardware para sempre.
         var userCode = user.UserCode;
-        var controllerIds = await _db.Permissions
+        var permissionControllerIds = await _db.Permissions
             .Where(p => p.UserId == id)
             .Select(p => p.ControllerId)
             .ToListAsync(ct);
+        var syncedControllerIds = await _db.SyncStatuses
+            .Where(s => s.UserId == id && s.State != SyncState.Revoked)
+            .Select(s => s.ControllerId)
+            .ToListAsync(ct);
+        var controllerIds = permissionControllerIds.Union(syncedControllerIds).Distinct().ToList();
 
         UserAuditLogger.Record(_db, user, "Excluído", CurrentUsername());
         _db.Users.Remove(user);
@@ -359,4 +377,18 @@ public class UsersController : ControllerBase
     }
 
     private string? CurrentUsername() => User.Identity?.Name;
+
+    /// <summary>
+    /// Próximo UserCode via sequence do PostgreSQL: atômico entre requisições concorrentes e
+    /// monotônico (nunca reusa código de usuário excluído, o que corromperia o histórico).
+    /// </summary>
+    private async Task<uint> NextUserCodeAsync(CancellationToken ct)
+    {
+        // SqlQueryRaw (não SqlQuery interpolado): o nome da sequence é uma constante do sistema,
+        // deve ser embutido como literal e não parametrizado (nextval não aceita parâmetro no nome).
+        var next = await _db.Database
+            .SqlQueryRaw<long>($"SELECT nextval('{AccessDbContext.UserCodeSequence}') AS \"Value\"")
+            .SingleAsync(ct);
+        return (uint)next;
+    }
 }

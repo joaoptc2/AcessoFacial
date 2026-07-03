@@ -196,7 +196,7 @@
         {
             var response = await Api.CreateControllerAsync(new CreateControllerRequest(
                 _model.Name, _model.IpAddress, _model.Port, _model.SerialNumber,
-                _model.CommunicationPassword, _model.SupportsWaitRepeatMessage));
+                _model.CommunicationPassword, _model.SupportsWaitRepeatMessage, 0, _model.ConnectionMode));
             if (!response.IsSuccessStatusCode)
             {
                 _formError = await response.Content.ReadAsStringAsync();
@@ -205,9 +205,12 @@
         }
         else
         {
+            // Preserva TimeoutMs/RestartCount/ConnectionMode do formulário (antes eram zerados com
+            // literais 0/3000/3). Senha em branco = mantém a atual (a API não a devolve).
+            var password = string.IsNullOrWhiteSpace(_model.CommunicationPassword) ? null : _model.CommunicationPassword;
             var response = await Api.UpdateControllerAsync(_editingId.Value, new UpdateControllerRequest(
                 _model.Name, _model.IpAddress, _model.Port, _model.SerialNumber,
-                _model.CommunicationPassword, _model.SupportsWaitRepeatMessage, 0, 3000, 3));
+                password, _model.SupportsWaitRepeatMessage, 0, _model.TimeoutMs, _model.RestartCount, _model.ConnectionMode));
             if (!response.IsSuccessStatusCode)
             {
                 _formError = await response.Content.ReadAsStringAsync();
@@ -229,8 +232,11 @@
         _model.IpAddress = detail.IpAddress;
         _model.Port = detail.Port;
         _model.SerialNumber = detail.SerialNumber;
-        _model.CommunicationPassword = detail.CommunicationPassword;
+        _model.CommunicationPassword = string.Empty; // não retornada; em branco = manter a atual
         _model.SupportsWaitRepeatMessage = detail.SupportsWaitRepeatMessage;
+        _model.ConnectionMode = detail.ConnectionMode;
+        _model.TimeoutMs = detail.TimeoutMs;
+        _model.RestartCount = detail.RestartCount;
     }
 
     private void CancelEdit()
@@ -320,5 +326,8 @@
         public string SerialNumber { get; set; } = string.Empty;
         public string CommunicationPassword { get; set; } = "FFFFFFFF";
         public bool SupportsWaitRepeatMessage { get; set; }
+        public string ConnectionMode { get; set; } = "TcpClient";
+        public int TimeoutMs { get; set; } = 3000;
+        public int RestartCount { get; set; } = 3;
     }
 }

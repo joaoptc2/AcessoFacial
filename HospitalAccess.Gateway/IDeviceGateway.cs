@@ -82,6 +82,17 @@ public interface IDeviceGateway
     Task WriteKioskSettingsAsync(Controller controller, KioskSettingsSnapshot settings, CancellationToken ct = default);
 
     /// <summary>
+    /// Habilita o monitoramento em tempo real (BeginWatch / Online Transaction) neste controlador
+    /// e mantém a conexão aberta para receber o push de eventos de acesso e alarme. Deve ser
+    /// (re)chamado na subida do serviço e periodicamente, já que o dispositivo NÃO persiste o
+    /// estado de monitoramento após reboot (protocolo §10). Não validado contra hardware real.
+    /// </summary>
+    Task StartMonitoringAsync(Controller controller, CancellationToken ct = default);
+
+    /// <summary>Desativa o monitoramento em tempo real (CloseWatch) e libera a conexão persistente.</summary>
+    Task StopMonitoringAsync(Controller controller, CancellationToken ct = default);
+
+    /// <summary>
     /// Evento de acesso em tempo real empurrado por um controlador.
     /// A implementação assina os eventos do SDK e dispara este callback.
     /// </summary>
@@ -91,7 +102,17 @@ public interface IDeviceGateway
     event EventHandler<DeviceAlarmEvent> AlarmEventReceived;
 }
 
-/// <summary>Evento de alarme normalizado, traduzido do AlarmTransaction do protocolo.</summary>
+/// <summary>
+/// Erro de execução de um comando no controlador (timeout, cancelamento, falha de autenticação
+/// ou comando não confirmado pelo dispositivo). Lançado quando o SDK não confirma o sucesso —
+/// substitui o antigo "sucesso silencioso" em que uma escrita que falhou passava como concluída.
+/// </summary>
+public sealed class DeviceCommandException : Exception
+{
+    public DeviceCommandException(string message, Exception? inner = null) : base(message, inner) { }
+}
+
+/// <summary>Evento de alarme normalizado, traduzido do registro de sistema (Classe VIII/IX) do protocolo.</summary>
 public sealed class DeviceAlarmEvent
 {
     public required string ControllerSerialNumber { get; init; }
