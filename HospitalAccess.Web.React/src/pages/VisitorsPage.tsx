@@ -153,6 +153,11 @@ export function VisitorsPage() {
         <div className="card" style={{ marginBottom: "1.25rem", maxWidth: 340 }}>
           <h4 style={{ marginTop: 0 }}>QR de acesso — {qrVisitorName}</h4>
           <img src={qrImage} alt="QR de acesso" style={{ maxWidth: "100%" }} />
+          <p className="text-muted" style={{ fontSize: "0.8rem", marginBottom: 0 }}>
+            O QR só abre a porta depois que o visitante é <strong>sincronizado</strong> nos controladores das
+            portas escolhidas (feito automaticamente ao cadastrar). Se nenhuma porta foi selecionada, o QR
+            não abrirá nada — edite/recadastre incluindo as portas.
+          </p>
         </div>
       )}
 

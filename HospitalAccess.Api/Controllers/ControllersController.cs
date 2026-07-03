@@ -1,3 +1,4 @@
+using HospitalAccess.Application.Sync;
 using HospitalAccess.Domain.Entities;
 using HospitalAccess.Domain.Enums;
 using HospitalAccess.Gateway;
@@ -5,6 +6,7 @@ using HospitalAccess.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 
 namespace HospitalAccess.Api.Controllers;
@@ -40,11 +42,16 @@ public class ControllersController : ControllerBase
 {
     private readonly AccessDbContext _db;
     private readonly IDeviceGateway _gateway;
+    private readonly IServiceScopeFactory _scopeFactory;
+    private readonly ILogger<ControllersController> _logger;
 
-    public ControllersController(AccessDbContext db, IDeviceGateway gateway)
+    public ControllersController(
+        AccessDbContext db, IDeviceGateway gateway, IServiceScopeFactory scopeFactory, ILogger<ControllersController> logger)
     {
         _db = db;
         _gateway = gateway;
+        _scopeFactory = scopeFactory;
+        _logger = logger;
     }
 
     [HttpGet]
@@ -127,7 +134,7 @@ public class ControllersController : ControllerBase
             .Include(s => s.User)
             .Select(s => new
             {
-                s.UserId, UserName = s.User!.Name, s.State, s.RetryCount, s.LastError, s.UpdatedAt,
+                s.UserId, UserName = s.User!.Name, s.State, s.RetryCount, s.LastError, s.UpdatedAt, s.ConflictUserCode,
             })
             .ToListAsync(ct);
         return Ok(statuses);
@@ -357,6 +364,26 @@ public class ControllersController : ControllerBase
     [Authorize(Roles = "Admin,Operator")]
     public Task<IActionResult> ClearAlarm(Guid id, CancellationToken ct) => RunWriteAsync(id, _gateway.ClearAlarmAsync, ct);
 
+    /// <summary>Dispara o alarme de incêndio NESTE controlador (auditado).</summary>
+    [HttpPost("{id:guid}/alarm-fire")]
+    [Authorize(Roles = "Admin,Operator")]
+    public async Task<IActionResult> TriggerFireAlarm(Guid id, CancellationToken ct)
+    {
+        var controller = await _db.Controllers.FirstOrDefaultAsync(c => c.Id == id, ct);
+        if (controller is null) return NotFound();
+        try
+        {
+            await _gateway.TriggerFireAlarmAsync(controller, ct);
+            await AuditAsync(controller, "DispararIncêndio", success: true, error: null, ct);
+            return NoContent();
+        }
+        catch (Exception ex)
+        {
+            await AuditAsync(controller, "DispararIncêndio", success: false, error: ex.Message, ct);
+            return StatusCode(502, new { error = ex.Message });
+        }
+    }
+
     // --- Ajustes locais (quiosque) ---
 
     [HttpGet("{id:guid}/kiosk-settings")]
@@ -398,6 +425,59 @@ public class ControllersController : ControllerBase
         {
             return StatusCode(502, new { error = ex.Message });
         }
+    }
+
+    /// <summary>
+    /// Exclui uma pessoa específica (por código) diretamente do controlador — usado na auditoria,
+    /// para remover cadastros indevidos (ExtraOnDevice), e na resolução de face duplicada. Auditado.
+    /// </summary>
+    [HttpDelete("{id:guid}/persons/{userCode:long}")]
+    [Authorize(Roles = "Admin,Operator")]
+    public async Task<IActionResult> DeletePersonFromDevice(Guid id, long userCode, CancellationToken ct)
+    {
+        var controller = await _db.Controllers.FirstOrDefaultAsync(c => c.Id == id, ct);
+        if (controller is null) return NotFound();
+        try
+        {
+            await _gateway.DeletePersonAsync(controller, (uint)userCode, ct);
+            await AuditAsync(controller, $"ExcluirPessoa#{userCode}", success: true, error: null, ct);
+            return NoContent();
+        }
+        catch (Exception ex)
+        {
+            await AuditAsync(controller, $"ExcluirPessoa#{userCode}", success: false, error: ex.Message, ct);
+            return StatusCode(502, new { error = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// Resincronização FORÇADA: apaga TODAS as pessoas do controlador e reenvia os usuários do
+    /// sistema com permissão nele. Roda em segundo plano (pode demorar). Auditado.
+    /// </summary>
+    [HttpPost("{id:guid}/resync-all")]
+    [Authorize(Roles = "Admin,Operator")]
+    public async Task<IActionResult> ResyncAll(Guid id, CancellationToken ct)
+    {
+        var controller = await _db.Controllers.FirstOrDefaultAsync(c => c.Id == id, ct);
+        if (controller is null) return NotFound();
+
+        await AuditAsync(controller, "ResincronizarForçado", success: true, error: null, ct);
+
+        _ = Task.Run(async () =>
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var sync = scope.ServiceProvider.GetRequiredService<IUserSyncService>();
+            try
+            {
+                await sync.ForceResyncControllerAsync(id);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Falha no resync forçado do controlador {ControllerId}.", id);
+            }
+        });
+
+        return Accepted(new { message = "Resincronização forçada iniciada." });
     }
 
     // --- Foto do evento ---

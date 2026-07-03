@@ -4,6 +4,7 @@ import {
   api,
   ApiError,
   authHeaders,
+  type AccessLogItem,
   type AlarmSettings,
   type ControllerDetailDto,
   type ControllerNetworkInfo,
@@ -12,7 +13,7 @@ import {
   type PersonnelAudit,
 } from "../lib/api";
 
-const TABS = ["Rede", "Relógio", "Alarmes", "Ajustes Locais", "Auditoria", "Fotos de Evento"] as const;
+const TABS = ["Rede", "Relógio", "Alarmes", "Ajustes Locais", "Auditoria", "Fotos de Evento", "Log de Acessos", "Manutenção"] as const;
 type Tab = (typeof TABS)[number];
 
 export function ControllerDetailPage() {
@@ -29,6 +30,8 @@ export function ControllerDetailPage() {
   const [audit, setAudit] = useState<PersonnelAudit | null>(null);
   const [photos, setPhotos] = useState<EventPhotoListItem[]>([]);
   const [photoImages, setPhotoImages] = useState<Record<string, string>>({});
+  const [accessLog, setAccessLog] = useState<AccessLogItem[]>([]);
+  const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -47,7 +50,10 @@ export function ControllerDetailPage() {
       else if (tab === "Relógio") setClock(await api.getClock(id));
       else if (tab === "Alarmes" && !alarmSettings) setAlarmSettings(await api.getAlarmSettings(id));
       else if (tab === "Ajustes Locais" && !kiosk) setKiosk(await api.getKioskSettings(id));
-      else if (tab === "Fotos de Evento") {
+      else if (tab === "Log de Acessos") {
+        const page = await api.queryAccessLog({ controllerId: id, page: 1, pageSize: 50 });
+        setAccessLog(page.items);
+      } else if (tab === "Fotos de Evento") {
         const list = await api.getEventPhotos(id);
         setPhotos(list);
         await loadPhotoImages(list);
@@ -169,6 +175,55 @@ export function ControllerDetailPage() {
     }
   }
 
+  async function deleteExtraFromDevice(code: number) {
+    if (!id) return;
+    if (!window.confirm(`Excluir o usuário ${code} diretamente deste controlador?`)) return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await api.deletePersonFromDevice(id, code);
+      setNotice(`Usuário ${code} excluído do dispositivo.`);
+      setAudit(await api.getPersonnelAudit(id));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Falha ao excluir.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function triggerFire() {
+    if (!id) return;
+    if (!window.confirm("Disparar o alarme de INCÊNDIO neste controlador?")) return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await api.triggerFireAlarm(id);
+      setNotice("Alarme de incêndio disparado.");
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Falha ao disparar.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function resyncAll() {
+    if (!id) return;
+    if (!window.confirm("Resincronizar FORÇADO: apaga TODAS as pessoas deste controlador e reenvia os cadastros do sistema. Confirmar?")) return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const r = await api.resyncAllController(id);
+      setNotice(r.message ?? "Resincronização iniciada em segundo plano.");
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Falha ao resincronizar.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (!controller) return <p className="text-muted">Carregando...</p>;
 
   return (
@@ -199,6 +254,7 @@ export function ControllerDetailPage() {
       </div>
 
       {error && <div className="alert alert-danger">{error}</div>}
+      {notice && <div className="alert alert-success">{notice}</div>}
 
       {activeTab === "Rede" &&
         (network === null ? (
@@ -444,9 +500,14 @@ export function ControllerDetailPage() {
                   {audit.extraOnDevice.length === 0 ? (
                     <p className="text-muted">Nenhum.</p>
                   ) : (
-                    <ul>
+                    <ul style={{ listStyle: "none", paddingLeft: 0 }}>
                       {audit.extraOnDevice.map((code) => (
-                        <li key={code}>{code}</li>
+                        <li key={code} style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.3rem" }}>
+                          <span>{code}</span>
+                          <button className="btn btn-danger-outline btn-sm" disabled={busy} onClick={() => deleteExtraFromDevice(code)}>
+                            Excluir do dispositivo
+                          </button>
+                        </li>
                       ))}
                     </ul>
                   )}
@@ -480,6 +541,66 @@ export function ControllerDetailPage() {
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {activeTab === "Log de Acessos" && (
+        <div>
+          <p className="text-muted">Acessos mais recentes registrados NESTE controlador.</p>
+          {accessLog.length === 0 ? (
+            <p className="text-muted">Nenhum acesso registrado ainda.</p>
+          ) : (
+            <table>
+              <thead>
+                <tr>
+                  <th>Data/hora</th>
+                  <th>Usuário</th>
+                  <th>Código</th>
+                  <th>Método</th>
+                  <th>Resultado</th>
+                </tr>
+              </thead>
+              <tbody>
+                {accessLog.map((l) => (
+                  <tr key={l.id}>
+                    <td>{new Date(l.timestampUtc).toLocaleString()}</td>
+                    <td>{l.userName ?? "—"}</td>
+                    <td>{l.userCode ?? "—"}</td>
+                    <td>{l.method}</td>
+                    <td>
+                      <span className={l.granted ? "pill pill-success" : "pill pill-danger"}>
+                        {l.granted ? "Concedido" : "Negado"}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          <Link to={`/accesslog`} className="btn btn-outline btn-sm" style={{ marginTop: "0.75rem", display: "inline-block" }}>
+            Ver log completo (com filtros)
+          </Link>
+        </div>
+      )}
+
+      {activeTab === "Manutenção" && (
+        <div className="card" style={{ maxWidth: 640 }}>
+          <h4 style={{ marginTop: 0 }}>Resincronização forçada</h4>
+          <p className="text-muted" style={{ marginTop: 0 }}>
+            Apaga <strong>todas</strong> as pessoas deste controlador e reenvia os usuários cadastrados no
+            sistema com permissão nele. Útil para corrigir divergências ou faces duplicadas.
+          </p>
+          <button className="btn btn-danger-outline" onClick={resyncAll} disabled={busy}>
+            Resincronizar (forçar)
+          </button>
+
+          <hr className="divider" />
+
+          <h4>Alarme de incêndio</h4>
+          <p className="text-muted" style={{ marginTop: 0 }}>Dispara o alarme de incêndio neste controlador.</p>
+          <button className="btn btn-danger" onClick={triggerFire} disabled={busy}>
+            Disparar alarme de incêndio
+          </button>
         </div>
       )}
     </div>

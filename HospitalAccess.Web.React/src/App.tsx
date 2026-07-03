@@ -2,6 +2,7 @@ import type { ReactElement } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { useAuth } from "./lib/AuthContext";
 import { Sidebar } from "./components/Sidebar";
+import { StatusBanner } from "./components/StatusBanner";
 import { LoginPage } from "./pages/LoginPage";
 import { HomePage } from "./pages/HomePage";
 import { ControllersPage } from "./pages/ControllersPage";
@@ -25,7 +26,10 @@ function AppShell({ children }: { children: ReactElement }) {
   return (
     <div className="app-shell">
       <Sidebar />
-      <main className="main-content">{children}</main>
+      <main className="main-content">
+        <StatusBanner />
+        {children}
+      </main>
     </div>
   );
 }

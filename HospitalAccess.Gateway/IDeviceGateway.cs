@@ -28,6 +28,9 @@ public interface IDeviceGateway
     /// <summary>Remove um usuário de um controlador.</summary>
     Task DeletePersonAsync(Controller controller, uint userCode, CancellationToken ct = default);
 
+    /// <summary>Apaga TODAS as pessoas cadastradas no controlador (usado no resincronizar forçado).</summary>
+    Task ClearAllPersonsAsync(Controller controller, CancellationToken ct = default);
+
     /// <summary>Dispara o alarme de incêndio no controlador (protocolo §5) — acionamento de emergência.</summary>
     Task TriggerFireAlarmAsync(Controller controller, CancellationToken ct = default);
 
@@ -140,7 +143,8 @@ public sealed class DeviceAlarmEvent
 }
 
 /// <summary>Resultado do cadastro de face, mapeando os códigos de retorno do protocolo.</summary>
-public sealed record AddFaceResult(bool Success, FaceUploadCode Code, string? Message);
+/// <param name="ConflictUserCode">Quando Code = Duplicate, o código do usuário já existente cuja face colidiu.</param>
+public sealed record AddFaceResult(bool Success, FaceUploadCode Code, string? Message, uint? ConflictUserCode = null);
 
 /// <summary>Códigos de retorno do upload de foto/feature code (Classe 11 / verificação CRC32).</summary>
 public enum FaceUploadCode

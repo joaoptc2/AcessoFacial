@@ -39,6 +39,16 @@ public class EmergencyController : ControllerBase
             await _gateway.TriggerFireAlarmAsync(controller, c);
         }, ct);
 
+    /// <summary>Dispara SÓ o alarme de incêndio em TODOS os controladores (sem mexer nas portas).</summary>
+    [HttpPost("fire-alarm")]
+    public Task<IActionResult> FireAlarmAll(CancellationToken ct) =>
+        RunOnAllAsync("IncêndioUniversal", (controller, c) => _gateway.TriggerFireAlarmAsync(controller, c), ct);
+
+    /// <summary>Silencia/encerra os alarmes em TODOS os controladores (sem mexer nas portas).</summary>
+    [HttpPost("clear-alarms")]
+    public Task<IActionResult> ClearAlarmsAll(CancellationToken ct) =>
+        RunOnAllAsync("SilenciarAlarmesUniversal", (controller, c) => _gateway.ClearAlarmAsync(controller, c), ct);
+
     /// <summary>Encerra a emergência: fecha as portas (sai do modo aberto) e silencia os alarmes.</summary>
     [HttpPost("deactivate")]
     public Task<IActionResult> Deactivate(CancellationToken ct) =>

@@ -139,12 +139,16 @@ public sealed class UserSyncService : IUserSyncService
                 await _gateway.AddPersonWithoutFaceAsync(controller, user, ct);
                 status.State = SyncState.Synced;
                 status.LastError = null;
+                status.ConflictUserCode = null;
             }
             else
             {
                 var result = await _gateway.AddPersonWithFaceAsync(controller, user, user.FacePhoto!, ct);
                 status.State = result.Success ? SyncState.Synced : SyncState.Failed;
                 status.LastError = result.Success ? null : result.Message;
+                // Guarda o código do conflito só quando é duplicidade de face — a UI usa para
+                // oferecer "substituir" ou "manter o existente".
+                status.ConflictUserCode = result.Code == FaceUploadCode.Duplicate ? result.ConflictUserCode : null;
                 if (!result.Success) status.RetryCount++;
             }
         }
@@ -158,6 +162,75 @@ public sealed class UserSyncService : IUserSyncService
 
         status.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(ct);
+    }
+
+    public async Task ReplaceConflictAsync(Guid userId, Guid controllerId, CancellationToken ct = default)
+    {
+        var status = await _db.SyncStatuses.FirstOrDefaultAsync(s => s.UserId == userId && s.ControllerId == controllerId, ct);
+        var controller = await _db.Controllers.FirstOrDefaultAsync(c => c.Id == controllerId, ct);
+        var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == userId, ct);
+        if (controller is null || user is null) return;
+
+        // Exclui do controlador o usuário existente que colidiu (se conhecido), depois reenvia o novo.
+        if (status?.ConflictUserCode is { } conflictCode && conflictCode != user.UserCode)
+        {
+            try { await _gateway.DeletePersonAsync(controller, conflictCode, ct); }
+            catch (Exception ex) { _logger.LogWarning(ex, "Falha ao excluir usuário em conflito {Code} no controlador {ControllerId}.", conflictCode, controllerId); }
+        }
+
+        if (status is not null)
+        {
+            status.State = SyncState.Pending;
+            status.ConflictUserCode = null;
+            status.LastError = null;
+            await _db.SaveChangesAsync(ct);
+        }
+
+        await SyncToControllerAsync(user, controllerId, status, ct);
+    }
+
+    public async Task KeepExistingOnConflictAsync(Guid userId, Guid controllerId, CancellationToken ct = default)
+    {
+        // "Manter o existente": cancela o envio deste usuário para esta porta — remove a permissão
+        // e o status de sync correspondente, para não continuar tentando.
+        var permission = await _db.Permissions.FirstOrDefaultAsync(p => p.UserId == userId && p.ControllerId == controllerId, ct);
+        if (permission is not null) _db.Permissions.Remove(permission);
+
+        var status = await _db.SyncStatuses.FirstOrDefaultAsync(s => s.UserId == userId && s.ControllerId == controllerId, ct);
+        if (status is not null) _db.SyncStatuses.Remove(status);
+
+        await _db.SaveChangesAsync(ct);
+    }
+
+    public async Task ForceResyncControllerAsync(Guid controllerId, CancellationToken ct = default)
+    {
+        var controller = await _db.Controllers.FirstOrDefaultAsync(c => c.Id == controllerId, ct);
+        if (controller is null) return;
+
+        // 1) Apaga TODAS as pessoas do dispositivo.
+        await _gateway.ClearAllPersonsAsync(controller, ct);
+
+        // 2) Zera os status de sync deste controlador (o dispositivo está vazio agora).
+        var statuses = await _db.SyncStatuses.Where(s => s.ControllerId == controllerId).ToListAsync(ct);
+        foreach (var s in statuses) _db.SyncStatuses.Remove(s);
+        await _db.SaveChangesAsync(ct);
+
+        // 3) Reenvia todos os usuários ativos com permissão neste controlador.
+        var userIds = await _db.Permissions
+            .Where(p => p.ControllerId == controllerId)
+            .Select(p => p.UserId)
+            .Distinct()
+            .ToListAsync(ct);
+
+        foreach (var userId in userIds)
+        {
+            var user = await _db.Users.Include(u => u.Permissions).FirstOrDefaultAsync(u => u.Id == userId, ct);
+            if (user is null || user.RevokedAtUtc is not null) continue;
+            if (user.Type == UserType.Permanent && user.FacePhoto is null) continue;
+            if (user.Type == UserType.Visitor && (user.ValidUntil is null || user.ValidUntil < DateTime.UtcNow)) continue;
+
+            await SyncToControllerAsync(user, controllerId, null, ct);
+        }
     }
 
     private async Task RevokeFromControllerAsync(uint userCode, DeviceSyncStatus status, CancellationToken ct)

@@ -296,6 +296,49 @@ public class UsersController : ControllerBase
         return NoContent();
     }
 
+    /// <summary>
+    /// Resolve um conflito de face duplicada em um controlador SUBSTITUINDO: exclui o usuário
+    /// existente que colidiu e reenvia este usuário. Roda em segundo plano.
+    /// </summary>
+    [HttpPost("{id:guid}/sync/{controllerId:guid}/replace")]
+    [Authorize(Roles = "Admin,Operator")]
+    public async Task<IActionResult> ResolveConflictReplace(Guid id, Guid controllerId, CancellationToken ct)
+    {
+        if (!await _db.Users.AnyAsync(u => u.Id == id, ct)) return NotFound();
+        ResolveConflictInBackground(sync => sync.ReplaceConflictAsync(id, controllerId), "substituir conflito");
+        return Accepted(new { message = "Substituição iniciada." });
+    }
+
+    /// <summary>
+    /// Resolve um conflito de face duplicada MANTENDO o existente: cancela o envio deste usuário
+    /// para o controlador (remove a permissão dele naquela porta).
+    /// </summary>
+    [HttpPost("{id:guid}/sync/{controllerId:guid}/keep-existing")]
+    [Authorize(Roles = "Admin,Operator")]
+    public async Task<IActionResult> ResolveConflictKeepExisting(Guid id, Guid controllerId, CancellationToken ct)
+    {
+        if (!await _db.Users.AnyAsync(u => u.Id == id, ct)) return NotFound();
+        var scope = _scopeFactory.CreateScope();
+        try
+        {
+            var sync = scope.ServiceProvider.GetRequiredService<IUserSyncService>();
+            await sync.KeepExistingOnConflictAsync(id, controllerId, ct);
+        }
+        finally { scope.Dispose(); }
+        return NoContent();
+    }
+
+    private void ResolveConflictInBackground(Func<IUserSyncService, Task> action, string description)
+    {
+        _ = Task.Run(async () =>
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var sync = scope.ServiceProvider.GetRequiredService<IUserSyncService>();
+            try { await action(sync); }
+            catch (Exception ex) { _logger.LogError(ex, "Falha ao {Description} em segundo plano.", description); }
+        });
+    }
+
     /// <summary>Histórico administrativo do usuário (criação, edições, revogação/reativação, exclusão). Sobrevive à exclusão do cadastro.</summary>
     [HttpGet("{id:guid}/audit-log")]
     public async Task<IActionResult> AuditLog(Guid id, CancellationToken ct)

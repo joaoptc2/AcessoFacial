@@ -26,17 +26,26 @@ export function HomePage() {
     return () => clearInterval(timer);
   }, [load]);
 
-  async function runEmergency(kind: "activate" | "deactivate") {
-    const message =
-      kind === "activate"
-        ? "ATIVAR EMERGÊNCIA: abrir TODAS as portas e disparar o alarme de incêndio em todos os controladores. Confirmar?"
-        : "Encerrar a emergência: fechar as portas e silenciar os alarmes. Confirmar?";
-    if (!window.confirm(message)) return;
+  async function runEmergency(kind: "activate" | "deactivate" | "fire" | "clear") {
+    const messages: Record<typeof kind, string> = {
+      activate: "ATIVAR EMERGÊNCIA: abrir TODAS as portas e disparar o alarme de incêndio em todos os controladores. Confirmar?",
+      deactivate: "Encerrar a emergência: fechar as portas e silenciar os alarmes. Confirmar?",
+      fire: "Disparar o alarme de INCÊNDIO em TODOS os controladores (sem mexer nas portas). Confirmar?",
+      clear: "Silenciar os alarmes em TODOS os controladores. Confirmar?",
+    };
+    if (!window.confirm(messages[kind])) return;
 
     setEmergencyBusy(true);
     setEmergencyResult(null);
     try {
-      const result = kind === "activate" ? await api.activateEmergency() : await api.deactivateEmergency();
+      const result =
+        kind === "activate"
+          ? await api.activateEmergency()
+          : kind === "deactivate"
+            ? await api.deactivateEmergency()
+            : kind === "fire"
+              ? await api.fireAlarmAll()
+              : await api.clearAlarmsAll();
       setEmergencyResult(result);
       await load();
     } catch (err) {
@@ -71,9 +80,15 @@ export function HomePage() {
           <p className="text-muted" style={{ marginTop: 0 }}>
             Abre todas as portas e dispara o alarme de incêndio em todos os controladores. Ação auditada.
           </p>
-          <div className="btn-group">
+          <div className="btn-group" style={{ flexWrap: "wrap" }}>
             <button className="btn btn-danger" disabled={emergencyBusy} onClick={() => runEmergency("activate")}>
               Ativar emergência (abrir tudo + incêndio)
+            </button>
+            <button className="btn btn-danger-outline" disabled={emergencyBusy} onClick={() => runEmergency("fire")}>
+              Disparar incêndio (todos)
+            </button>
+            <button className="btn btn-outline" disabled={emergencyBusy} onClick={() => runEmergency("clear")}>
+              Silenciar alarmes (todos)
             </button>
             <button className="btn btn-outline" disabled={emergencyBusy} onClick={() => runEmergency("deactivate")}>
               Encerrar emergência

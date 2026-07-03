@@ -182,7 +182,7 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
             3 => new AddFaceResult(false, FaceUploadCode.NoFaceInPhoto,
                 "Nenhum rosto reconhecível na foto."),
             4 => new AddFaceResult(false, FaceUploadCode.Duplicate,
-                $"Foto/feature code duplicado (usuário existente: {repeatUser})."),
+                $"Foto/feature code duplicado (usuário existente: {repeatUser}).", repeatUser),
             _ => new AddFaceResult(false, FaceUploadCode.CrcFailure,
                 $"Falha de verificação CRC32 no upload (status retornado: {status})."),
         };
@@ -223,6 +223,18 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
         var par = new DeletePerson_Parameter(new List<PersonData> { person });
         var cmd = new DeletePerson(_connections.CreateCommandDetail(controller), par);
         await RunAsync(cmd, "DeletePerson", controller);
+    }
+
+    /// <summary>
+    /// Apaga TODAS as pessoas cadastradas no controlador (protocolo §8.2, 0x07 0x02). Usado no
+    /// "resincronizar forçado", que limpa o dispositivo e reenvia os cadastros do sistema.
+    /// </summary>
+    public async Task ClearAllPersonsAsync(Controller controller, CancellationToken ct = default)
+    {
+        var cmdDtl = _connections.CreateCommandDetail(controller);
+        cmdDtl.Timeout = Math.Max(controller.TimeoutMs, 15000); // apagar a base pode demorar
+        var cmd = new ClearPersonDataBase(cmdDtl);
+        await RunAsync(cmd, "ClearPersonDataBase", controller);
     }
 
     /// <summary>

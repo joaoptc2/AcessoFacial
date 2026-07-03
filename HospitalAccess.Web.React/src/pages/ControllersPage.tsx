@@ -190,6 +190,22 @@ export function ControllersPage() {
     setSyncStatuses(await api.getSyncStatus(modalController.id));
   }
 
+  async function resolveConflict(userId: string, action: "replace" | "keep") {
+    if (!modalController) return;
+    try {
+      if (action === "replace") {
+        await api.resolveConflictReplace(userId, modalController.id);
+        setDoorResult("Substituição iniciada — a sincronização será refeita.");
+      } else {
+        await api.resolveConflictKeepExisting(userId, modalController.id);
+        setDoorResult("Mantido o usuário existente; este envio foi cancelado.");
+      }
+      setSyncStatuses(await api.getSyncStatus(modalController.id));
+    } catch (err) {
+      setDoorResult(`Falha: ${err instanceof ApiError ? err.message : "erro inesperado"}`);
+    }
+  }
+
   function syncBadgeClass(state: string) {
     switch (state) {
       case "Synced":
@@ -400,11 +416,21 @@ export function ControllersPage() {
           </div>
           {testResult && <p>{testResult}</p>}
           {syncStatuses.length > 0 && (
-            <ul style={{ paddingLeft: "1.1rem", margin: 0 }}>
+            <ul style={{ listStyle: "none", paddingLeft: 0, margin: 0 }}>
               {syncStatuses.map((s) => (
-                <li key={s.userId}>
+                <li key={s.userId} style={{ marginBottom: "0.4rem" }}>
                   {s.userName} — <span className={syncBadgeClass(s.state)}>{s.state}</span> (retries: {s.retryCount})
                   {s.lastError ? ` — ${s.lastError}` : ""}
+                  {isAdminOrOperator && s.conflictUserCode != null && (
+                    <div className="btn-group" style={{ marginTop: "0.3rem" }}>
+                      <button className="btn btn-danger-outline btn-sm" onClick={() => resolveConflict(s.userId, "replace")}>
+                        Substituir (excluir o existente e enviar este)
+                      </button>
+                      <button className="btn btn-outline btn-sm" onClick={() => resolveConflict(s.userId, "keep")}>
+                        Manter o existente
+                      </button>
+                    </div>
+                  )}
                 </li>
               ))}
             </ul>

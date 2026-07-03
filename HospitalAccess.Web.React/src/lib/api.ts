@@ -69,6 +69,7 @@ export interface SyncStatusDto {
   retryCount: number;
   lastError: string | null;
   updatedAt: string;
+  conflictUserCode: number | null;
 }
 
 export interface DiscoveredController {
@@ -441,6 +442,19 @@ export const api = {
     }),
   getSyncStatus: (id: string) => request<SyncStatusDto[]>(`/controllers/${id}/sync-status`),
 
+  // Resincronização forçada (limpa o dispositivo e reenvia os cadastros do sistema).
+  resyncAllController: (id: string) => request<{ message: string }>(`/controllers/${id}/resync-all`, { method: "POST" }),
+  // Dispara o alarme de incêndio neste controlador.
+  triggerFireAlarm: (id: string) => request<void>(`/controllers/${id}/alarm-fire`, { method: "POST" }),
+  // Exclui uma pessoa específica (por código) do controlador (auditoria / conflito).
+  deletePersonFromDevice: (id: string, userCode: number) =>
+    request<void>(`/controllers/${id}/persons/${userCode}`, { method: "DELETE" }),
+  // Resolução de conflito de face duplicada:
+  resolveConflictReplace: (userId: string, controllerId: string) =>
+    request<{ message: string }>(`/users/${userId}/sync/${controllerId}/replace`, { method: "POST" }),
+  resolveConflictKeepExisting: (userId: string, controllerId: string) =>
+    request<void>(`/users/${userId}/sync/${controllerId}/keep-existing`, { method: "POST" }),
+
   // ---- Rede ----
   getNetwork: (id: string) => request<ControllerNetworkInfo>(`/controllers/${id}/network`),
   updateNetwork: (id: string, body: ControllerNetworkInfo) =>
@@ -541,6 +555,8 @@ export const api = {
   // ---- Emergência (Admin) ----
   activateEmergency: () => request<EmergencyResultDto>("/emergency/activate", { method: "POST" }),
   deactivateEmergency: () => request<EmergencyResultDto>("/emergency/deactivate", { method: "POST" }),
+  fireAlarmAll: () => request<EmergencyResultDto>("/emergency/fire-alarm", { method: "POST" }),
+  clearAlarmsAll: () => request<EmergencyResultDto>("/emergency/clear-alarms", { method: "POST" }),
 
   // ---- Configurações do sistema (Admin) ----
   getSettings: () => request<SystemSettingsDto>("/settings"),
