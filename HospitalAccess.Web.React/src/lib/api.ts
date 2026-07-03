@@ -231,13 +231,60 @@ export interface VisitorListItemDto {
   revokedAtUtc: string | null;
   isExpired: boolean;
   isRevoked: boolean;
+  controllers: UserControllerRef[];
 }
 
 export interface CreateVisitorRequest {
   name: string;
   validUntil: string;
   timeGroup: number;
+  controllerIds?: string[];
 }
+
+export interface ControllerStatusItem {
+  id: string;
+  name: string;
+  ipAddress: string;
+  lastSeenUtc: string | null;
+  lastReachError: string | null;
+  online: boolean;
+  pendingSync: number;
+  activeAlarms: number;
+}
+
+export interface DashboardDto {
+  generatedAtUtc: string;
+  total: number;
+  online: number;
+  offline: number;
+  controllers: ControllerStatusItem[];
+}
+
+export interface EmergencyDeviceResult {
+  controllerId: string;
+  controllerName: string;
+  success: boolean;
+  error: string | null;
+}
+
+export interface EmergencyResultDto {
+  action: string;
+  total: number;
+  succeeded: number;
+  failed: number;
+  devices: EmergencyDeviceResult[];
+}
+
+export interface SystemSettingsDto {
+  eventPhotoRetentionDays: number;
+  accessLogRetentionDays: number;
+  alarmLogRetentionDays: number;
+  controllerAuditRetentionDays: number;
+  updatedAtUtc: string;
+  updatedByUsername: string | null;
+}
+
+export type UpdateSettingsRequest = Omit<SystemSettingsDto, "updatedAtUtc" | "updatedByUsername">;
 
 export interface AccessLogItem {
   id: string;
@@ -369,6 +416,7 @@ export const api = {
 
   // ---- Controladores ----
   getControllers: () => request<ControllerDto[]>("/controllers"),
+  getControllerStatus: () => request<DashboardDto>("/controllers/status"),
   getController: (id: string) => request<ControllerDetailDto>(`/controllers/${id}`),
   createController: (body: CreateControllerRequest) =>
     request<{ id: string }>("/controllers", { method: "POST", body: JSON.stringify(body) }),
@@ -489,4 +537,12 @@ export const api = {
     request<AlarmEventPage>(`/alarmevents${buildQuery(params)}`),
   exportAlarmEventsCsv: (params: { from?: string; to?: string; controllerId?: string; kind?: string }) =>
     requestBlob(`/alarmevents/export${buildQuery(params)}`),
+
+  // ---- Emergência (Admin) ----
+  activateEmergency: () => request<EmergencyResultDto>("/emergency/activate", { method: "POST" }),
+  deactivateEmergency: () => request<EmergencyResultDto>("/emergency/deactivate", { method: "POST" }),
+
+  // ---- Configurações do sistema (Admin) ----
+  getSettings: () => request<SystemSettingsDto>("/settings"),
+  updateSettings: (body: UpdateSettingsRequest) => request<void>("/settings", { method: "PUT", body: JSON.stringify(body) }),
 };

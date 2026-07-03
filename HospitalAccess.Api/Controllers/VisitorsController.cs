@@ -11,7 +11,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace HospitalAccess.Api.Controllers;
 
-public record CreateVisitorRequest(string Name, DateTime ValidUntil, int TimeGroup);
+public record CreateVisitorRequest(string Name, DateTime ValidUntil, int TimeGroup, Guid[]? ControllerIds = null);
 
 /// <summary>Cadastro de visitantes temporários e geração do QR de acesso.</summary>
 [ApiController]
@@ -57,6 +57,7 @@ public class VisitorsController : ControllerBase
                 u.RevokedAtUtc,
                 IsExpired = u.RevokedAtUtc == null && u.ValidUntil != null && u.ValidUntil < now,
                 IsRevoked = u.RevokedAtUtc != null,
+                Controllers = u.Permissions.Select(p => new { p.ControllerId, ControllerName = p.Controller!.Name }),
             })
             .ToListAsync(ct);
 
@@ -127,11 +128,40 @@ public class VisitorsController : ControllerBase
             CreatedByUsername = User.Identity?.Name,
         };
 
+        // Portas da visita: o visitante é cadastrado como pessoa (sem face) nesses controladores,
+        // com validade nativa. O leitor abre lendo o QR (que carrega o código do visitante).
+        foreach (var controllerId in (request.ControllerIds ?? []).Distinct())
+        {
+            if (!await _db.Controllers.AnyAsync(c => c.Id == controllerId, ct))
+                return BadRequest($"Controlador {controllerId} não existe.");
+            visitor.Permissions.Add(new AccessPermission { ControllerId = controllerId, TimeGroup = request.TimeGroup });
+        }
+
         _db.Users.Add(visitor);
         UserAuditLogger.Record(_db, visitor, "Criado", User.Identity?.Name);
         await _db.SaveChangesAsync(ct);
 
+        SyncInBackground(visitor.Id);
+
         return CreatedAtAction(nameof(GenerateQr), new { visitorId = visitor.Id }, new { visitor.Id, visitor.UserCode });
+    }
+
+    /// <summary>Cadastra o visitante como pessoa (sem face) nos controladores das portas da visita, fora do ciclo HTTP.</summary>
+    private void SyncInBackground(Guid userId)
+    {
+        _ = Task.Run(async () =>
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var sync = scope.ServiceProvider.GetRequiredService<IUserSyncService>();
+            try
+            {
+                await sync.SyncUserAsync(userId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Falha ao sincronizar visitante {UserId} em segundo plano.", userId);
+            }
+        });
     }
 
     private static DateTime ToUtc(DateTime value) => value.Kind switch

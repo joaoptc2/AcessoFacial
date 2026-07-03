@@ -55,6 +55,15 @@ builder.Services.AddHostedService<SyncRetryBackgroundService>();
 // o 8190H não empurra eventos (default OFF, não persiste após reboot; protocolo §10).
 builder.Services.AddHostedService<DeviceMonitoringBackgroundService>();
 
+// Coleta de retaguarda dos registros offline (recupera eventos ocorridos com o servidor fora do ar).
+builder.Services.AddHostedService<OfflineRecordCollectorBackgroundService>();
+
+// Heartbeat/health-check dos controladores (alimenta o painel de status).
+builder.Services.AddHostedService<DeviceHealthBackgroundService>();
+
+// Expurgo de dados conforme a política de retenção (LGPD, ver tela de Configurações).
+builder.Services.AddHostedService<DataRetentionBackgroundService>();
+
 // Escuta de eventos em tempo real -> AccessLog (append-only).
 builder.Services.AddHostedService<AccessEventRecorder>();
 builder.Services.AddHostedService<AlarmEventRecorder>();

@@ -62,6 +62,43 @@ public class ControllersController : ControllerBase
         return Ok(controllers);
     }
 
+    /// <summary>
+    /// Painel de status: para cada controlador, se está online (heartbeat recente), a última vez
+    /// visto, pendências de sincronização e alarmes ativos recentes. Alimenta o dashboard.
+    /// </summary>
+    [HttpGet("status")]
+    public async Task<IActionResult> Status(CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        var onlineThreshold = now.AddMinutes(-3); // heartbeat a cada 1 min; 3 min sem contato = offline
+        var recentAlarmSince = now.AddHours(-24);
+
+        var controllers = await _db.Controllers.AsNoTracking()
+            .OrderBy(c => c.Name)
+            .Select(c => new
+            {
+                c.Id,
+                c.Name,
+                c.IpAddress,
+                c.LastSeenUtc,
+                c.LastReachError,
+                Online = c.LastSeenUtc != null && c.LastSeenUtc >= onlineThreshold,
+                PendingSync = _db.SyncStatuses.Count(s => s.ControllerId == c.Id
+                    && (s.State == Domain.Enums.SyncState.Pending || s.State == Domain.Enums.SyncState.Failed)),
+                ActiveAlarms = _db.AlarmEvents.Count(a => a.ControllerId == c.Id && !a.Cleared && a.TimestampUtc >= recentAlarmSince),
+            })
+            .ToListAsync(ct);
+
+        return Ok(new
+        {
+            generatedAtUtc = now,
+            total = controllers.Count,
+            online = controllers.Count(c => c.Online),
+            offline = controllers.Count(c => !c.Online),
+            controllers,
+        });
+    }
+
     [HttpGet("{id:guid}")]
     [Authorize(Roles = "Admin,Operator")]
     public async Task<IActionResult> Get(Guid id, CancellationToken ct)

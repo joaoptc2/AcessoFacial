@@ -1,23 +1,133 @@
+import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../lib/AuthContext";
+import { api, ApiError, type DashboardDto, type EmergencyResultDto } from "../lib/api";
 
 export function HomePage() {
   const { username, role } = useAuth();
+  const isAdmin = role === "Admin";
+
+  const [dashboard, setDashboard] = useState<DashboardDto | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [emergencyBusy, setEmergencyBusy] = useState(false);
+  const [emergencyResult, setEmergencyResult] = useState<EmergencyResultDto | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      setDashboard(await api.getControllerStatus());
+      setError(null);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Falha ao carregar o status.");
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+    const timer = setInterval(load, 30000); // atualiza a cada 30s
+    return () => clearInterval(timer);
+  }, [load]);
+
+  async function runEmergency(kind: "activate" | "deactivate") {
+    const message =
+      kind === "activate"
+        ? "ATIVAR EMERGÊNCIA: abrir TODAS as portas e disparar o alarme de incêndio em todos os controladores. Confirmar?"
+        : "Encerrar a emergência: fechar as portas e silenciar os alarmes. Confirmar?";
+    if (!window.confirm(message)) return;
+
+    setEmergencyBusy(true);
+    setEmergencyResult(null);
+    try {
+      const result = kind === "activate" ? await api.activateEmergency() : await api.deactivateEmergency();
+      setEmergencyResult(result);
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Falha no comando de emergência.");
+    } finally {
+      setEmergencyBusy(false);
+    }
+  }
 
   return (
     <div>
-      <h2>Controle de Acesso Hospitalar</h2>
-      <p>
+      <h2>Painel de Controle de Acesso Hospitalar</h2>
+      <p className="text-muted">
         Bem-vindo(a), {username} ({role}).
       </p>
-      <div className="card">
-        <h3 style={{ marginTop: 0 }}>Prova de conceito React</h3>
-        <p className="text-muted" style={{ marginBottom: 0 }}>
-          Esta interface é servida pelo mesmo processo/porta da API (<code>HospitalAccess.Api</code>), como o Blazor
-          Server fazia antes — só que agora renderizada no navegador com React em vez de round-trips ao servidor a
-          cada clique. A tela de Controladores foi migrada como prova de conceito; o restante continua em{" "}
-          <code>HospitalAccess.Web</code> (Blazor) até validarmos essa direção.
-        </p>
-      </div>
+
+      {error && <div className="alert alert-danger">{error}</div>}
+
+      {dashboard && (
+        <div className="card" style={{ marginBottom: "1.25rem" }}>
+          <div style={{ display: "flex", gap: "1.5rem", flexWrap: "wrap" }}>
+            <Stat label="Controladores" value={dashboard.total} />
+            <Stat label="Online" value={dashboard.online} tone="success" />
+            <Stat label="Offline" value={dashboard.offline} tone={dashboard.offline > 0 ? "danger" : undefined} />
+          </div>
+        </div>
+      )}
+
+      {isAdmin && (
+        <div className="card" style={{ marginBottom: "1.25rem", borderColor: "#fecaca" }}>
+          <h3 style={{ marginTop: 0 }}>Emergência / Evacuação</h3>
+          <p className="text-muted" style={{ marginTop: 0 }}>
+            Abre todas as portas e dispara o alarme de incêndio em todos os controladores. Ação auditada.
+          </p>
+          <div className="btn-group">
+            <button className="btn btn-danger" disabled={emergencyBusy} onClick={() => runEmergency("activate")}>
+              Ativar emergência (abrir tudo + incêndio)
+            </button>
+            <button className="btn btn-outline" disabled={emergencyBusy} onClick={() => runEmergency("deactivate")}>
+              Encerrar emergência
+            </button>
+          </div>
+          {emergencyResult && (
+            <p style={{ marginBottom: 0 }}>
+              {emergencyResult.action}: {emergencyResult.succeeded}/{emergencyResult.total} OK
+              {emergencyResult.failed > 0 && ` — ${emergencyResult.failed} falha(s)`}
+            </p>
+          )}
+        </div>
+      )}
+
+      {dashboard && (
+        <table>
+          <thead>
+            <tr>
+              <th>Controlador</th>
+              <th>IP</th>
+              <th>Status</th>
+              <th>Último contato</th>
+              <th>Sync pendente</th>
+              <th>Alarmes ativos</th>
+            </tr>
+          </thead>
+          <tbody>
+            {dashboard.controllers.map((c) => (
+              <tr key={c.id}>
+                <td>{c.name}</td>
+                <td>{c.ipAddress}</td>
+                <td>
+                  <span className={c.online ? "pill pill-success" : "pill pill-danger"}>
+                    {c.online ? "Online" : "Offline"}
+                  </span>
+                </td>
+                <td>{c.lastSeenUtc ? new Date(c.lastSeenUtc).toLocaleString() : "nunca"}</td>
+                <td>{c.pendingSync > 0 ? <span className="pill pill-warning">{c.pendingSync}</span> : "0"}</td>
+                <td>{c.activeAlarms > 0 ? <span className="pill pill-danger">{c.activeAlarms}</span> : "0"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+function Stat({ label, value, tone }: { label: string; value: number; tone?: "success" | "danger" }) {
+  const color = tone === "success" ? "var(--success)" : tone === "danger" ? "var(--danger)" : "inherit";
+  return (
+    <div>
+      <div style={{ fontSize: "1.75rem", fontWeight: 700, color }}>{value}</div>
+      <div className="text-muted">{label}</div>
     </div>
   );
 }

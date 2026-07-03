@@ -41,6 +41,7 @@ public class AccessDbContext : DbContext
     public DbSet<Holiday> Holidays => Set<Holiday>();
     public DbSet<TimeGroupSchedule> TimeGroupSchedules => Set<TimeGroupSchedule>();
     public DbSet<TimeGroupSegment> TimeGroupSegments => Set<TimeGroupSegment>();
+    public DbSet<SystemSettings> SystemSettings => Set<SystemSettings>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -55,12 +56,19 @@ public class AccessDbContext : DbContext
             .WithMany(g => g.Users)
             .HasForeignKey(u => u.GroupId)
             .OnDelete(DeleteBehavior.SetNull);
-        // Concorrência otimista: edições simultâneas do mesmo usuário/controlador passam a
-        // falhar com DbUpdateConcurrencyException em vez de last-write-wins silencioso.
+        // Concorrência otimista via coluna de sistema xmin do PostgreSQL: edições simultâneas do
+        // mesmo usuário/controlador passam a falhar com DbUpdateConcurrencyException em vez de
+        // last-write-wins silencioso. UseXminAsConcurrencyToken é marcado obsoleto pelo Npgsql
+        // (advisory), mas continua sendo a forma correta de mapear a coluna de sistema xmin — não
+        // gera coluna nova (ver migração). Suprimimos o aviso conscientemente.
+#pragma warning disable CS0618
         b.Entity<User>().UseXminAsConcurrencyToken();
+#pragma warning restore CS0618
 
         b.Entity<Controller>().HasIndex(c => c.SerialNumber).IsUnique();
+#pragma warning disable CS0618
         b.Entity<Controller>().UseXminAsConcurrencyToken();
+#pragma warning restore CS0618
         b.Entity<Controller>().Property(c => c.ConnectionMode).HasConversion<int>();
 
         // Senha de comunicação criptografada em repouso (não trafega/armazena em claro). O valor
@@ -88,6 +96,20 @@ public class AccessDbContext : DbContext
             .HasIndex(s => new { s.UserId, s.ControllerId }).IsUnique();
 
         b.Entity<AccessLog>().HasIndex(l => l.TimestampUtc);
+        // Deduplicação entre o push em tempo real e a coleta offline: um mesmo registro do
+        // controlador (SN + nº de série) só entra uma vez. Índice parcial (só quando há nº de série).
+        b.Entity<AccessLog>()
+            .HasIndex(l => new { l.ControllerSerialNumber, l.RecordSerialNumber })
+            .IsUnique()
+            .HasFilter("\"RecordSerialNumber\" IS NOT NULL AND \"ControllerSerialNumber\" IS NOT NULL");
+
+        // Configurações do sistema: linha única (singleton) com as políticas de retenção.
+        b.Entity<SystemSettings>().HasData(new SystemSettings
+        {
+            Id = Domain.Entities.SystemSettings.SingletonId,
+            EventPhotoRetentionDays = 90,
+            UpdatedAtUtc = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc),
+        });
 
         b.Entity<UserAuditLog>().HasIndex(a => a.UserId);
         b.Entity<UserAuditLog>().HasIndex(a => a.TimestampUtc);

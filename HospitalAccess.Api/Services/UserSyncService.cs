@@ -10,10 +10,12 @@ namespace HospitalAccess.Api.Services;
 
 /// <summary>
 /// Orquestra o cadastro/remoção de usuários nos controladores, com fila de retry por
-/// dispositivo (DeviceSyncStatus). Só se aplica a usuários PERMANENTES (acesso por
-/// face) — visitantes (UserType.Visitor) usam QR com validade embutida e validação
-/// offline no próprio controlador (Appendix 8), então não há nada para sincronizar
-/// no hardware para eles; ver comentário em RunAsync/IVisitorExpirationJob.
+/// dispositivo (DeviceSyncStatus). Aplica-se a AMBOS os tipos:
+/// - Permanentes: cadastrados com face (AddPersonWithFace).
+/// - Visitantes: cadastrados SEM face, só com código + validade nativa (Person.Expiry) e
+///   grupo de horário (AddPersonWithoutFace). O leitor não diferencia visitante de permanente —
+///   valida a pessoa cadastrada; o QR só carrega o código. A expiração/revogação é gerida pelo
+///   sistema removendo a pessoa do controlador (ver IVisitorExpirationJob).
 /// </summary>
 public sealed class UserSyncService : IUserSyncService
 {
@@ -35,13 +37,6 @@ public sealed class UserSyncService : IUserSyncService
             .FirstOrDefaultAsync(u => u.Id == userId, ct);
         if (user is null) return;
 
-        if (user.Type == UserType.Visitor)
-        {
-            // Visitante: QR de acesso (Appendix 8) é validado offline pelo controlador.
-            // Não há Person para cadastrar/sincronizar no dispositivo.
-            return;
-        }
-
         if (user.RevokedAtUtc is not null)
         {
             // Usuário revogado (mas não excluído): nunca (re)cadastrar nos controladores,
@@ -50,9 +45,15 @@ public sealed class UserSyncService : IUserSyncService
             return;
         }
 
-        if (user.FacePhoto is null)
+        // Permanente exige foto de face; visitante é cadastrado só com código + validade nativa.
+        if (user.Type == UserType.Permanent && user.FacePhoto is null)
         {
             _logger.LogWarning("Usuário {UserId} não tem foto de face cadastrada; sync ignorado.", userId);
+            return;
+        }
+        if (user.Type == UserType.Visitor && user.ValidUntil is null)
+        {
+            _logger.LogWarning("Visitante {UserId} sem validade definida; sync ignorado.", userId);
             return;
         }
 
@@ -131,10 +132,21 @@ public sealed class UserSyncService : IUserSyncService
 
         try
         {
-            var result = await _gateway.AddPersonWithFaceAsync(controller, user, user.FacePhoto!, ct);
-            status.State = result.Success ? SyncState.Synced : SyncState.Failed;
-            status.LastError = result.Success ? null : result.Message;
-            if (!result.Success) status.RetryCount++;
+            if (user.Type == UserType.Visitor)
+            {
+                // Visitante: pessoa sem face, com validade nativa (Person.Expiry) — o controlador
+                // valida o vencimento offline; o QR carrega o código.
+                await _gateway.AddPersonWithoutFaceAsync(controller, user, ct);
+                status.State = SyncState.Synced;
+                status.LastError = null;
+            }
+            else
+            {
+                var result = await _gateway.AddPersonWithFaceAsync(controller, user, user.FacePhoto!, ct);
+                status.State = result.Success ? SyncState.Synced : SyncState.Failed;
+                status.LastError = result.Success ? null : result.Message;
+                if (!result.Success) status.RetryCount++;
+            }
         }
         catch (Exception ex)
         {

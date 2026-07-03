@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { api, ApiError, type VisitorListItemDto } from "../lib/api";
+import { api, ApiError, type ControllerDto, type VisitorListItemDto } from "../lib/api";
 
 function toLocalInputValue(date: Date): string {
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -16,9 +16,11 @@ function statusClass(v: VisitorListItemDto): string {
 
 export function VisitorsPage() {
   const [visitors, setVisitors] = useState<VisitorListItemDto[]>([]);
+  const [controllers, setControllers] = useState<ControllerDto[]>([]);
   const [name, setName] = useState("");
   const [validUntil, setValidUntil] = useState(() => toLocalInputValue(new Date(Date.now() + 24 * 60 * 60 * 1000)));
   const [timeGroup, setTimeGroup] = useState(1);
+  const [selectedControllers, setSelectedControllers] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [qrImage, setQrImage] = useState<string | null>(null);
@@ -30,7 +32,12 @@ export function VisitorsPage() {
 
   useEffect(() => {
     load();
+    api.getControllers().then(setControllers).catch(() => setControllers([]));
   }, []);
+
+  function toggleController(id: string) {
+    setSelectedControllers((prev) => (prev.includes(id) ? prev.filter((c) => c !== id) : [...prev, id]));
+  }
 
   const filtered = useMemo(
     () =>
@@ -69,9 +76,15 @@ export function VisitorsPage() {
 
     setBusy(true);
     try {
-      const created = await api.createVisitor({ name, validUntil: validUntilDate.toISOString(), timeGroup });
+      const created = await api.createVisitor({
+        name,
+        validUntil: validUntilDate.toISOString(),
+        timeGroup,
+        controllerIds: selectedControllers,
+      });
       await showQr(created.id, name);
       setName("");
+      setSelectedControllers([]);
       await load();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Falha inesperada ao cadastrar.");
@@ -106,6 +119,29 @@ export function VisitorsPage() {
         <div className="form-field" style={{ marginBottom: "0.75rem" }}>
           <label>Grupo de horário (1-64)</label>
           <input type="number" value={timeGroup} onChange={(e) => setTimeGroup(Number(e.target.value))} />
+        </div>
+        <div className="form-field" style={{ marginBottom: "0.75rem" }}>
+          <label>Portas liberadas nesta visita</label>
+          <p className="text-muted" style={{ margin: "0 0 0.4rem", fontSize: "0.85rem" }}>
+            O visitante é cadastrado nessas portas com validade automática — o leitor abre pelo QR e o
+            próprio controlador bloqueia após o vencimento.
+          </p>
+          {controllers.length === 0 ? (
+            <span className="text-muted">Nenhum controlador cadastrado.</span>
+          ) : (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem" }}>
+              {controllers.map((c) => (
+                <label key={c.id} style={{ display: "flex", alignItems: "center", gap: "0.3rem", margin: 0 }}>
+                  <input
+                    type="checkbox"
+                    checked={selectedControllers.includes(c.id)}
+                    onChange={() => toggleController(c.id)}
+                  />
+                  {c.name}
+                </label>
+              ))}
+            </div>
+          )}
         </div>
         {error && <div className="alert alert-danger">{error}</div>}
         <button type="submit" className="btn btn-primary" disabled={busy}>

@@ -32,6 +32,10 @@ using AbstractTransaction = DoNetDrive.Protocol.Transaction.AbstractTransaction;
 // que têm o mesmo nome. O push do 8190H entrega os tipos do namespace Fingerprint.
 using CardTransaction = DoNetDrive.Protocol.Fingerprint.Data.Transaction.CardTransaction;
 using SystemTransaction = DoNetDrive.Protocol.Fingerprint.Data.Transaction.SystemTransaction;
+// Leitura de registros offline (Classe VIII): o tipo de banco e o resultado ficam no namespace
+// Door8800 (o comando ReadTransactionDatabase em si é o do Fingerprint, já importado acima).
+using TxDbType = DoNetDrive.Protocol.Door.Door8800.Transaction.e_TransactionDatabaseType;
+using ReadTxDbResult = DoNetDrive.Protocol.Door.Door8800.Transaction.ReadTransactionDatabase_Result;
 
 namespace HospitalAccess.Gateway;
 
@@ -184,12 +188,88 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
         };
     }
 
+    /// <summary>
+    /// Cadastra/atualiza uma pessoa SEM biometria facial — usado para visitantes, que são
+    /// identificados apenas pelo QR (o leitor lê o QR como "cartão" e valida contra a pessoa
+    /// cadastrada). A validade nativa do controlador (Person.Expiry) e o grupo de horário são
+    /// gravados, de modo que o próprio dispositivo bloqueia o acesso após o vencimento — a gestão
+    /// (criar/remover) é feita pelo sistema. Protocolo §8.1 (campos Validade e TimeGroup).
+    /// </summary>
+    public async Task AddPersonWithoutFaceAsync(Controller controller, User user, CancellationToken ct = default)
+    {
+        var person = new PersonData
+        {
+            UserCode = user.UserCode,
+            PName = user.Name,
+            TimeGroup = user.TimeGroup,
+        };
+        if (user.ValidUntil is { } validUntil)
+            person.Expiry = validUntil;
+        if (user.CardNumber is { } cardNumber)
+            person.CardData = cardNumber;
+
+        var par = new AddPerson_Parameter(new List<PersonData> { person });
+        var cmd = new AddPerson(_connections.CreateCommandDetail(controller), par);
+        await RunAsync(cmd, "AddPerson", controller);
+
+        if (cmd.getResult() is WritePerson_Result { FailTotal: > 0 })
+            throw new DeviceCommandException(
+                $"AddPerson não gravou a pessoa {user.UserCode} no controlador '{controller.Name}'.");
+    }
+
     public async Task DeletePersonAsync(Controller controller, uint userCode, CancellationToken ct = default)
     {
         var person = new PersonData { UserCode = userCode };
         var par = new DeletePerson_Parameter(new List<PersonData> { person });
         var cmd = new DeletePerson(_connections.CreateCommandDetail(controller), par);
         await RunAsync(cmd, "DeletePerson", controller);
+    }
+
+    /// <summary>
+    /// Dispara o alarme de incêndio no controlador (protocolo §5, 0x04 0x01 0x00). Usado no
+    /// acionamento de emergência/evacuação.
+    /// </summary>
+    public async Task TriggerFireAlarmAsync(Controller controller, CancellationToken ct = default)
+    {
+        var cmd = new AlarmNs.SendFireAlarm.WriteSendFireAlarm(_connections.CreateCommandDetail(controller));
+        await RunAsync(cmd, "SendFireAlarm", controller);
+    }
+
+    /// <summary>
+    /// Drena os registros de autenticação armazenados no controlador (Classe VIII) que ainda não
+    /// foram coletados, avançando o ponteiro de leitura (AutoWriteReadIndex) — defesa em
+    /// profundidade para não perder eventos ocorridos com o servidor fora do ar. Retorna os
+    /// eventos normalizados; a deduplicação (por SN + nº de série do registro) fica a cargo de
+    /// quem persiste. Não validado contra hardware real.
+    /// </summary>
+    public async Task<IReadOnlyList<DeviceAccessEvent>> CollectAccessRecordsAsync(Controller controller, CancellationToken ct = default)
+    {
+        var events = new List<DeviceAccessEvent>();
+
+        // Guarda-limite para não girar indefinidamente se o firmware não zerar 'readable'.
+        for (var round = 0; round < 1000 && !ct.IsCancellationRequested; round++)
+        {
+            var cmdDtl = _connections.CreateCommandDetail(controller);
+            cmdDtl.Timeout = Math.Max(controller.TimeoutMs, 15000);
+            var par = new ReadTransactionDatabase_Parameter((int)TxDbType.OnCardTransaction, 50)
+            {
+                AutoWriteReadIndex = true, // avança o ponteiro de 'não lidos'
+            };
+            var cmd = new ReadTransactionDatabase(cmdDtl, par);
+            var result = await RunAsync<ReadTxDbResult>(cmd, "ReadTransactionDatabase", controller);
+
+            var count = 0;
+            foreach (var record in result.TransactionList)
+            {
+                if (record is not CardTransaction card) continue;
+                events.Add(BuildAccessEvent(controller.SerialNumber, card));
+                count++;
+            }
+
+            if (result.readable <= 0 || count == 0) break;
+        }
+
+        return events;
     }
 
     public async Task OpenDoorAsync(Controller controller, CancellationToken ct = default)
@@ -671,26 +751,25 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
         }
     }
 
-    private void EmitAccessEvent(string serialNumber, CardTransaction card)
-    {
-        var evt = new DeviceAccessEvent
-        {
-            ControllerSerialNumber = serialNumber,
-            TimestampUtc = card.TransactionDate.ToUniversalTime(),
-            UserCode = card.UserCode,
-            Method = card.TransactionCode switch
-            {
-                3 => AccessMethod.Face,
-                1 => AccessMethod.QrCode, // QR de visitante é apresentado ao leitor como "cartão"
-                _ => AccessMethod.Card,
-            },
-            RawEventCode = card.TransactionCode,
-            Direction = card.Accesstype,
-            Granted = TransactionCodeClassifier.IsAccessGranted(card.TransactionCode),
-        };
+    private void EmitAccessEvent(string serialNumber, CardTransaction card) =>
+        AccessEventReceived?.Invoke(this, BuildAccessEvent(serialNumber, card));
 
-        AccessEventReceived?.Invoke(this, evt);
-    }
+    private static DeviceAccessEvent BuildAccessEvent(string serialNumber, CardTransaction card) => new()
+    {
+        ControllerSerialNumber = serialNumber,
+        TimestampUtc = card.TransactionDate.ToUniversalTime(),
+        UserCode = card.UserCode,
+        RecordSerialNumber = card.RecordSerialNumber,
+        Method = card.TransactionCode switch
+        {
+            3 => AccessMethod.Face,
+            1 => AccessMethod.QrCode, // QR de visitante é apresentado ao leitor como "cartão"
+            _ => AccessMethod.Card,
+        },
+        RawEventCode = card.TransactionCode,
+        Direction = card.Accesstype,
+        Granted = TransactionCodeClassifier.IsAccessGranted(card.TransactionCode),
+    };
 
     private void EmitAlarmFromSystemLog(string serialNumber, SystemTransaction system)
     {

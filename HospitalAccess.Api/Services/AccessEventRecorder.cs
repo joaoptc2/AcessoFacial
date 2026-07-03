@@ -51,6 +51,15 @@ public sealed class AccessEventRecorder : IHostedService
             var controller = await db.Controllers
                 .FirstOrDefaultAsync(c => c.SerialNumber == e.ControllerSerialNumber);
 
+            // Deduplicação: um mesmo registro do controlador pode chegar pelo push E pela coleta
+            // offline. Se já existe um AccessLog com o mesmo (SN, nº de série), não gravar de novo.
+            if (e.RecordSerialNumber is { } recordSerial)
+            {
+                var already = await db.AccessLogs.AnyAsync(l =>
+                    l.ControllerSerialNumber == e.ControllerSerialNumber && l.RecordSerialNumber == recordSerial);
+                if (already) return;
+            }
+
             string? userName = null;
             if (e.UserCode is { } userCode)
             {
@@ -64,6 +73,8 @@ public sealed class AccessEventRecorder : IHostedService
                 UserName = userName,
                 ControllerId = controller?.Id ?? Guid.Empty,
                 ControllerName = controller?.Name ?? e.ControllerSerialNumber,
+                ControllerSerialNumber = e.ControllerSerialNumber,
+                RecordSerialNumber = e.RecordSerialNumber,
                 Method = e.Method,
                 RawEventCode = e.RawEventCode,
                 Direction = e.Direction,

@@ -46,5 +46,11 @@ public class Controller
     /// <summary>Última vez que o relógio deste controlador foi sincronizado com o servidor.</summary>
     public DateTime? LastClockSyncAtUtc { get; set; }
 
+    /// <summary>Última vez que o controlador respondeu a um health-check (heartbeat). Null = nunca visto.</summary>
+    public DateTime? LastSeenUtc { get; set; }
+
+    /// <summary>Mensagem do último erro de comunicação no health-check (quando offline).</summary>
+    public string? LastReachError { get; set; }
+
     public ICollection<AccessPermission> Permissions { get; set; } = new List<AccessPermission>();
 }

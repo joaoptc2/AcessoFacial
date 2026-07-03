@@ -13,6 +13,7 @@ import { HolidaysPage } from "./pages/HolidaysPage";
 import { TimeGroupsPage } from "./pages/TimeGroupsPage";
 import { AccessLogPage } from "./pages/AccessLogPage";
 import { AlarmEventsPage } from "./pages/AlarmEventsPage";
+import { SettingsPage } from "./pages/SettingsPage";
 
 function RequireAuth({ children }: { children: ReactElement }) {
   const { isAuthenticated } = useAuth();
@@ -51,6 +52,7 @@ function App() {
       <Route path="/timegroups" element={protect(<TimeGroupsPage />)} />
       <Route path="/accesslog" element={protect(<AccessLogPage />)} />
       <Route path="/alarmevents" element={protect(<AlarmEventsPage />)} />
+      <Route path="/settings" element={protect(<SettingsPage />)} />
     </Routes>
   );
 }

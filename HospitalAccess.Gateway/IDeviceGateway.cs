@@ -18,8 +18,25 @@ public interface IDeviceGateway
     /// </summary>
     Task<AddFaceResult> AddPersonWithFaceAsync(Controller controller, User user, byte[] faceJpg, CancellationToken ct = default);
 
+    /// <summary>
+    /// Cadastra/atualiza uma pessoa SEM face (só código + validade nativa + grupo de horário) —
+    /// usada para visitantes identificados apenas por QR. O controlador valida o vencimento
+    /// offline (Person.Expiry).
+    /// </summary>
+    Task AddPersonWithoutFaceAsync(Controller controller, User user, CancellationToken ct = default);
+
     /// <summary>Remove um usuário de um controlador.</summary>
     Task DeletePersonAsync(Controller controller, uint userCode, CancellationToken ct = default);
+
+    /// <summary>Dispara o alarme de incêndio no controlador (protocolo §5) — acionamento de emergência.</summary>
+    Task TriggerFireAlarmAsync(Controller controller, CancellationToken ct = default);
+
+    /// <summary>
+    /// Drena os registros de autenticação armazenados no controlador (Classe VIII) ainda não
+    /// coletados, avançando o ponteiro de leitura — recupera eventos ocorridos com o servidor
+    /// offline. A deduplicação fica a cargo de quem persiste.
+    /// </summary>
+    Task<IReadOnlyList<DeviceAccessEvent>> CollectAccessRecordsAsync(Controller controller, CancellationToken ct = default);
 
     /// <summary>Abre a porta remotamente (pulso — volta a fechar após o tempo de liberação configurado).</summary>
     Task OpenDoorAsync(Controller controller, CancellationToken ct = default);

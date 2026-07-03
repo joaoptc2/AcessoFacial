@@ -17,7 +17,11 @@ hardware" (mesma ressalva já existente no README).
 | C4 Verificação de status de comando | ✅ implementado (todo comando lança em falha/timeout) |
 | C5 Re-sync na edição de usuário | ✅ implementado |
 | C6 Job de retry de sincronização | ✅ hosted service periódico |
-| C7 QR de visitante | ⚠️ mitigado (S3 aplicado; bloqueia QR revogado/expirado). Redesenho para Person nativo depende do fabricante — ver seção 1 |
+| C7 QR de visitante | ✅ redesenhado: visitante é cadastrado como pessoa (sem face) com validade nativa (Person.Expiry) nas portas da visita; sistema cria/remove; QR bloqueado se revogado/expirado (S3). ⚠️ validar em hardware |
+| L1 Coleta de registros offline | ✅ hosted service + gateway (ReadTransactionDatabase, dedup); ⚠️ validar em hardware |
+| L2 Health-check / dashboard | ✅ heartbeat + LastSeenUtc + painel (React HomePage) + GET /controllers/status |
+| L3 Emergência em massa | ✅ EmergencyController (abrir todas + alarme de incêndio / encerrar), Admin, auditado + tela |
+| S6 Retenção (LGPD) | ✅ tela de Configurações + SystemSettings + job de expurgo diário configurável |
 | B1 RBAC (Recepção opera portas) | ✅ implementado |
 | B2 Código de evento 13 concedido | ✅ corrigido + teste |
 | B3 Foto de evento por PhotoFile | ✅ implementado |
@@ -42,7 +46,7 @@ hardware" (mesma ressalva já existente no README).
 | R2 Testes | ✅ classifier + conversor de imagem (32 testes) |
 | R3 CI | ✅ GitHub Actions (build/test .NET + build React) |
 | R4/R5 Docs | ✅ README/instalação/appsettings corrigidos |
-| Pendentes por decisão | L1 (coleta offline), L2 (health-check), L3 (emergência em massa), F3 (retirar Blazor), R1 (mover .rar), S6 (retenção LGPD) — ver seções abaixo |
+| Pendentes por decisão | F3 (retirar Blazor — mantidas as duas UIs; as telas novas de painel/emergência/configurações e a seleção de portas do visitante são só no React), R1 (mover .rar — mantidos, foram adicionados de propósito como base) |
 
 > Nota sobre o achado [1] do workflow ("cast de evento errado"): reverificado e **confirmado** —
 > o push chega como `Door8800Transaction` e o registro concreto está em `.EventData`. O gateway
