@@ -14,6 +14,9 @@ namespace HospitalAccess.Api.Controllers;
 
 public record CreateVisitorRequest(string Name, DateTime ValidUntil, int TimeGroup, Guid[]? ControllerIds = null);
 
+/// <summary>Texto do QRCode copiado da controladora, para renderizar um PNG imprimível.</summary>
+public record RenderQrRequest(string Text);
+
 /// <summary>Cadastro de visitantes temporários e geração do QR de acesso.</summary>
 [ApiController]
 [Route("api/[controller]")]
@@ -281,6 +284,25 @@ public class VisitorsController : ControllerBase
         // A configuração SystemSettings.QrFormat é intencionalmente IGNORADA aqui para não voltar a
         // emitir o formato binário por causa de um valor legado ("Appendix8Rc4") gravado no banco.
         var png = _encoder.EncodePng(_qr.BuildAccessToken(visitor.UserCode, DateTime.UtcNow));
+        return File(png, "image/png");
+    }
+
+    /// <summary>
+    /// Renderiza um PNG de QR a partir de um TEXTO arbitrário — para reimprimir, com moldura e
+    /// tamanho corretos, o QRCode que a CONTROLADORA gerou para a pessoa (o campo "QRCode" que
+    /// aparece na tela do controlador). O aparelho valida o QR lido contra esse texto exato guardado
+    /// no cadastro da pessoa; ele NÃO aceita um QR gerado por nós com um "time" inventado. Por isso a
+    /// forma confiável é colar aqui o texto que a controladora mostra e imprimir este PNG.
+    /// </summary>
+    [HttpPost("qrcode/render")]
+    public IActionResult RenderQrFromText([FromBody] RenderQrRequest req)
+    {
+        if (req is null || string.IsNullOrWhiteSpace(req.Text))
+            return BadRequest("Cole o texto do QRCode que aparece na controladora.");
+        var text = req.Text.Trim();
+        if (text.Length > 512)
+            return BadRequest("Texto do QR muito longo (máx. 512 caracteres).");
+        var png = _encoder.EncodePng(text);
         return File(png, "image/png");
     }
 }

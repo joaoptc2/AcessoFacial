@@ -521,6 +521,12 @@ export const api = {
   createVisitor: (body: CreateVisitorRequest) =>
     request<{ id: string; userCode: number }>("/visitors", { method: "POST", body: JSON.stringify(body) }),
   generateVisitorQr: (id: string) => requestBlob(`/visitors/${id}/qrcode`, { method: "POST" }),
+  renderQrFromText: (text: string) =>
+    requestBlob(`/visitors/qrcode/render`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    }),
   revokeVisitor: (id: string) => request<void>(`/visitors/${id}`, { method: "DELETE" }),
   deleteVisitor: (id: string) => request<void>(`/visitors/${id}/permanent`, { method: "DELETE" }),
 
