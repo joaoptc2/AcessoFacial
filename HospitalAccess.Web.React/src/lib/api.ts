@@ -280,11 +280,14 @@ export interface EmergencyResultDto {
   devices: EmergencyDeviceResult[];
 }
 
+export type QrFormat = "Appendix8Rc4" | "PlainText";
+
 export interface SystemSettingsDto {
   eventPhotoRetentionDays: number;
   accessLogRetentionDays: number;
   alarmLogRetentionDays: number;
   controllerAuditRetentionDays: number;
+  qrFormat: QrFormat;
   updatedAtUtc: string;
   updatedByUsername: string | null;
 }
@@ -519,6 +522,7 @@ export const api = {
     request<{ id: string; userCode: number }>("/visitors", { method: "POST", body: JSON.stringify(body) }),
   generateVisitorQr: (id: string) => requestBlob(`/visitors/${id}/qrcode`, { method: "POST" }),
   revokeVisitor: (id: string) => request<void>(`/visitors/${id}`, { method: "DELETE" }),
+  deleteVisitor: (id: string) => request<void>(`/visitors/${id}/permanent`, { method: "DELETE" }),
 
   // ---- Feriados ----
   getHolidays: () => request<HolidayDto[]>("/holidays"),

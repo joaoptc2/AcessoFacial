@@ -44,6 +44,7 @@ export function SettingsPage() {
         accessLogRetentionDays: settings.accessLogRetentionDays,
         alarmLogRetentionDays: settings.alarmLogRetentionDays,
         controllerAuditRetentionDays: settings.controllerAuditRetentionDays,
+        qrFormat: settings.qrFormat,
       });
       setSavedAt(new Date().toLocaleString());
     } catch (err) {
@@ -76,8 +77,23 @@ export function SettingsPage() {
             <span className="text-muted" style={{ fontSize: "0.85rem" }}>{f.help}</span>
           </div>
         ))}
+        <hr className="divider" />
+        <h4 style={{ marginTop: 0 }}>Formato do QR de acesso</h4>
+        <p className="text-muted" style={{ marginTop: 0 }}>
+          Se o aparelho recusa o QR ("QR inválido"), troque o formato aqui. <strong>Apêndice 8 (RC4)</strong> é
+          o formato binário documentado pelo fabricante (cifrado, com validade embutida) — recomendado.
+          <strong> Texto simples</strong> é o formato antigo (Base64) que alguns firmwares aceitam.
+        </p>
+        <div className="form-field" style={{ marginBottom: "0.9rem", maxWidth: 320 }}>
+          <label>Formato</label>
+          <select value={settings.qrFormat} onChange={(e) => setSettings({ ...settings, qrFormat: e.target.value as typeof settings.qrFormat })}>
+            <option value="Appendix8Rc4">Apêndice 8 — binário RC4 (recomendado)</option>
+            <option value="PlainText">Texto simples (Base64)</option>
+          </select>
+        </div>
+
         {error && <div className="alert alert-danger">{error}</div>}
-        {savedAt && <div className="alert alert-success">Configurações salvas em {savedAt}.</div>}
+        {savedAt && <div className="alert alert-success">Configurações salvas em {savedAt}. Gere o QR do visitante novamente para aplicar o novo formato.</div>}
         <button type="submit" className="btn btn-primary" disabled={busy}>
           Salvar
         </button>

@@ -10,7 +10,8 @@ public record UpdateSettingsRequest(
     int EventPhotoRetentionDays,
     int AccessLogRetentionDays,
     int AlarmLogRetentionDays,
-    int ControllerAuditRetentionDays);
+    int ControllerAuditRetentionDays,
+    string QrFormat);
 
 /// <summary>
 /// Configurações globais do sistema (linha única). Hoje concentra as políticas de retenção de
@@ -38,6 +39,7 @@ public class SettingsController : ControllerBase
             settings.AccessLogRetentionDays,
             settings.AlarmLogRetentionDays,
             settings.ControllerAuditRetentionDays,
+            settings.QrFormat,
             settings.UpdatedAtUtc,
             settings.UpdatedByUsername,
         });
@@ -49,12 +51,15 @@ public class SettingsController : ControllerBase
         if (request.EventPhotoRetentionDays < 0 || request.AccessLogRetentionDays < 0
             || request.AlarmLogRetentionDays < 0 || request.ControllerAuditRetentionDays < 0)
             return BadRequest("Os prazos de retenção não podem ser negativos (0 = reter indefinidamente).");
+        if (request.QrFormat is not ("Appendix8Rc4" or "PlainText"))
+            return BadRequest("QrFormat deve ser 'Appendix8Rc4' ou 'PlainText'.");
 
         var settings = await GetOrCreateAsync(ct);
         settings.EventPhotoRetentionDays = request.EventPhotoRetentionDays;
         settings.AccessLogRetentionDays = request.AccessLogRetentionDays;
         settings.AlarmLogRetentionDays = request.AlarmLogRetentionDays;
         settings.ControllerAuditRetentionDays = request.ControllerAuditRetentionDays;
+        settings.QrFormat = request.QrFormat;
         settings.UpdatedAtUtc = DateTime.UtcNow;
         settings.UpdatedByUsername = User.Identity?.Name;
 

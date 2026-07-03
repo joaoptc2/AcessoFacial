@@ -3,6 +3,7 @@ using HospitalAccess.Application.Qr;
 using HospitalAccess.Application.Sync;
 using HospitalAccess.Domain.Entities;
 using HospitalAccess.Domain.Enums;
+using HospitalAccess.Gateway;
 using HospitalAccess.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -69,7 +70,7 @@ public class VisitorsController : ControllerBase
         return Ok(visitors);
     }
 
-    /// <summary>Revoga um visitante antes do vencimento natural do QR.</summary>
+    /// <summary>Revoga um visitante antes do vencimento natural do QR (mantém o cadastro; pode reativar).</summary>
     [HttpDelete("{id:guid}")]
     public async Task<IActionResult> Revoke(Guid id, CancellationToken ct)
     {
@@ -84,6 +85,61 @@ public class VisitorsController : ControllerBase
         await _db.SaveChangesAsync(ct);
 
         return NoContent();
+    }
+
+    /// <summary>
+    /// EXCLUI o visitante (e o QR): remove a pessoa dos controladores e apaga o cadastro. Ao
+    /// contrário da revogação, não é reversível. O histórico de acessos já gravado permanece
+    /// (guarda nome/código como snapshot).
+    /// </summary>
+    [HttpDelete("{id:guid}/permanent")]
+    public async Task<IActionResult> Delete(Guid id, CancellationToken ct)
+    {
+        var visitor = await _db.Users.FirstOrDefaultAsync(u => u.Id == id && u.Type == UserType.Visitor, ct);
+        if (visitor is null) return NotFound();
+
+        // Captura o necessário para revogar no hardware antes de apagar a linha (e o
+        // DeviceSyncStatus em cascata).
+        var userCode = visitor.UserCode;
+        var controllerIds = await _db.SyncStatuses
+            .Where(s => s.UserId == id && s.State != SyncState.Revoked)
+            .Select(s => s.ControllerId)
+            .Union(_db.Permissions.Where(p => p.UserId == id).Select(p => p.ControllerId))
+            .Distinct()
+            .ToListAsync(ct);
+
+        UserAuditLogger.Record(_db, visitor, "Excluído", User.Identity?.Name);
+        _db.Users.Remove(visitor);
+        await _db.SaveChangesAsync(ct);
+
+        RevokeDeletedVisitorInBackground(userCode, controllerIds);
+
+        return NoContent();
+    }
+
+    /// <summary>Remove a pessoa dos controladores informados após o cadastro já ter sido apagado do banco.</summary>
+    private void RevokeDeletedVisitorInBackground(uint userCode, List<Guid> controllerIds)
+    {
+        if (controllerIds.Count == 0) return;
+        _ = Task.Run(async () =>
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AccessDbContext>();
+            var gateway = scope.ServiceProvider.GetRequiredService<IDeviceGateway>();
+            foreach (var controllerId in controllerIds)
+            {
+                try
+                {
+                    var controller = await db.Controllers.FirstOrDefaultAsync(c => c.Id == controllerId);
+                    if (controller is null) continue;
+                    await gateway.DeletePersonAsync(controller, userCode);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Falha ao remover visitante excluído {UserCode} do controlador {ControllerId}.", userCode, controllerId);
+                }
+            }
+        });
     }
 
     /// <summary>Roda a revogação fora do ciclo de requisição (mesmo motivo do UsersController: não bloquear a resposta HTTP em hardware inacessível).</summary>
@@ -219,8 +275,23 @@ public class VisitorsController : ControllerBase
         if (visitor.RevokedAtUtc is not null) return Conflict("Visitante revogado.");
         if (visitor.ValidUntil < DateTime.UtcNow) return Conflict("Visitante com validade expirada.");
 
-        var token = _qr.BuildAccessToken(visitor.UserCode, DateTime.UtcNow);
-        var png = _encoder.EncodePng(token);
+        // Formato do QR conforme a configuração do sistema (padrão: binário Apêndice 8 cifrado,
+        // que é o que a maioria dos firmwares valida; troque para PlainText nas Configurações se
+        // este modelo aceitar o texto simples).
+        var settings = await _db.SystemSettings.AsNoTracking().FirstOrDefaultAsync(ct);
+        var format = settings?.QrFormat ?? "Appendix8Rc4";
+
+        byte[] png;
+        if (string.Equals(format, "PlainText", StringComparison.OrdinalIgnoreCase))
+        {
+            png = _encoder.EncodePng(_qr.BuildAccessToken(visitor.UserCode, DateTime.UtcNow));
+        }
+        else
+        {
+            // Apêndice 8: a validade é embutida no QR (o firmware valida offline). Usamos ValidUntil.
+            var tokenBytes = _qr.BuildAppendix8TokenForUser(visitor.UserCode, visitor.ValidUntil.Value);
+            png = _encoder.EncodePng(tokenBytes);
+        }
         return File(png, "image/png");
     }
 }
