@@ -7,6 +7,7 @@ function navClass({ isActive }: { isActive: boolean }) {
 
 export function Sidebar() {
   const { username, role, signOut } = useAuth();
+  const isAdmin = role === "Admin";
 
   return (
     <nav className="sidebar">
@@ -45,6 +46,15 @@ export function Sidebar() {
       <NavLink to="/alarmevents" className={navClass}>
         Log de Alarmes
       </NavLink>
+
+      {isAdmin && (
+        <>
+          <div className="sidebar-section">Administração</div>
+          <NavLink to="/settings" className={navClass}>
+            Configurações
+          </NavLink>
+        </>
+      )}
 
       <div className="sidebar-footer">
         <span>

@@ -22,6 +22,8 @@ namespace HospitalAccess.Infrastructure.Persistence.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.HasSequence("user_code_seq");
+
             modelBuilder.Entity("HospitalAccess.Domain.Entities.AccessLog", b =>
                 {
                     b.Property<Guid>("Id")
@@ -33,6 +35,9 @@ namespace HospitalAccess.Infrastructure.Persistence.Migrations
 
                     b.Property<string>("ControllerName")
                         .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ControllerSerialNumber")
                         .HasColumnType("text");
 
                     b.Property<int?>("Direction")
@@ -47,6 +52,9 @@ namespace HospitalAccess.Infrastructure.Persistence.Migrations
                     b.Property<int>("RawEventCode")
                         .HasColumnType("integer");
 
+                    b.Property<long?>("RecordSerialNumber")
+                        .HasColumnType("bigint");
+
                     b.Property<DateTime>("TimestampUtc")
                         .HasColumnType("timestamp with time zone");
 
@@ -59,6 +67,10 @@ namespace HospitalAccess.Infrastructure.Persistence.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("TimestampUtc");
+
+                    b.HasIndex("ControllerSerialNumber", "RecordSerialNumber")
+                        .IsUnique()
+                        .HasFilter("\"RecordSerialNumber\" IS NOT NULL AND \"ControllerSerialNumber\" IS NOT NULL");
 
                     b.ToTable("AccessLogs");
                 });
@@ -129,11 +141,20 @@ namespace HospitalAccess.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<int>("ConnectionMode")
+                        .HasColumnType("integer");
+
                     b.Property<string>("IpAddress")
                         .IsRequired()
                         .HasColumnType("text");
 
                     b.Property<DateTime?>("LastClockSyncAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("LastReachError")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("LastSeenUtc")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("Name")
@@ -159,6 +180,12 @@ namespace HospitalAccess.Infrastructure.Persistence.Migrations
                     b.Property<int>("TimeoutMs")
                         .HasColumnType("integer");
 
+                    b.Property<uint>("xmin")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
                     b.HasKey("Id");
 
                     b.HasIndex("SerialNumber")
@@ -167,11 +194,52 @@ namespace HospitalAccess.Infrastructure.Persistence.Migrations
                     b.ToTable("Controllers");
                 });
 
+            modelBuilder.Entity("HospitalAccess.Domain.Entities.ControllerAuditLog", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Action")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("ControllerId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ControllerName")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Error")
+                        .HasColumnType("text");
+
+                    b.Property<string>("PerformedByUsername")
+                        .HasColumnType("text");
+
+                    b.Property<bool>("Success")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime>("TimestampUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ControllerId");
+
+                    b.HasIndex("TimestampUtc");
+
+                    b.ToTable("ControllerAuditLogs");
+                });
+
             modelBuilder.Entity("HospitalAccess.Domain.Entities.DeviceSyncStatus", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
+
+                    b.Property<long?>("ConflictUserCode")
+                        .HasColumnType("bigint");
 
                     b.Property<Guid>("ControllerId")
                         .HasColumnType("uuid");
@@ -315,6 +383,46 @@ namespace HospitalAccess.Infrastructure.Persistence.Migrations
                     b.ToTable("StaffUsers");
                 });
 
+            modelBuilder.Entity("HospitalAccess.Domain.Entities.SystemSettings", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("AccessLogRetentionDays")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("AlarmLogRetentionDays")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("ControllerAuditRetentionDays")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("EventPhotoRetentionDays")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("UpdatedByUsername")
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("SystemSettings");
+
+                    b.HasData(
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0000-0000000000aa"),
+                            AccessLogRetentionDays = 0,
+                            AlarmLogRetentionDays = 0,
+                            ControllerAuditRetentionDays = 0,
+                            EventPhotoRetentionDays = 90,
+                            UpdatedAtUtc = new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc)
+                        });
+                });
+
             modelBuilder.Entity("HospitalAccess.Domain.Entities.TimeGroupSchedule", b =>
                 {
                     b.Property<Guid>("Id")
@@ -410,6 +518,12 @@ namespace HospitalAccess.Infrastructure.Persistence.Migrations
 
                     b.Property<DateTime?>("ValidUntil")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<uint>("xmin")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
 
                     b.HasKey("Id");
 

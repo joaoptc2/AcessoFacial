@@ -16,5 +16,6 @@
   <ItemGroup>
     <ProjectReference Include="..\HospitalAccess.Application\HospitalAccess.Application.csproj" />
     <ProjectReference Include="..\HospitalAccess.Domain\HospitalAccess.Domain.csproj" />
+    <ProjectReference Include="..\HospitalAccess.Gateway\HospitalAccess.Gateway.csproj" />
   </ItemGroup>
 </Project>

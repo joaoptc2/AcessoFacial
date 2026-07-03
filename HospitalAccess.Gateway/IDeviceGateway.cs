@@ -18,8 +18,28 @@ public interface IDeviceGateway
     /// </summary>
     Task<AddFaceResult> AddPersonWithFaceAsync(Controller controller, User user, byte[] faceJpg, CancellationToken ct = default);
 
+    /// <summary>
+    /// Cadastra/atualiza uma pessoa SEM face (só código + validade nativa + grupo de horário) —
+    /// usada para visitantes identificados apenas por QR. O controlador valida o vencimento
+    /// offline (Person.Expiry).
+    /// </summary>
+    Task AddPersonWithoutFaceAsync(Controller controller, User user, CancellationToken ct = default);
+
     /// <summary>Remove um usuário de um controlador.</summary>
     Task DeletePersonAsync(Controller controller, uint userCode, CancellationToken ct = default);
+
+    /// <summary>Apaga TODAS as pessoas cadastradas no controlador (usado no resincronizar forçado).</summary>
+    Task ClearAllPersonsAsync(Controller controller, CancellationToken ct = default);
+
+    /// <summary>Dispara o alarme de incêndio no controlador (protocolo §5) — acionamento de emergência.</summary>
+    Task TriggerFireAlarmAsync(Controller controller, CancellationToken ct = default);
+
+    /// <summary>
+    /// Drena os registros de autenticação armazenados no controlador (Classe VIII) ainda não
+    /// coletados, avançando o ponteiro de leitura — recupera eventos ocorridos com o servidor
+    /// offline. A deduplicação fica a cargo de quem persiste.
+    /// </summary>
+    Task<IReadOnlyList<DeviceAccessEvent>> CollectAccessRecordsAsync(Controller controller, CancellationToken ct = default);
 
     /// <summary>Abre a porta remotamente (pulso — volta a fechar após o tempo de liberação configurado).</summary>
     Task OpenDoorAsync(Controller controller, CancellationToken ct = default);
@@ -82,6 +102,17 @@ public interface IDeviceGateway
     Task WriteKioskSettingsAsync(Controller controller, KioskSettingsSnapshot settings, CancellationToken ct = default);
 
     /// <summary>
+    /// Habilita o monitoramento em tempo real (BeginWatch / Online Transaction) neste controlador
+    /// e mantém a conexão aberta para receber o push de eventos de acesso e alarme. Deve ser
+    /// (re)chamado na subida do serviço e periodicamente, já que o dispositivo NÃO persiste o
+    /// estado de monitoramento após reboot (protocolo §10). Não validado contra hardware real.
+    /// </summary>
+    Task StartMonitoringAsync(Controller controller, CancellationToken ct = default);
+
+    /// <summary>Desativa o monitoramento em tempo real (CloseWatch) e libera a conexão persistente.</summary>
+    Task StopMonitoringAsync(Controller controller, CancellationToken ct = default);
+
+    /// <summary>
     /// Evento de acesso em tempo real empurrado por um controlador.
     /// A implementação assina os eventos do SDK e dispara este callback.
     /// </summary>
@@ -91,7 +122,17 @@ public interface IDeviceGateway
     event EventHandler<DeviceAlarmEvent> AlarmEventReceived;
 }
 
-/// <summary>Evento de alarme normalizado, traduzido do AlarmTransaction do protocolo.</summary>
+/// <summary>
+/// Erro de execução de um comando no controlador (timeout, cancelamento, falha de autenticação
+/// ou comando não confirmado pelo dispositivo). Lançado quando o SDK não confirma o sucesso —
+/// substitui o antigo "sucesso silencioso" em que uma escrita que falhou passava como concluída.
+/// </summary>
+public sealed class DeviceCommandException : Exception
+{
+    public DeviceCommandException(string message, Exception? inner = null) : base(message, inner) { }
+}
+
+/// <summary>Evento de alarme normalizado, traduzido do registro de sistema (Classe VIII/IX) do protocolo.</summary>
 public sealed class DeviceAlarmEvent
 {
     public required string ControllerSerialNumber { get; init; }
@@ -102,7 +143,8 @@ public sealed class DeviceAlarmEvent
 }
 
 /// <summary>Resultado do cadastro de face, mapeando os códigos de retorno do protocolo.</summary>
-public sealed record AddFaceResult(bool Success, FaceUploadCode Code, string? Message);
+/// <param name="ConflictUserCode">Quando Code = Duplicate, o código do usuário já existente cuja face colidiu.</param>
+public sealed record AddFaceResult(bool Success, FaceUploadCode Code, string? Message, uint? ConflictUserCode = null);
 
 /// <summary>Códigos de retorno do upload de foto/feature code (Classe 11 / verificação CRC32).</summary>
 public enum FaceUploadCode

@@ -2,6 +2,7 @@ using DoNetDrive.Core;
 using DoNetDrive.Core.Command;
 using DoNetDrive.Protocol;
 using HospitalAccess.Domain.Entities;
+using HospitalAccess.Domain.Enums;
 
 namespace HospitalAccess.Gateway.Connections;
 
@@ -23,7 +24,7 @@ public sealed class ControllerConnectionFactory
     public INCommandDetail CreateCommandDetail(Controller controller)
     {
         var cmdDtl = CommandDetailFactory.CreateDetail(
-            CommandDetailFactory.ConnectType.TCPClient,
+            MapConnectType(controller.ConnectionMode),
             controller.IpAddress,
             controller.Port,
             CommandDetailFactory.ControllerType.A33_Face,
@@ -34,6 +35,13 @@ public sealed class ControllerConnectionFactory
         cmdDtl.RestartCount = controller.RestartCount;
         return cmdDtl;
     }
+
+    private static CommandDetailFactory.ConnectType MapConnectType(ControllerConnectionMode mode) => mode switch
+    {
+        ControllerConnectionMode.TcpServerClient => CommandDetailFactory.ConnectType.TCPServerClient,
+        ControllerConnectionMode.Udp => CommandDetailFactory.ConnectType.UDPClient,
+        _ => CommandDetailFactory.ConnectType.TCPClient,
+    };
 
     /// <summary>
     /// Monta um CommandDetail de broadcast UDP para descoberta de controladores desconhecidos

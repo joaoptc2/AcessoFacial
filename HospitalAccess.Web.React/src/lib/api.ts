@@ -7,6 +7,8 @@ export interface LoginResponse {
   role: string;
 }
 
+export type ControllerConnectionMode = "TcpClient" | "TcpServerClient" | "Udp";
+
 export interface ControllerDto {
   id: string;
   name: string;
@@ -20,9 +22,20 @@ export interface ControllerDto {
   userCount: number;
 }
 
-export interface ControllerDetailDto extends ControllerDto {
-  communicationPassword: string;
+export interface ControllerDetailDto {
+  id: string;
+  name: string;
+  ipAddress: string;
+  port: number;
+  serialNumber: string;
+  supportsWaitRepeatMessage: boolean;
+  relayIndex: number;
+  timeoutMs: number;
+  restartCount: number;
+  connectionMode: ControllerConnectionMode;
   lastClockSyncAtUtc: string | null;
+  // A senha de comunicação NÃO é retornada pela API (segredo). Apenas indica se há uma definida.
+  hasCommunicationPassword: boolean;
 }
 
 export interface CreateControllerRequest {
@@ -32,9 +45,18 @@ export interface CreateControllerRequest {
   serialNumber: string;
   communicationPassword: string;
   supportsWaitRepeatMessage: boolean;
+  connectionMode: ControllerConnectionMode;
 }
 
-export interface UpdateControllerRequest extends CreateControllerRequest {
+export interface UpdateControllerRequest {
+  name: string;
+  ipAddress: string;
+  port: number;
+  serialNumber: string;
+  // Em branco/omitido mantém a senha atual (o GET não a devolve).
+  communicationPassword?: string;
+  supportsWaitRepeatMessage: boolean;
+  connectionMode: ControllerConnectionMode;
   relayIndex: number;
   timeoutMs: number;
   restartCount: number;
@@ -47,6 +69,7 @@ export interface SyncStatusDto {
   retryCount: number;
   lastError: string | null;
   updatedAt: string;
+  conflictUserCode: number | null;
 }
 
 export interface DiscoveredController {
@@ -209,13 +232,60 @@ export interface VisitorListItemDto {
   revokedAtUtc: string | null;
   isExpired: boolean;
   isRevoked: boolean;
+  controllers: UserControllerRef[];
 }
 
 export interface CreateVisitorRequest {
   name: string;
   validUntil: string;
   timeGroup: number;
+  controllerIds?: string[];
 }
+
+export interface ControllerStatusItem {
+  id: string;
+  name: string;
+  ipAddress: string;
+  lastSeenUtc: string | null;
+  lastReachError: string | null;
+  online: boolean;
+  pendingSync: number;
+  activeAlarms: number;
+}
+
+export interface DashboardDto {
+  generatedAtUtc: string;
+  total: number;
+  online: number;
+  offline: number;
+  controllers: ControllerStatusItem[];
+}
+
+export interface EmergencyDeviceResult {
+  controllerId: string;
+  controllerName: string;
+  success: boolean;
+  error: string | null;
+}
+
+export interface EmergencyResultDto {
+  action: string;
+  total: number;
+  succeeded: number;
+  failed: number;
+  devices: EmergencyDeviceResult[];
+}
+
+export interface SystemSettingsDto {
+  eventPhotoRetentionDays: number;
+  accessLogRetentionDays: number;
+  alarmLogRetentionDays: number;
+  controllerAuditRetentionDays: number;
+  updatedAtUtc: string;
+  updatedByUsername: string | null;
+}
+
+export type UpdateSettingsRequest = Omit<SystemSettingsDto, "updatedAtUtc" | "updatedByUsername">;
 
 export interface AccessLogItem {
   id: string;
@@ -272,6 +342,19 @@ function authHeaders(): HeadersInit {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+// Sessão expirada / token inválido: limpa o estado e manda para o login. Sem isto, um JWT
+// vencido (expira em ~60min) deixava o app "logado" fazendo chamadas que falhavam com 401 sem
+// nunca redirecionar. Dispara um evento para o AuthProvider reagir sem recarregar a página.
+function handleUnauthorized() {
+  const wasAuthenticated = localStorage.getItem("token") !== null;
+  localStorage.removeItem("token");
+  localStorage.removeItem("role");
+  localStorage.removeItem("username");
+  if (wasAuthenticated) {
+    window.dispatchEvent(new Event("auth:unauthorized"));
+  }
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers);
   const token = getToken();
@@ -283,6 +366,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(`/api${path}`, { ...options, headers });
 
   if (!response.ok) {
+    if (response.status === 401) handleUnauthorized();
     const text = await response.text();
     throw new ApiError(response.status, text || `Erro ${response.status}`);
   }
@@ -299,6 +383,7 @@ async function requestBlob(path: string, options: RequestInit = {}): Promise<Blo
   if (token) headers.set("Authorization", `Bearer ${token}`);
   const response = await fetch(`/api${path}`, { ...options, headers });
   if (!response.ok) {
+    if (response.status === 401) handleUnauthorized();
     const text = await response.text();
     throw new ApiError(response.status, text || `Erro ${response.status}`);
   }
@@ -332,6 +417,7 @@ export const api = {
 
   // ---- Controladores ----
   getControllers: () => request<ControllerDto[]>("/controllers"),
+  getControllerStatus: () => request<DashboardDto>("/controllers/status"),
   getController: (id: string) => request<ControllerDetailDto>(`/controllers/${id}`),
   createController: (body: CreateControllerRequest) =>
     request<{ id: string }>("/controllers", { method: "POST", body: JSON.stringify(body) }),
@@ -355,6 +441,19 @@ export const api = {
       method: "POST",
     }),
   getSyncStatus: (id: string) => request<SyncStatusDto[]>(`/controllers/${id}/sync-status`),
+
+  // Resincronização forçada (limpa o dispositivo e reenvia os cadastros do sistema).
+  resyncAllController: (id: string) => request<{ message: string }>(`/controllers/${id}/resync-all`, { method: "POST" }),
+  // Dispara o alarme de incêndio neste controlador.
+  triggerFireAlarm: (id: string) => request<void>(`/controllers/${id}/alarm-fire`, { method: "POST" }),
+  // Exclui uma pessoa específica (por código) do controlador (auditoria / conflito).
+  deletePersonFromDevice: (id: string, userCode: number) =>
+    request<void>(`/controllers/${id}/persons/${userCode}`, { method: "DELETE" }),
+  // Resolução de conflito de face duplicada:
+  resolveConflictReplace: (userId: string, controllerId: string) =>
+    request<{ message: string }>(`/users/${userId}/sync/${controllerId}/replace`, { method: "POST" }),
+  resolveConflictKeepExisting: (userId: string, controllerId: string) =>
+    request<void>(`/users/${userId}/sync/${controllerId}/keep-existing`, { method: "POST" }),
 
   // ---- Rede ----
   getNetwork: (id: string) => request<ControllerNetworkInfo>(`/controllers/${id}/network`),
@@ -452,4 +551,14 @@ export const api = {
     request<AlarmEventPage>(`/alarmevents${buildQuery(params)}`),
   exportAlarmEventsCsv: (params: { from?: string; to?: string; controllerId?: string; kind?: string }) =>
     requestBlob(`/alarmevents/export${buildQuery(params)}`),
+
+  // ---- Emergência (Admin) ----
+  activateEmergency: () => request<EmergencyResultDto>("/emergency/activate", { method: "POST" }),
+  deactivateEmergency: () => request<EmergencyResultDto>("/emergency/deactivate", { method: "POST" }),
+  fireAlarmAll: () => request<EmergencyResultDto>("/emergency/fire-alarm", { method: "POST" }),
+  clearAlarmsAll: () => request<EmergencyResultDto>("/emergency/clear-alarms", { method: "POST" }),
+
+  // ---- Configurações do sistema (Admin) ----
+  getSettings: () => request<SystemSettingsDto>("/settings"),
+  updateSettings: (body: UpdateSettingsRequest) => request<void>("/settings", { method: "PUT", body: JSON.stringify(body) }),
 };

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
-import { api, ApiError, type ControllerDto, type SyncStatusDto } from "../lib/api";
+import { api, ApiError, type ControllerConnectionMode, type ControllerDto, type SyncStatusDto } from "../lib/api";
 import { Modal } from "../components/Modal";
 import { useAuth } from "../lib/AuthContext";
 
@@ -11,6 +11,9 @@ interface FormModel {
   serialNumber: string;
   communicationPassword: string;
   supportsWaitRepeatMessage: boolean;
+  connectionMode: ControllerConnectionMode;
+  timeoutMs: number;
+  restartCount: number;
 }
 
 const emptyForm: FormModel = {
@@ -20,6 +23,9 @@ const emptyForm: FormModel = {
   serialNumber: "",
   communicationPassword: "FFFFFFFF",
   supportsWaitRepeatMessage: false,
+  connectionMode: "TcpClient",
+  timeoutMs: 3000,
+  restartCount: 3,
 };
 
 export function ControllersPage() {
@@ -62,9 +68,30 @@ export function ControllersPage() {
     setFormError(null);
     try {
       if (editingId === null) {
-        await api.createController(form);
+        await api.createController({
+          name: form.name,
+          ipAddress: form.ipAddress,
+          port: form.port,
+          serialNumber: form.serialNumber,
+          communicationPassword: form.communicationPassword,
+          supportsWaitRepeatMessage: form.supportsWaitRepeatMessage,
+          connectionMode: form.connectionMode,
+        });
       } else {
-        await api.updateController(editingId, { ...form, relayIndex: 0, timeoutMs: 3000, restartCount: 3 });
+        // Preserva timeoutMs/restartCount/connectionMode do próprio formulário (antes eram
+        // zerados com literais). Senha em branco = mantém a atual (a API não a devolve).
+        await api.updateController(editingId, {
+          name: form.name,
+          ipAddress: form.ipAddress,
+          port: form.port,
+          serialNumber: form.serialNumber,
+          communicationPassword: form.communicationPassword ? form.communicationPassword : undefined,
+          supportsWaitRepeatMessage: form.supportsWaitRepeatMessage,
+          connectionMode: form.connectionMode,
+          relayIndex: 0,
+          timeoutMs: form.timeoutMs,
+          restartCount: form.restartCount,
+        });
       }
       cancelEdit();
       await load();
@@ -81,8 +108,11 @@ export function ControllersPage() {
       ipAddress: detail.ipAddress,
       port: detail.port,
       serialNumber: detail.serialNumber,
-      communicationPassword: detail.communicationPassword,
+      communicationPassword: "", // não retornada pela API; em branco = manter a atual
       supportsWaitRepeatMessage: detail.supportsWaitRepeatMessage,
+      connectionMode: detail.connectionMode,
+      timeoutMs: detail.timeoutMs,
+      restartCount: detail.restartCount,
     });
   }
 
@@ -160,6 +190,22 @@ export function ControllersPage() {
     setSyncStatuses(await api.getSyncStatus(modalController.id));
   }
 
+  async function resolveConflict(userId: string, action: "replace" | "keep") {
+    if (!modalController) return;
+    try {
+      if (action === "replace") {
+        await api.resolveConflictReplace(userId, modalController.id);
+        setDoorResult("Substituição iniciada — a sincronização será refeita.");
+      } else {
+        await api.resolveConflictKeepExisting(userId, modalController.id);
+        setDoorResult("Mantido o usuário existente; este envio foi cancelado.");
+      }
+      setSyncStatuses(await api.getSyncStatus(modalController.id));
+    } catch (err) {
+      setDoorResult(`Falha: ${err instanceof ApiError ? err.message : "erro inesperado"}`);
+    }
+  }
+
   function syncBadgeClass(state: string) {
     switch (state) {
       case "Synced":
@@ -214,7 +260,31 @@ export function ControllersPage() {
             </div>
             <div className="form-field">
               <label>Senha (8 hex)</label>
-              <input value={form.communicationPassword} onChange={(e) => setForm({ ...form, communicationPassword: e.target.value })} required />
+              <input
+                value={form.communicationPassword}
+                onChange={(e) => setForm({ ...form, communicationPassword: e.target.value })}
+                placeholder={editingId !== null ? "(manter atual)" : undefined}
+                required={editingId === null}
+              />
+            </div>
+            <div className="form-field" style={{ minWidth: 150 }}>
+              <label>Modo de conexão</label>
+              <select
+                value={form.connectionMode}
+                onChange={(e) => setForm({ ...form, connectionMode: e.target.value as ControllerConnectionMode })}
+              >
+                <option value="TcpClient">TCP (servidor disca)</option>
+                <option value="TcpServerClient">TCP phone-home</option>
+                <option value="Udp">UDP</option>
+              </select>
+            </div>
+            <div className="form-field" style={{ minWidth: 100 }}>
+              <label>Timeout (ms)</label>
+              <input type="number" value={form.timeoutMs} onChange={(e) => setForm({ ...form, timeoutMs: Number(e.target.value) })} required />
+            </div>
+            <div className="form-field" style={{ minWidth: 80 }}>
+              <label>Retries</label>
+              <input type="number" value={form.restartCount} onChange={(e) => setForm({ ...form, restartCount: Number(e.target.value) })} required />
             </div>
             <div className="form-field" style={{ flexDirection: "row", alignItems: "center", gap: "0.4rem" }}>
               <input
@@ -346,11 +416,21 @@ export function ControllersPage() {
           </div>
           {testResult && <p>{testResult}</p>}
           {syncStatuses.length > 0 && (
-            <ul style={{ paddingLeft: "1.1rem", margin: 0 }}>
+            <ul style={{ listStyle: "none", paddingLeft: 0, margin: 0 }}>
               {syncStatuses.map((s) => (
-                <li key={s.userId}>
+                <li key={s.userId} style={{ marginBottom: "0.4rem" }}>
                   {s.userName} — <span className={syncBadgeClass(s.state)}>{s.state}</span> (retries: {s.retryCount})
                   {s.lastError ? ` — ${s.lastError}` : ""}
+                  {isAdminOrOperator && s.conflictUserCode != null && (
+                    <div className="btn-group" style={{ marginTop: "0.3rem" }}>
+                      <button className="btn btn-danger-outline btn-sm" onClick={() => resolveConflict(s.userId, "replace")}>
+                        Substituir (excluir o existente e enviar este)
+                      </button>
+                      <button className="btn btn-outline btn-sm" onClick={() => resolveConflict(s.userId, "keep")}>
+                        Manter o existente
+                      </button>
+                    </div>
+                  )}
                 </li>
               ))}
             </ul>

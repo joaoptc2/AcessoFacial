@@ -20,4 +20,11 @@ public class DeviceSyncStatus
     public int RetryCount { get; set; }
     public string? LastError { get; set; }
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>
+    /// Quando a falha é "foto/feature duplicado", guarda o código do usuário já existente no
+    /// controlador cuja face colidiu — para a UI oferecer "substituir" (excluir o existente e
+    /// enviar o novo) ou "manter o existente".
+    /// </summary>
+    public uint? ConflictUserCode { get; set; }
 }

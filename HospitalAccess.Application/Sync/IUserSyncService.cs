@@ -16,4 +16,22 @@ public interface IUserSyncService
 
     /// <summary>Reprocessa pendências/falhas (chamado por job periódico).</summary>
     Task RetryPendingAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Resolve um conflito de face duplicada "substituindo": exclui do controlador o usuário
+    /// existente que colidiu e reenvia o novo usuário.
+    /// </summary>
+    Task ReplaceConflictAsync(Guid userId, Guid controllerId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Resolve um conflito de face duplicada "mantendo o existente": cancela o envio deste
+    /// usuário para o controlador (remove a permissão dele naquela porta).
+    /// </summary>
+    Task KeepExistingOnConflictAsync(Guid userId, Guid controllerId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Resincronização forçada de um controlador: apaga TODAS as pessoas do dispositivo e reenvia
+    /// os usuários cadastrados no sistema com permissão nele.
+    /// </summary>
+    Task ForceResyncControllerAsync(Guid controllerId, CancellationToken ct = default);
 }

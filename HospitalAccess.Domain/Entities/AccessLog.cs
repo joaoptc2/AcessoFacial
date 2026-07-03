@@ -18,6 +18,12 @@ public class AccessLog
     public Guid ControllerId { get; set; }
     public string ControllerName { get; set; } = string.Empty;
 
+    /// <summary>SN do controlador — junto com RecordSerialNumber, deduplica push vs coleta offline.</summary>
+    public string? ControllerSerialNumber { get; set; }
+
+    /// <summary>Nº de série do registro no controlador (quando disponível). Usado para deduplicação.</summary>
+    public long? RecordSerialNumber { get; set; }
+
     public AccessMethod Method { get; set; }
 
     /// <summary>Código de evento cru do protocolo (ver "authentication record").</summary>

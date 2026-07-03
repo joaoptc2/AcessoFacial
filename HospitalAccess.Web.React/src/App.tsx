@@ -2,6 +2,7 @@ import type { ReactElement } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { useAuth } from "./lib/AuthContext";
 import { Sidebar } from "./components/Sidebar";
+import { StatusBanner } from "./components/StatusBanner";
 import { LoginPage } from "./pages/LoginPage";
 import { HomePage } from "./pages/HomePage";
 import { ControllersPage } from "./pages/ControllersPage";
@@ -13,6 +14,7 @@ import { HolidaysPage } from "./pages/HolidaysPage";
 import { TimeGroupsPage } from "./pages/TimeGroupsPage";
 import { AccessLogPage } from "./pages/AccessLogPage";
 import { AlarmEventsPage } from "./pages/AlarmEventsPage";
+import { SettingsPage } from "./pages/SettingsPage";
 
 function RequireAuth({ children }: { children: ReactElement }) {
   const { isAuthenticated } = useAuth();
@@ -24,7 +26,10 @@ function AppShell({ children }: { children: ReactElement }) {
   return (
     <div className="app-shell">
       <Sidebar />
-      <main className="main-content">{children}</main>
+      <main className="main-content">
+        <StatusBanner />
+        {children}
+      </main>
     </div>
   );
 }
@@ -51,6 +56,7 @@ function App() {
       <Route path="/timegroups" element={protect(<TimeGroupsPage />)} />
       <Route path="/accesslog" element={protect(<AccessLogPage />)} />
       <Route path="/alarmevents" element={protect(<AlarmEventsPage />)} />
+      <Route path="/settings" element={protect(<SettingsPage />)} />
     </Routes>
   );
 }

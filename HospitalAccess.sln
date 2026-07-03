@@ -15,8 +15,6 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HospitalAccess.Api", "Hospi
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HospitalAccess.Tests", "HospitalAccess.Tests\HospitalAccess.Tests.csproj", "{FEBA9280-30AA-4795-99C4-EB9F13119956}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HospitalAccess.Web", "HospitalAccess.Web\HospitalAccess.Web.csproj", "{37BFFB19-0D86-44E5-8E77-B2CBBFE0A608}"
-EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -50,9 +48,5 @@ Global
 		{FEBA9280-30AA-4795-99C4-EB9F13119956}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{FEBA9280-30AA-4795-99C4-EB9F13119956}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{FEBA9280-30AA-4795-99C4-EB9F13119956}.Release|Any CPU.Build.0 = Release|Any CPU
-		{37BFFB19-0D86-44E5-8E77-B2CBBFE0A608}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{37BFFB19-0D86-44E5-8E77-B2CBBFE0A608}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{37BFFB19-0D86-44E5-8E77-B2CBBFE0A608}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{37BFFB19-0D86-44E5-8E77-B2CBBFE0A608}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

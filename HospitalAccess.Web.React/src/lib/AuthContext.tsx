@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 
 interface AuthState {
   token: string | null;
@@ -34,6 +34,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setToken(null);
     setRole(null);
     setUsername(null);
+  }, []);
+
+  // Sessão expirada detectada pelo cliente HTTP (resposta 401): limpa o estado em memória
+  // para que as rotas protegidas redirecionem ao login sem precisar de F5.
+  useEffect(() => {
+    const onUnauthorized = () => {
+      setToken(null);
+      setRole(null);
+      setUsername(null);
+    };
+    window.addEventListener("auth:unauthorized", onUnauthorized);
+    return () => window.removeEventListener("auth:unauthorized", onUnauthorized);
   }, []);
 
   const value = useMemo(

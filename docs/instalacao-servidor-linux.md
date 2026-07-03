@@ -1,13 +1,13 @@
 # Instalação em servidor Linux (produção)
 
-Passo a passo testado neste projeto para colocar a `HospitalAccess.Api` e a
-`HospitalAccess.Web` rodando em um servidor Linux on-premise, como serviços systemd
-atrás de um reverse proxy Nginx. Os comandos abaixo assumem **Ubuntu/Debian**; nas
-notas de cada seção há o equivalente para RHEL/Rocky/Alma quando ele muda.
+Passo a passo para colocar a `HospitalAccess.Api` rodando em um servidor Linux
+on-premise como serviço systemd atrás de um reverse proxy Nginx. A **API serve também
+o front-end React** (SPA em `wwwroot/`) no mesmo processo/porta — há um único serviço a
+gerenciar. Os comandos abaixo assumem **Ubuntu/Debian**; nas notas de cada seção há o
+equivalente para RHEL/Rocky/Alma quando ele muda.
 
-> Este roteiro foi executado passo a passo (publish, usuário dedicado, systemd,
-> Nginx com WebSocket, teste de ponta a ponta com login e navegação) para confirmar
-> que cada etapa realmente funciona antes de documentá-la.
+> O front-end é um SPA React estático servido pela própria API — não há um segundo
+> serviço nem necessidade de WebSocket/SignalR.
 
 ---
 
@@ -52,25 +52,27 @@ Anote a senha — ela vai para o arquivo de ambiente da API na seção 6, nunca 
 
 ## 4. Publicar a aplicação (build de Release)
 
-Em uma máquina de build (pode ser o próprio servidor, se tiver o **SDK** completo
-instalado, ou uma esteira de CI) com o código deste repositório:
+Em uma máquina de build (pode ser o próprio servidor, se tiver o **SDK** .NET e o
+**Node 22** instalados, ou uma esteira de CI) com o código deste repositório:
 
 ```bash
 git clone <url-do-repositorio> HospitalAccess
 cd HospitalAccess
 
+# 1) Build do front-end React → gera os estáticos em HospitalAccess.Api/wwwroot/
+cd HospitalAccess.Web.React && npm ci && npm run build && cd ..
+
+# 2) Publish da API (empacota também o wwwroot/ com o SPA já buildado)
 dotnet publish HospitalAccess.Api/HospitalAccess.Api.csproj -c Release -o /tmp/publish/api
-dotnet publish HospitalAccess.Web/HospitalAccess.Web.csproj -c Release -o /tmp/publish/web
 ```
 As DLLs do SDK do fabricante (`HospitalAccess.Gateway/lib/*.dll`) já estão versionadas
 no repositório e são copiadas automaticamente para a pasta de publicação — não precisa
 de nenhum passo extra para elas.
 
-Copie os dois diretórios publicados para o servidor (`scp`/`rsync`) em, por exemplo:
+Copie o diretório publicado para o servidor (`scp`/`rsync`) em, por exemplo:
 ```bash
-sudo mkdir -p /opt/hospitalaccess/api /opt/hospitalaccess/web
+sudo mkdir -p /opt/hospitalaccess/api
 sudo rsync -a /tmp/publish/api/  servidor:/opt/hospitalaccess/api/
-sudo rsync -a /tmp/publish/web/  servidor:/opt/hospitalaccess/web/
 ```
 
 ## 5. Criar um usuário de sistema dedicado
@@ -85,7 +87,7 @@ sudo chown -R hospitalaccess:hospitalaccess /opt/hospitalaccess
 
 ```bash
 sudo mkdir -p /etc/hospitalaccess
-sudo touch /etc/hospitalaccess/api.env /etc/hospitalaccess/web.env
+sudo touch /etc/hospitalaccess/api.env
 sudo chown root:hospitalaccess /etc/hospitalaccess/*.env
 sudo chmod 640 /etc/hospitalaccess/*.env
 ```
@@ -102,16 +104,14 @@ Seed__AdminUsername=admin
 Seed__AdminPassword=<senha forte só para o primeiro login>
 ```
 
-`/etc/hospitalaccess/web.env`:
-```
-ASPNETCORE_ENVIRONMENT=Production
-ASPNETCORE_URLS=http://127.0.0.1:5100
-Api__BaseUrl=http://127.0.0.1:5080
-```
+> `Jwt__Key` deve ter **pelo menos 32 bytes** — a API recusa subir com uma chave menor.
+> A senha de comunicação de cada controlador é criptografada em repouso via DataProtection;
+> em servidor único, as chaves ficam no perfil do usuário do serviço (persistem entre
+> reinícios). Em cluster/múltiplas instâncias, aponte o DataProtection para um store
+> compartilhado.
 
-A API e o front-end conversam entre si só em `127.0.0.1` (loopback) — o Nginx é o
-único ponto exposto à rede do hospital (seção 8). Isso evita expor a API/JWT
-diretamente na LAN sem necessidade.
+A API escuta só em `127.0.0.1:5080` (loopback) e serve tanto os endpoints quanto o SPA
+React — o Nginx é o único ponto exposto à rede do hospital (seção 8).
 
 ## 7. Migrar o banco de dados
 
@@ -122,9 +122,14 @@ dotnet tool install --global dotnet-ef
 dotnet ef database update --project HospitalAccess.Infrastructure --startup-project HospitalAccess.Api \
   --connection "Host=localhost;Database=hospital_access;Username=app;Password=TROQUE_ESTA_SENHA"
 ```
-Isso cria as tabelas (`Users`, `Controllers`, `Doors`, `Permissions`, `SyncStatuses`,
-`AccessLogs`, `StaffUsers`) e índices. O primeiro `StaffUser` (admin) é criado
-automaticamente no primeiro boot da API, a partir de `Seed:AdminUsername`/`Seed:AdminPassword`.
+Isso cria as tabelas (`Users`, `Controllers`, `Permissions`, `SyncStatuses`,
+`AccessLogs`, `AlarmEvents`, `StaffUsers`, `SystemSettings` etc.) e índices. O primeiro
+`StaffUser` (admin) é criado automaticamente no primeiro boot da API, a partir de
+`Seed:AdminUsername`/`Seed:AdminPassword`.
+
+> Em produção sem SDK/código-fonte no servidor, prefira aplicar um **script SQL idempotente**
+> ou um **bundle de migração** gerados na máquina de build — ver a seção "Atualizando uma
+> versão nova" mais abaixo.
 
 ## 8. Criar os serviços systemd
 
@@ -149,39 +154,17 @@ SyslogIdentifier=hospitalaccess-api
 WantedBy=multi-user.target
 ```
 
-`/etc/systemd/system/hospitalaccess-web.service`:
-```ini
-[Unit]
-Description=HospitalAccess Web (Blazor Server)
-After=network.target hospitalaccess-api.service
-
-[Service]
-Type=simple
-WorkingDirectory=/opt/hospitalaccess/web
-ExecStart=/usr/bin/dotnet /opt/hospitalaccess/web/HospitalAccess.Web.dll
-Restart=on-failure
-RestartSec=5
-EnvironmentFile=/etc/hospitalaccess/web.env
-User=hospitalaccess
-Group=hospitalaccess
-SyslogIdentifier=hospitalaccess-web
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Ativar e subir:
+Há **um único serviço** — a API já serve o front-end React. Ativar e subir:
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now hospitalaccess-api hospitalaccess-web
-sudo systemctl status hospitalaccess-api hospitalaccess-web --no-pager
+sudo systemctl enable --now hospitalaccess-api
+sudo systemctl status hospitalaccess-api --no-pager
 ```
 
 Ver logs em tempo real (`journalctl` — não há arquivo de log separado, o systemd
 já centraliza tudo via `SyslogIdentifier`):
 ```bash
 journalctl -u hospitalaccess-api -f
-journalctl -u hospitalaccess-web -f
 ```
 
 Teste local antes de mexer no Nginx:
@@ -194,10 +177,8 @@ curl -s -X POST http://127.0.0.1:5080/api/auth/login \
 
 ## 9. Nginx como reverse proxy
 
-Só o front-end (`HospitalAccess.Web`) precisa ficar exposto — ele fala com a API
-internamente. **O WebSocket é obrigatório**: o Blazor Server usa SignalR para o
-circuito interativo; sem `Upgrade`/`Connection: upgrade`, a UI carrega mas nenhum
-botão/formulário funciona.
+A API (que serve tanto os endpoints quanto o SPA React) fica só em `127.0.0.1:5080`; o
+Nginx é o único ponto exposto à rede do hospital e encaminha tudo para ela.
 
 ```bash
 sudo apt-get install -y nginx
@@ -210,14 +191,11 @@ server {
     server_name acesso.hospital.local;
 
     location / {
-        proxy_pass         http://127.0.0.1:5100;
+        proxy_pass         http://127.0.0.1:5080;
         proxy_http_version 1.1;
-        proxy_set_header   Upgrade $http_upgrade;
-        proxy_set_header   Connection "upgrade";
         proxy_set_header   Host $host;
         proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header   X-Forwarded-Proto $scheme;
-        proxy_cache_bypass $http_upgrade;
         proxy_read_timeout 100s;
     }
 }
@@ -247,23 +225,22 @@ sudo ufw allow 80/tcp     # ou 443/tcp se já configurou HTTPS
 sudo ufw allow from <faixa-de-IP-da-VLAN-de-acesso> to any port 8101 proto tcp  # ida até os controladores, se houver firewall entre eles
 sudo ufw enable
 ```
-As portas 5080 (API) e 5100 (Web direto, sem Nginx) devem ficar **fechadas** para
-fora do próprio servidor — só o Nginx (porta 80/443) deve ser alcançável pela rede
-do hospital. Não abra a porta da API para a LAN geral: o front-end já fala com ela
-via loopback.
+A porta 5080 (API) deve ficar **fechada** para fora do próprio servidor — só o Nginx
+(porta 80/443) deve ser alcançável pela rede do hospital. Não abra a porta da API para
+a LAN geral.
 
 ## 11. Cadastrar os controladores
 
 Com tudo no ar, acesse `http://acesso.hospital.local/`, faça login com o admin do
 seed, e cadastre os 30 controladores em **Controladores** (IP, porta, SN de 16
-dígitos, senha de comunicação), depois as portas em **Portas**. Use o botão
-**"Testar conexão"** de cada controlador para confirmar que o servidor alcança o
-dispositivo por TCP antes de cadastrar usuários/portas nele — isso chama
-`ReadSN` de verdade no controlador (prova de conceito do Gateway).
+dígitos, senha de comunicação, modo de conexão). Cada controlador **é** a porta. Use o
+botão **"Testar conexão"** para confirmar que o servidor alcança o dispositivo por TCP
+antes de cadastrar usuários nele — isso chama `ReadSN` de verdade no controlador.
 
-⚠️ Ao ligar o **primeiro** controlador real, valide também o caveat descrito no
-`README.md` sobre o `TransactionMessage` (eventos em tempo real) chegando pela
-mesma conexão TCP client — é o item mais importante a confirmar com hardware físico.
+⚠️ Ao ligar o **primeiro** controlador real, valide os caveats do `README.md`: o modo
+de conexão (TCP client vs phone-home), a chegada do push em tempo real (`BeginWatch`/
+`TransactionMessage`) e o cadastro de visitante com validade nativa — os itens mais
+importantes a confirmar com hardware físico.
 
 ## 12. Backups
 
@@ -276,19 +253,43 @@ do hospital — é um sistema de controle de acesso físico, dado sensível).
 
 ## 13. Atualizando uma versão nova
 
+O servidor de produção só tem os binários publicados, não o código-fonte nem o `dotnet-ef`,
+então **não** rode `dotnet ef database update` lá. Gere o artefato de migração na máquina de
+build e aplique-o no servidor. Duas opções:
+
+**a) Script SQL idempotente** (aplicável com `psql`, sem .NET no servidor):
 ```bash
-sudo systemctl stop hospitalaccess-api hospitalaccess-web
-# publique de novo (seção 4) e sincronize os arquivos para /opt/hospitalaccess/{api,web}
-dotnet ef database update --project HospitalAccess.Infrastructure --startup-project HospitalAccess.Api  # se houver migration nova
-sudo systemctl start hospitalaccess-api hospitalaccess-web
+# Na máquina de build (com o SDK e o dotnet-ef):
+dotnet ef migrations script --idempotent \
+  --project HospitalAccess.Infrastructure --startup-project HospitalAccess.Api \
+  -o migracao.sql
+# No servidor, dentro de uma janela de manutenção e após backup:
+psql "$CONNECTION_STRING" -f migracao.sql
+```
+
+**b) Bundle de migração** (executável autônomo, não precisa do SDK no servidor):
+```bash
+# Na máquina de build:
+dotnet ef migrations bundle --self-contained -r linux-x64 \
+  --project HospitalAccess.Infrastructure --startup-project HospitalAccess.Api \
+  -o efbundle
+# No servidor:
+./efbundle --connection "$CONNECTION_STRING"
+```
+
+Fluxo completo da atualização:
+```bash
+sudo systemctl stop hospitalaccess-api
+# rebuild do React (seção 4), publique de novo e sincronize para /opt/hospitalaccess/api
+# aplique a migração pelo método (a) ou (b) acima, se houver migration nova
+sudo systemctl start hospitalaccess-api
 ```
 
 ## Checklist rápido de verificação pós-instalação
-- [ ] `systemctl status hospitalaccess-api hospitalaccess-web` — `active (running)`.
+- [ ] `systemctl status hospitalaccess-api` — `active (running)`.
 - [ ] `curl -s http://127.0.0.1:5080/api/auth/login -X POST -H "Content-Type: application/json" -d '{"username":"admin","password":"..."}'` devolve um token.
-- [ ] `curl -I http://localhost/login` através do Nginx devolve `200`.
-- [ ] Login pela UI funciona e a navegação entre páginas não trava (confirma que o
-      WebSocket do Nginx está passando).
+- [ ] `curl -I http://localhost/` através do Nginx devolve `200` (o SPA React é servido pela API).
+- [ ] Login pela UI funciona e a navegação entre páginas funciona.
 - [ ] "Testar conexão" em um controlador cadastrado com IP real devolve o SN do
       dispositivo.
 - [ ] Trocar a senha do admin do seed (via banco, por ora — não há tela para isso ainda).
