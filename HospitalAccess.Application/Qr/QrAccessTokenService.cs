@@ -6,9 +6,11 @@ namespace HospitalAccess.Application.Qr;
 /// Gera o payload do QR Code de abertura de porta. Suporta DOIS formatos, selecionáveis nas
 /// Configurações do sistema (<see cref="Domain.Entities.SystemSettings.QrFormat"/>):
 ///
-/// 1. <b>PlainText</b> — Base64 de "user_id={UserCode}_time={microssegundos Unix}". Foi deduzido
-///    de UMA amostra de QR do fabricante; em campo, alguns firmwares REJEITAM esse formato
-///    ("QR inválido"). Não tem criptografia/checksum.
+/// 1. <b>PlainText</b> (padrão, CONFIRMADO) — Base64 de "user_id={UserCode}_time={microssegundos
+///    Unix}". Confirmado idêntico byte a byte ao QR real gerado pelo sistema oficial do fabricante
+///    para ESTE modelo (duas amostras). É o formato correto; não tem criptografia/checksum.
+///    Obs.: o QR precisa ser entregue com a moldura branca (zona de silêncio) — se recortado rente
+///    às bordas, o leitor não o localiza e mostra "QR inválido", mesmo com o conteúdo certo.
 ///
 /// 2. <b>Appendix8Rc4</b> — o formato binário DOCUMENTADO no protocolo 8190H (Apêndice 8):
 ///    14 bytes = cartão(9) + validade em tempo comprimido(4) + CRC8(1), cifrados com RC4. É o
