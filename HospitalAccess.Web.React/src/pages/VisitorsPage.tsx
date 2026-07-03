@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { api, ApiError, type ControllerDto, type VisitorListItemDto } from "../lib/api";
+import { api, ApiError, downloadBlob, type ControllerDto, type VisitorListItemDto } from "../lib/api";
 
 function toLocalInputValue(date: Date): string {
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -24,6 +24,7 @@ export function VisitorsPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [qrImage, setQrImage] = useState<string | null>(null);
+  const [qrBlob, setQrBlob] = useState<Blob | null>(null);
   const [qrVisitorName, setQrVisitorName] = useState("");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
@@ -53,10 +54,17 @@ export function VisitorsPage() {
     try {
       const blob = await api.generateVisitorQr(id);
       setQrVisitorName(visitorName);
+      setQrBlob(blob);
       setQrImage(URL.createObjectURL(blob));
     } catch {
       setError("Falha ao gerar o QR.");
     }
+  }
+
+  function downloadQr() {
+    if (!qrBlob) return;
+    const safeName = qrVisitorName.replace(/[^\w.-]+/g, "_") || "visitante";
+    downloadBlob(qrBlob, `qr-${safeName}.png`);
   }
 
   async function handleCreate(e: FormEvent) {
@@ -170,9 +178,28 @@ export function VisitorsPage() {
       </form>
 
       {qrImage && (
-        <div className="card" style={{ marginBottom: "1.25rem", maxWidth: 340 }}>
+        <div className="card" style={{ marginBottom: "1.25rem", maxWidth: 360 }}>
           <h4 style={{ marginTop: 0 }}>QR de acesso — {qrVisitorName}</h4>
-          <img src={qrImage} alt="QR de acesso" style={{ maxWidth: "100%" }} />
+          {/* Fundo branco com folga: a "zona de silêncio" (moldura branca) é obrigatória para o
+              leitor localizar o QR. image-rendering: pixelated evita que o navegador borre as
+              bordas dos módulos ao redimensionar (QR borrado = leitura falha). */}
+          <div style={{ background: "#fff", padding: 16, borderRadius: 8, display: "inline-block" }}>
+            <img
+              src={qrImage}
+              alt="QR de acesso"
+              style={{ display: "block", width: 260, height: 260, imageRendering: "pixelated" }}
+            />
+          </div>
+          <div className="btn-group" style={{ marginTop: "0.6rem" }}>
+            <button type="button" className="btn btn-primary btn-sm" onClick={downloadQr}>
+              Baixar PNG
+            </button>
+          </div>
+          <p className="text-muted" style={{ fontSize: "0.8rem", marginTop: "0.6rem", marginBottom: "0.4rem" }}>
+            <strong>Imprima ou envie a imagem inteira, incluindo a moldura branca.</strong> Não recorte o QR
+            rente às bordas — sem a margem branca o leitor não consegue lê-lo (aparece “QR inválido”). Prefira o
+            <strong> Baixar PNG</strong> a tirar print da tela.
+          </p>
           <p className="text-muted" style={{ fontSize: "0.8rem", marginBottom: 0 }}>
             O QR só abre a porta depois que o visitante é <strong>sincronizado</strong> nos controladores das
             portas escolhidas (feito automaticamente ao cadastrar). Se nenhuma porta foi selecionada, o QR
