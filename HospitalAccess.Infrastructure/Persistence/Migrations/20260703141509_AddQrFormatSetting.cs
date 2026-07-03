@@ -23,7 +23,7 @@ namespace HospitalAccess.Infrastructure.Persistence.Migrations
                 keyColumn: "Id",
                 keyValue: new Guid("00000000-0000-0000-0000-0000000000aa"),
                 column: "QrFormat",
-                value: "Appendix8Rc4");
+                value: "PlainText");
         }
 
         /// <inheritdoc />

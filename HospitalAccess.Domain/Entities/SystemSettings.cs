@@ -25,11 +25,14 @@ public class SystemSettings
     public int ControllerAuditRetentionDays { get; set; }
 
     /// <summary>
-    /// Formato do QR de acesso: "Appendix8Rc4" (binário documentado, cifrado com RC4 — padrão) ou
-    /// "PlainText" (Base64 de "user_id=..._time=..."). Selecionável porque firmwares diferentes
-    /// aceitam formatos diferentes; troque aqui se o aparelho recusar o QR ("QR inválido").
+    /// Formato do QR de acesso:
+    /// - "PlainText" (padrão): Base64 de "user_id={code}_time={microssegundos Unix}". É o formato
+    ///   CONFIRMADO contra o QR real do sistema oficial do fabricante (idêntico byte a byte).
+    /// - "Appendix8Rc4": formato binário do Apêndice 8 (cifrado com RC4) — alternativa para
+    ///   firmwares que exijam o formato documentado.
+    /// Selecionável porque firmwares diferentes aceitam formatos diferentes.
     /// </summary>
-    public string QrFormat { get; set; } = "Appendix8Rc4";
+    public string QrFormat { get; set; } = "PlainText";
 
     /// <summary>Última atualização das configurações.</summary>
     public DateTime UpdatedAtUtc { get; set; } = DateTime.UtcNow;

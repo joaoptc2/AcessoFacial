@@ -423,7 +423,7 @@ namespace HospitalAccess.Infrastructure.Persistence.Migrations
                             AlarmLogRetentionDays = 0,
                             ControllerAuditRetentionDays = 0,
                             EventPhotoRetentionDays = 90,
-                            QrFormat = "Appendix8Rc4",
+                            QrFormat = "PlainText",
                             UpdatedAtUtc = new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc)
                         });
                 });
