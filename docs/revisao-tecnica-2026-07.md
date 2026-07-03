@@ -46,7 +46,8 @@ hardware" (mesma ressalva já existente no README).
 | R2 Testes | ✅ classifier + conversor de imagem (32 testes) |
 | R3 CI | ✅ GitHub Actions (build/test .NET + build React) |
 | R4/R5 Docs | ✅ README/instalação/appsettings corrigidos |
-| Pendentes por decisão | F3 (retirar Blazor — mantidas as duas UIs; as telas novas de painel/emergência/configurações e a seleção de portas do visitante são só no React), R1 (mover .rar — mantidos, foram adicionados de propósito como base) |
+| F3 Retirar Blazor | ✅ `HospitalAccess.Web` removido do repositório; React é o único front-end (servido pela API) |
+| R1 Arquivos do fabricante | ✅ movidos para `vendor/` (fora do build), com README explicativo |
 
 > Nota sobre o achado [1] do workflow ("cast de evento errado"): reverificado e **confirmado** —
 > o push chega como `Door8800Transaction` e o registro concreto está em `.EventData`. O gateway

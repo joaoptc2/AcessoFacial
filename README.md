@@ -170,11 +170,10 @@ registrada nas seções 1-2 para o restante do gateway.
 ## Arquitetura
 
 ```
-┌──────────────────────┐     REST      ┌──────────────────────┐
-│  HospitalAccess.Api   │ ◀──────────▶ │  HospitalAccess.Web    │
-│  (+ Application/      │               │  (Blazor Server)       │
-│   Domain/Infra)       │               └──────────────────────┘
-└─────────┬─────────────┘
+┌──────────────────────────────────────┐
+│  HospitalAccess.Api                    │  ← serve também o front-end React
+│  (+ Application/Domain/Infra)          │     (SPA em wwwroot/, mesmo processo/porta)
+└─────────┬────────────────────────────┘
           │ IUserSyncService / IDeviceGateway
 ┌─────────▼─────────────┐   protocolo binário DoNetDrive (TCP/IP)
 │ HospitalAccess.        │ ◀──────────────────────────────────▶  30x 8190H
@@ -187,9 +186,12 @@ registrada nas seções 1-2 para o restante do gateway.
 - **HospitalAccess.Application** — QR (protocolo puro), contratos de sincronização.
 - **HospitalAccess.Infrastructure** — EF Core/PostgreSQL, encoder de QR (QRCoder).
 - **HospitalAccess.Gateway** — único componente que fala com o hardware (SDK `DoNetDrive.*`).
-- **HospitalAccess.Api** — API REST + JWT + hosted services (sync de visitantes, escuta de eventos).
-- **HospitalAccess.Web** — front-end Blazor Server, consome a API via HTTP.
-- **HospitalAccess.Tests** — testes unitários (protocolo do QR: bit-packing, CRC8, RC4).
+- **HospitalAccess.Api** — API REST + JWT + hosted services (sync/expiração de usuários,
+  monitoramento em tempo real, coleta offline, health-check, retenção de dados). Serve
+  também o SPA React em `wwwroot/`.
+- **HospitalAccess.Web.React** — front-end React (Vite/TS), único front-end. O build gera
+  os estáticos em `HospitalAccess.Api/wwwroot/`.
+- **HospitalAccess.Tests** — testes unitários (QR, classificador de eventos, conversor de imagem).
 
 ## Setup on-premise
 
@@ -238,12 +240,15 @@ dotnet ef database update --project HospitalAccess.Infrastructure --startup-proj
 
 ### Rodando
 ```bash
-# Terminal 1 — API (porta 5080 no exemplo)
-cd HospitalAccess.Api && ASPNETCORE_ENVIRONMENT=Development dotnet run --urls http://localhost:5080
+# Build do front-end React → gera os estáticos em HospitalAccess.Api/wwwroot/
+cd HospitalAccess.Web.React && npm ci && npm run build && cd ..
 
-# Terminal 2 — Front-end (porta 5100 no exemplo; ajuste Api:BaseUrl no appsettings.json do Web)
-cd HospitalAccess.Web && dotnet run --urls http://localhost:5100
+# API (serve a API + o SPA React no mesmo host/porta)
+cd HospitalAccess.Api && ASPNETCORE_ENVIRONMENT=Development dotnet run --urls http://localhost:5080
 ```
+Em desenvolvimento do front-end, você também pode rodar o Vite com hot-reload
+(`cd HospitalAccess.Web.React && npm run dev`) — ele faz proxy de `/api` para a porta 5080
+(ver `vite.config.ts`).
 No primeiro boot, se não houver nenhum `StaffUser`, a API cria um admin a partir de
 `Seed:AdminUsername`/`Seed:AdminPassword` — troque a senha assim que possível (não há troca de
 senha pela UI ainda; via banco/nova rota a implementar).
@@ -330,26 +335,18 @@ dotnet test HospitalAccess.Tests/HospitalAccess.Tests.csproj
   `app.MapFallbackToFile()` em `Program.cs`). Todas as telas do Blazor têm equivalente:
   Controladores (+ detalhe com as 6 abas), Usuários (histórico/revogar/reativar/RBAC),
   Grupos (portas padrão), Visitantes (QR), Feriados, Grade Horária, Log de Acessos e Log
-  de Alarmes (paginação/filtros/CSV). Diferença notável: a sessão (JWT em `localStorage`)
-  sobrevive a um F5, ao contrário do Blazor Server. Validado com Playwright rodando contra
-  a API na porta 5080 servindo os dois (API + estáticos): criação/edição/exclusão em cada
-  tela, portas padrão de grupo pré-marcando no cadastro de usuário, revogar/reativar com
-  histórico, geração de QR de visitante. `HospitalAccess.Web` (Blazor) continua no repo
-  por enquanto — ver `HospitalAccess.Web.React/README.md` para detalhes e próximos passos.
+  de Alarmes (paginação/filtros/CSV), além do painel de status, emergência e configurações.
+  A sessão (JWT em `localStorage`) sobrevive a um F5. **O front-end Blazor (`HospitalAccess.Web`)
+  foi aposentado e removido do repositório** — o React é o único front-end.
 
 ## Limitações conhecidas / próximos passos
 - **Exportação em PDF** do log de acessos: não implementada (só CSV). Toda biblioteca PDF
   popular para .NET tem alguma pegada de licença para uma organização do porte de um
   hospital (QuestPDF Community tem teto de receita, iText é AGPL/comercial); ficou como
   decisão em aberto — ver `AccessLogController.Export`.
-- **Sessão do Blazor não sobrevive a um refresh de página** (F5): o JWT fica em memória
-  por circuito Blazor Server; um refresh força um circuito novo e redireciona para o login
-  (comportamento correto, sem crash — mas sem "lembrar sessão"). A versão em React
-  (`HospitalAccess.Web.React/`) já resolve isso de graça (JWT em `localStorage`).
-- **React tem paridade de telas com o Blazor, mas ainda não foi decidido remover o Blazor**:
-  todas as telas foram migradas (ver item acima), mas `HospitalAccess.Web` continua no repo
-  até essa direção ser validada em uso real. Nenhuma suíte de teste de front-end automatizada
-  foi commitada para o React ainda (só validação manual + Playwright ad-hoc).
+- **Front-end único (React)**: o Blazor foi aposentado. Ainda não há suíte de teste de
+  front-end automatizada para o React (o CI faz build + typecheck; a validação de fluxo é
+  manual). Os arquivos de referência do fabricante ficam em `vendor/` (fora do build).
 - **Troca de senha do StaffUser** e cadastro de novos operadores/recepcionistas: só via
   banco por enquanto; não há endpoint/tela dedicada.
 - **Integração HIS/AD**: fora de escopo por pedido explícito — não implementada.

@@ -1,11 +1,11 @@
 # HospitalAccess.Web.React
 
-Interface em React para a `HospitalAccess.Api` — cobre **todas as telas** que o
-`HospitalAccess.Web` (Blazor Server) tinha: Controladores (+ detalhe com abas de
-Rede/Relógio/Alarmes/Ajustes Locais/Auditoria/Fotos de Evento), Usuários (com
-histórico/revogar/reativar/RBAC), Grupos de Usuários (com portas padrão), Visitantes
-(com QR), Feriados, Grade Horária, Log de Acessos e Log de Alarmes. O Blazor continua no
-repo por enquanto (mudança grande, mantida reversível) — ver "Próximos passos" abaixo.
+**Único front-end** do sistema (o Blazor `HospitalAccess.Web` foi aposentado). Cobre todas
+as telas: Controladores (+ detalhe com abas de Rede/Relógio/Alarmes/Ajustes Locais/
+Auditoria/Fotos de Evento), Usuários (histórico/revogar/reativar/RBAC), Grupos de Usuários
+(portas padrão), Visitantes (portas da visita + QR), Feriados, Grade Horária, Log de
+Acessos e Log de Alarmes, além do **painel de status**, **emergência/evacuação** e
+**configurações** (retenção de dados).
 
 ## Por que React "no mesmo servidor"
 
@@ -13,8 +13,7 @@ Em produção, `npm run build` gera os arquivos estáticos direto em
 `../HospitalAccess.Api/wwwroot` (ver `outDir` em `vite.config.ts`), e a
 `HospitalAccess.Api` os serve via `app.UseStaticFiles()` + `app.MapFallbackToFile(...)`
 (ver `Program.cs`). Ou seja: **um único processo/porta** (`dotnet HospitalAccess.Api.dll`)
-serve tanto `/api/*` quanto a interface — não precisa rodar o `HospitalAccess.Web` (Blazor)
-em paralelo para usar esta versão.
+serve tanto `/api/*` quanto a interface.
 
 ## Rodando em desenvolvimento
 
@@ -61,7 +60,5 @@ mantém a sessão.
 
 ## Próximos passos
 
-- Validar visualmente todas as telas (rodar `npm run dev` + navegar) antes de decidir se
-  o `HospitalAccess.Web` (Blazor) pode ser removido do repo.
-- Nenhum teste automatizado de front-end ainda (a validação até agora foi manual +
-  Playwright ad-hoc durante o desenvolvimento, não commitado como suíte).
+- Adicionar uma suíte de teste de front-end automatizada (hoje o CI faz build + typecheck;
+  a validação de fluxo é manual).

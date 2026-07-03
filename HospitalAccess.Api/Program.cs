@@ -19,8 +19,8 @@ using Npgsql;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Enums como string no JSON (ex.: AccessMethod, AlarmKind, SyncState) — os DTOs do
-// front-end Blazor já assumem essa representação.
+// Enums como string no JSON (ex.: AccessMethod, AlarmKind, SyncState) — os tipos TS do
+// front-end React já assumem essa representação.
 builder.Services.AddControllers()
     .AddJsonOptions(o => o.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 builder.Services.AddEndpointsApiExplorer();
@@ -162,8 +162,8 @@ else
     }));
 }
 
-// Serve a prova de conceito em React (HospitalAccess.Web.React, build em wwwroot/) no
-// mesmo processo/porta da API — "npm run build" nesse projeto já aponta o outDir para cá.
+// Serve o front-end React (HospitalAccess.Web.React, build em wwwroot/) no mesmo
+// processo/porta da API — "npm run build" nesse projeto já aponta o outDir para cá.
 // MapFallbackToFile depois de MapControllers: só assume rotas que nenhum endpoint de API
 // bateu, para que o React Router funcione em refresh de uma rota tipo /controllers.
 app.UseDefaultFiles();
