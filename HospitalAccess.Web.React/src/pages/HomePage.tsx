@@ -95,10 +95,13 @@ export function HomePage() {
             </button>
           </div>
           {emergencyResult && (
-            <p style={{ marginBottom: 0 }}>
-              {emergencyResult.action}: {emergencyResult.succeeded}/{emergencyResult.total} OK
-              {emergencyResult.failed > 0 && ` — ${emergencyResult.failed} falha(s)`}
-            </p>
+            <div
+              className={emergencyResult.failed > 0 ? "alert alert-danger" : "alert alert-success"}
+              style={{ marginTop: "0.75rem", marginBottom: 0 }}
+            >
+              <strong>{emergencyResult.action}</strong>: {emergencyResult.succeeded}/{emergencyResult.total} controlador(es) OK
+              {emergencyResult.failed > 0 && ` — ${emergencyResult.failed} falha(s): ${emergencyResult.devices.filter((d) => !d.success).map((d) => d.controllerName).join(", ")}`}
+            </div>
           )}
         </div>
       )}
