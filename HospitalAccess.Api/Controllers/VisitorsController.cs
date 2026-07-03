@@ -275,23 +275,12 @@ public class VisitorsController : ControllerBase
         if (visitor.RevokedAtUtc is not null) return Conflict("Visitante revogado.");
         if (visitor.ValidUntil < DateTime.UtcNow) return Conflict("Visitante com validade expirada.");
 
-        // Formato do QR conforme a configuração do sistema. Padrão: PlainText (confirmado idêntico
-        // ao QR real do sistema oficial do fabricante). Apêndice 8 (binário) só se explicitamente
-        // selecionado nas Configurações.
-        var settings = await _db.SystemSettings.AsNoTracking().FirstOrDefaultAsync(ct);
-        var format = settings?.QrFormat ?? "PlainText";
-
-        byte[] png;
-        if (string.Equals(format, "Appendix8Rc4", StringComparison.OrdinalIgnoreCase))
-        {
-            // Apêndice 8: a validade é embutida no QR (o firmware valida offline). Usamos ValidUntil.
-            var tokenBytes = _qr.BuildAppendix8TokenForUser(visitor.UserCode, visitor.ValidUntil.Value);
-            png = _encoder.EncodePng(tokenBytes);
-        }
-        else
-        {
-            png = _encoder.EncodePng(_qr.BuildAccessToken(visitor.UserCode, DateTime.UtcNow));
-        }
+        // SEMPRE PlainText. Confirmado byte a byte contra QRs reais gerados pelo software da
+        // controladora para este modelo (todos "user_id={code}_time={microssegundos}"). O formato
+        // binário do Apêndice 8 foi uma hipótese equivocada — o firmware o recusa como "QR inválido".
+        // A configuração SystemSettings.QrFormat é intencionalmente IGNORADA aqui para não voltar a
+        // emitir o formato binário por causa de um valor legado ("Appendix8Rc4") gravado no banco.
+        var png = _encoder.EncodePng(_qr.BuildAccessToken(visitor.UserCode, DateTime.UtcNow));
         return File(png, "image/png");
     }
 }

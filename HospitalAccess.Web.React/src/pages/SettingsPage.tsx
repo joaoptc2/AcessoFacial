@@ -80,18 +80,10 @@ export function SettingsPage() {
         <hr className="divider" />
         <h4 style={{ marginTop: 0 }}>Formato do QR de acesso</h4>
         <p className="text-muted" style={{ marginTop: 0 }}>
-          <strong>Texto simples (recomendado)</strong>: Base64 de "user_id=..._time=..." — confirmado
-          idêntico ao QR do sistema oficial do fabricante. Use este.<br />
-          <strong>Apêndice 8 (RC4)</strong>: formato binário documentado — só se um firmware específico
-          exigir. Ao trocar, gere o QR do visitante novamente.
+          O QR é sempre gerado em <strong>texto simples</strong> (Base64 de "user_id=..._time=..."),
+          confirmado idêntico ao QR do software da controladora. Não há mais opção de formato — o antigo
+          formato binário (Apêndice 8) era recusado pelo leitor e foi desativado.
         </p>
-        <div className="form-field" style={{ marginBottom: "0.9rem", maxWidth: 340 }}>
-          <label>Formato</label>
-          <select value={settings.qrFormat} onChange={(e) => setSettings({ ...settings, qrFormat: e.target.value as typeof settings.qrFormat })}>
-            <option value="PlainText">Texto simples (Base64) — recomendado</option>
-            <option value="Appendix8Rc4">Apêndice 8 — binário RC4</option>
-          </select>
-        </div>
 
         {error && <div className="alert alert-danger">{error}</div>}
         {savedAt && <div className="alert alert-success">Configurações salvas em {savedAt}. Gere o QR do visitante novamente para aplicar o novo formato.</div>}
