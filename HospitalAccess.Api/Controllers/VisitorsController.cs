@@ -58,6 +58,11 @@ public class VisitorsController : ControllerBase
                 IsExpired = u.RevokedAtUtc == null && u.ValidUntil != null && u.ValidUntil < now,
                 IsRevoked = u.RevokedAtUtc != null,
                 Controllers = u.Permissions.Select(p => new { p.ControllerId, ControllerName = p.Controller!.Name }),
+                // Resumo de sincronização: quantas portas já receberam o visitante (Synced) vs.
+                // pendentes/falhas. Se nenhuma está Synced, o QR ainda não abre nada.
+                SyncSynced = u.SyncStatuses.Count(s => s.State == Domain.Enums.SyncState.Synced),
+                SyncPending = u.SyncStatuses.Count(s => s.State == Domain.Enums.SyncState.Pending || s.State == Domain.Enums.SyncState.Failed),
+                SyncTotal = u.Permissions.Count,
             })
             .ToListAsync(ct);
 
@@ -115,6 +120,12 @@ public class VisitorsController : ControllerBase
         if (request.TimeGroup is < 1 or > 64)
             return BadRequest("TimeGroup deve estar entre 1 e 64.");
 
+        // Sem porta o visitante não é enviado a nenhum controlador e o QR não abre nada —
+        // exigir ao menos uma porta evita o estado confuso "criado mas não sincronizado".
+        var controllerIds = (request.ControllerIds ?? []).Distinct().ToList();
+        if (controllerIds.Count == 0)
+            return BadRequest("Selecione ao menos uma porta: o visitante é cadastrado nela e o QR só abre onde ele foi enviado.");
+
         var nextCode = await NextUserCodeAsync(ct);
 
         var visitor = new User
@@ -130,7 +141,7 @@ public class VisitorsController : ControllerBase
 
         // Portas da visita: o visitante é cadastrado como pessoa (sem face) nesses controladores,
         // com validade nativa. O leitor abre lendo o QR (que carrega o código do visitante).
-        foreach (var controllerId in (request.ControllerIds ?? []).Distinct())
+        foreach (var controllerId in controllerIds)
         {
             if (!await _db.Controllers.AnyAsync(c => c.Id == controllerId, ct))
                 return BadRequest($"Controlador {controllerId} não existe.");

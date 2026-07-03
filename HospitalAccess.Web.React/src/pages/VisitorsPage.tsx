@@ -73,6 +73,10 @@ export function VisitorsPage() {
       setError("Grupo de horário deve estar entre 1 e 64.");
       return;
     }
+    if (selectedControllers.length === 0) {
+      setError("Selecione ao menos uma porta — sem porta o visitante não é enviado a nenhum controlador e o QR não abre nada.");
+      return;
+    }
 
     setBusy(true);
     try {
@@ -144,9 +148,14 @@ export function VisitorsPage() {
           )}
         </div>
         {error && <div className="alert alert-danger">{error}</div>}
-        <button type="submit" className="btn btn-primary" disabled={busy}>
+        <button type="submit" className="btn btn-primary" disabled={busy || selectedControllers.length === 0}>
           Cadastrar e gerar QR
         </button>
+        {selectedControllers.length === 0 && (
+          <p className="text-muted" style={{ fontSize: "0.8rem", marginBottom: 0 }}>
+            Selecione ao menos uma porta para habilitar o cadastro.
+          </p>
+        )}
       </form>
 
       {qrImage && (
@@ -185,6 +194,7 @@ export function VisitorsPage() {
             <th>Válido de</th>
             <th>Válido até</th>
             <th>Status</th>
+            <th>Sincronização (QR)</th>
             <th>Ações</th>
           </tr>
         </thead>
@@ -197,6 +207,19 @@ export function VisitorsPage() {
               <td>{v.validUntil ? new Date(v.validUntil).toLocaleString() : "—"}</td>
               <td>
                 <span className={statusClass(v)}>{statusLabel(v)}</span>
+              </td>
+              <td>
+                {v.syncTotal === 0 ? (
+                  <span className="pill pill-danger" title="Sem porta — o QR não abre nada">sem porta</span>
+                ) : v.syncSynced > 0 ? (
+                  <span className="pill pill-success" title="QR ativo nas portas sincronizadas">
+                    {v.syncSynced}/{v.syncTotal} porta(s)
+                  </span>
+                ) : (
+                  <span className="pill pill-warning" title="Ainda não enviado ao(s) controlador(es)">
+                    pendente {v.syncPending}/{v.syncTotal}
+                  </span>
+                )}
               </td>
               <td>
                 {!v.isRevoked && (

@@ -233,6 +233,10 @@ export interface VisitorListItemDto {
   isExpired: boolean;
   isRevoked: boolean;
   controllers: UserControllerRef[];
+  // Resumo de sincronização nas portas (se SyncSynced = 0, o QR ainda não abre nada).
+  syncSynced: number;
+  syncPending: number;
+  syncTotal: number;
 }
 
 export interface CreateVisitorRequest {

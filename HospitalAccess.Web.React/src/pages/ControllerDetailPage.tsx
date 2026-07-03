@@ -32,6 +32,8 @@ export function ControllerDetailPage() {
   const [photoImages, setPhotoImages] = useState<Record<string, string>>({});
   const [accessLog, setAccessLog] = useState<AccessLogItem[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
+  // Feedback local da aba Manutenção (fica ADJACENTE aos botões, não no topo da página).
+  const [maintResult, setMaintResult] = useState<{ ok: boolean; message: string } | null>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -196,13 +198,12 @@ export function ControllerDetailPage() {
     if (!id) return;
     if (!window.confirm("Disparar o alarme de INCÊNDIO neste controlador?")) return;
     setBusy(true);
-    setError(null);
-    setNotice(null);
+    setMaintResult(null);
     try {
       await api.triggerFireAlarm(id);
-      setNotice("Alarme de incêndio disparado.");
+      setMaintResult({ ok: true, message: "✓ Alarme de incêndio disparado no controlador." });
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Falha ao disparar.");
+      setMaintResult({ ok: false, message: `✗ Falha ao disparar: ${err instanceof ApiError ? err.message : "erro inesperado"}` });
     } finally {
       setBusy(false);
     }
@@ -212,13 +213,12 @@ export function ControllerDetailPage() {
     if (!id) return;
     if (!window.confirm("Resincronizar FORÇADO: apaga TODAS as pessoas deste controlador e reenvia os cadastros do sistema. Confirmar?")) return;
     setBusy(true);
-    setError(null);
-    setNotice(null);
+    setMaintResult(null);
     try {
       const r = await api.resyncAllController(id);
-      setNotice(r.message ?? "Resincronização iniciada em segundo plano.");
+      setMaintResult({ ok: true, message: `✓ ${r.message ?? "Resincronização iniciada em segundo plano."}` });
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Falha ao resincronizar.");
+      setMaintResult({ ok: false, message: `✗ Falha ao resincronizar: ${err instanceof ApiError ? err.message : "erro inesperado"}` });
     } finally {
       setBusy(false);
     }
@@ -585,6 +585,10 @@ export function ControllerDetailPage() {
 
       {activeTab === "Manutenção" && (
         <div className="card" style={{ maxWidth: 640 }}>
+          {maintResult && (
+            <div className={maintResult.ok ? "alert alert-success" : "alert alert-danger"}>{maintResult.message}</div>
+          )}
+
           <h4 style={{ marginTop: 0 }}>Resincronização forçada</h4>
           <p className="text-muted" style={{ marginTop: 0 }}>
             Apaga <strong>todas</strong> as pessoas deste controlador e reenvia os usuários cadastrados no
