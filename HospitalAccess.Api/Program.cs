@@ -32,8 +32,17 @@ builder.Services.AddSwaggerGen();
 builder.Services.AddDataProtection();
 
 // Banco (PostgreSQL). Connection string via config/secrets, nunca no código.
-builder.Services.AddDbContext<AccessDbContext>(o =>
-    o.UseNpgsql(builder.Configuration.GetConnectionString("Postgres")));
+// Fail-fast: sem a connection string o app subiria e só quebraria no primeiro acesso ao
+// banco (seeder), com um stack cru "The ConnectionString property has not been initialized".
+var postgresConnectionString = builder.Configuration.GetConnectionString("Postgres");
+if (string.IsNullOrWhiteSpace(postgresConnectionString))
+{
+    throw new InvalidOperationException(
+        "ConnectionStrings:Postgres não configurada. Defina via user-secrets (dev, carregam só em " +
+        "ASPNETCORE_ENVIRONMENT=Development) ou via variável de ambiente ConnectionStrings__Postgres " +
+        "(produção). Ver README e appsettings.example.json.");
+}
+builder.Services.AddDbContext<AccessDbContext>(o => o.UseNpgsql(postgresConnectionString));
 
 // Módulo QR (lógica pura de protocolo).
 builder.Services.AddSingleton<QrAccessTokenService>();
