@@ -50,15 +50,29 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
 {
     private readonly ControllerConnectionFactory _connections;
     private readonly ConnectorAllocator _allocator;
+    private readonly TimeZoneInfo _deviceTimeZone;
 
     /// <summary>Controladores com monitoramento ativo, indexados por SN — usado para responder ao teste de conexão (0xA0).</summary>
     private readonly ConcurrentDictionary<string, Controller> _monitored = new();
 
-    public DoNetDriveGateway(ControllerConnectionFactory connections)
+    public DoNetDriveGateway(ControllerConnectionFactory connections, TimeZoneInfo deviceTimeZone)
     {
         _connections = connections;
+        _deviceTimeZone = deviceTimeZone;
         _allocator = ConnectorAllocator.GetAllocator();
         _allocator.TransactionMessage += OnTransactionMessage;
+    }
+
+    /// <summary>
+    /// Converte um horário UTC para o "relógio de parede" do fuso do aparelho. O campo de validade
+    /// (Expiry) do controlador é BCD em horário LOCAL: o aparelho compara com o próprio relógio.
+    /// Se enviarmos UTC, a validade fica adiantada (ex.: em UTC-3, o fim aparece 3h a mais no
+    /// aparelho). Convertendo para o fuso do aparelho, a data enviada bate com o relógio dele.
+    /// </summary>
+    private DateTime ToDeviceWallClock(DateTime utc)
+    {
+        var asUtc = DateTime.SpecifyKind(utc, DateTimeKind.Utc);
+        return TimeZoneInfo.ConvertTimeFromUtc(asUtc, _deviceTimeZone);
     }
 
     public event EventHandler<DeviceAccessEvent>? AccessEventReceived;
@@ -120,7 +134,7 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
             TimeGroup = user.TimeGroup,
         };
         if (user.ValidUntil is { } validUntil)
-            person.Expiry = validUntil;
+            person.Expiry = ToDeviceWallClock(validUntil);
         if (user.CardNumber is { } cardNumber)
             person.CardData = cardNumber;
 
@@ -204,7 +218,7 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
             TimeGroup = user.TimeGroup,
         };
         if (user.ValidUntil is { } validUntil)
-            person.Expiry = validUntil;
+            person.Expiry = ToDeviceWallClock(validUntil);
         if (user.CardNumber is { } cardNumber)
             person.CardData = cardNumber;
 

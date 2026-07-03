@@ -48,6 +48,21 @@ builder.Services.AddDbContext<AccessDbContext>(o => o.UseNpgsql(postgresConnecti
 builder.Services.AddSingleton<QrAccessTokenService>();
 builder.Services.AddSingleton<IQrImageEncoder, QrCoderImageEncoder>();
 
+// Fuso horário dos controladores: a validade (Expiry) é gravada no aparelho em horário LOCAL.
+// Configurável em Device:TimeZone (IANA, ex.: "America/Sao_Paulo"); padrão Brasil (UTC-3).
+var deviceTimeZoneId = builder.Configuration["Device:TimeZone"] ?? "America/Sao_Paulo";
+TimeZoneInfo deviceTimeZone;
+try
+{
+    deviceTimeZone = TimeZoneInfo.FindSystemTimeZoneById(deviceTimeZoneId);
+}
+catch (Exception ex) when (ex is TimeZoneNotFoundException or InvalidTimeZoneException)
+{
+    // Fallback seguro: fuso fixo UTC-3, para não derrubar o app se o id não existir no host.
+    deviceTimeZone = TimeZoneInfo.CreateCustomTimeZone("DeviceTZ", TimeSpan.FromHours(-3), "DeviceTZ", "DeviceTZ");
+}
+builder.Services.AddSingleton(deviceTimeZone);
+
 // Gateway de dispositivos (SDK DoNetDrive). Singleton: o ConnectorAllocator é único.
 builder.Services.AddSingleton<ControllerConnectionFactory>();
 builder.Services.AddSingleton<IDeviceGateway, DoNetDriveGateway>();
