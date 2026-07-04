@@ -24,6 +24,33 @@ public class Controller
     /// <summary>Senha de comunicação. NUNCA versionar; carregar de config protegida.</summary>
     public string CommunicationPassword { get; set; } = string.Empty;
 
+    // ---------------------------------------------------------------------------------------
+    // API HTTP local do controlador (painel web do FC-8190H). Usada para LER o QRCode que o
+    // aparelho gera por pessoa (o SDK binário não expõe esse campo) e, opcionalmente, provisionar
+    // usuários via /api/People/New. Ver HospitalAccess.Infrastructure/Devices/DeviceHttpClient.
+    // ---------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// URL base do painel web do controlador (ex.: "http://192.168.19.20"), SEM barra final.
+    /// Vazio = este controlador não fala HTTP (só SDK) e é ignorado no fluxo de QR por API.
+    /// </summary>
+    public string ApiBaseUrl { get; set; } = string.Empty;
+
+    /// <summary>Usuário do painel web (apenas referência/auditoria — o login do FC-8190H não tem campo de usuário).</summary>
+    public string? ApiUsername { get; set; }
+
+    /// <summary>
+    /// Senha do admin do painel web. Criptografada em repouso (DataProtection), como a senha de
+    /// comunicação. Em branco = usar o padrão global (Device:DefaultApiPassword). Ver ControllersController.
+    /// </summary>
+    public string ApiPassword { get; set; } = string.Empty;
+
+    /// <summary>Token bearer da sessão HTTP, cacheado. O firmware invalida tokens antigos a cada login; re-logamos em 401.</summary>
+    public string? ApiToken { get; set; }
+
+    /// <summary>Quando o <see cref="ApiToken"/> foi obtido/renovado.</summary>
+    public DateTime? ApiTokenUpdatedAtUtc { get; set; }
+
     /// <summary>Firmware &gt;= 4.28 habilita WaitRepeatMessage no upload de face.</summary>
     public bool SupportsWaitRepeatMessage { get; set; }
 

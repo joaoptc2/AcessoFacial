@@ -17,5 +17,6 @@
     <ProjectReference Include="..\HospitalAccess.Application\HospitalAccess.Application.csproj" />
     <ProjectReference Include="..\HospitalAccess.Domain\HospitalAccess.Domain.csproj" />
     <ProjectReference Include="..\HospitalAccess.Gateway\HospitalAccess.Gateway.csproj" />
+    <ProjectReference Include="..\HospitalAccess.Infrastructure\HospitalAccess.Infrastructure.csproj" />
   </ItemGroup>
 </Project>

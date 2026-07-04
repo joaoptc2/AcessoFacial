@@ -4,6 +4,7 @@ using HospitalAccess.Application.Sync;
 using HospitalAccess.Domain.Entities;
 using HospitalAccess.Domain.Enums;
 using HospitalAccess.Gateway;
+using HospitalAccess.Infrastructure.Devices;
 using HospitalAccess.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -26,16 +27,18 @@ public class VisitorsController : ControllerBase
     private readonly AccessDbContext _db;
     private readonly QrAccessTokenService _qr;
     private readonly IQrImageEncoder _encoder;
+    private readonly DeviceQrService _deviceQr;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<VisitorsController> _logger;
 
     public VisitorsController(
         AccessDbContext db, QrAccessTokenService qr, IQrImageEncoder encoder,
-        IServiceScopeFactory scopeFactory, ILogger<VisitorsController> logger)
+        DeviceQrService deviceQr, IServiceScopeFactory scopeFactory, ILogger<VisitorsController> logger)
     {
         _db = db;
         _qr = qr;
         _encoder = encoder;
+        _deviceQr = deviceQr;
         _scopeFactory = scopeFactory;
         _logger = logger;
     }
@@ -270,7 +273,8 @@ public class VisitorsController : ControllerBase
     [HttpPost("{visitorId:guid}/qrcode")]
     public async Task<IActionResult> GenerateQr(Guid visitorId, CancellationToken ct)
     {
-        var visitor = await _db.Users.FirstOrDefaultAsync(u => u.Id == visitorId && u.Type == UserType.Visitor, ct);
+        var visitor = await _db.Users.Include(u => u.Permissions)
+            .FirstOrDefaultAsync(u => u.Id == visitorId && u.Type == UserType.Visitor, ct);
         if (visitor is null) return NotFound();
         if (visitor.ValidUntil is null) return BadRequest("Visitante sem validade definida.");
         // Não emitir QR para visitante já revogado ou vencido — evita entregar credencial que
@@ -278,12 +282,29 @@ public class VisitorsController : ControllerBase
         if (visitor.RevokedAtUtc is not null) return Conflict("Visitante revogado.");
         if (visitor.ValidUntil < DateTime.UtcNow) return Conflict("Visitante com validade expirada.");
 
-        // SEMPRE PlainText. Confirmado byte a byte contra QRs reais gerados pelo software da
-        // controladora para este modelo (todos "user_id={code}_time={microssegundos}"). O formato
-        // binário do Apêndice 8 foi uma hipótese equivocada — o firmware o recusa como "QR inválido".
-        // A configuração SystemSettings.QrFormat é intencionalmente IGNORADA aqui para não voltar a
-        // emitir o formato binário por causa de um valor legado ("Appendix8Rc4") gravado no banco.
-        var png = _encoder.EncodePng(_qr.BuildAccessToken(visitor.UserCode, DateTime.UtcNow));
+        // O QR válido é o que a CONTROLADORA gera e guarda por pessoa — o firmware o valida contra
+        // esse texto exato (com um timestamp em microssegundos irreproduzível). Por isso NÃO geramos:
+        // lemos via API HTTP (DeviceQrService). Se a pessoa ainda não tem QRCode no aparelho, o
+        // serviço provisiona via /api/People/New (o firmware cunha o QRCode) e relê.
+        DeviceQrResult? deviceQr;
+        try
+        {
+            deviceQr = await _deviceQr.GetForUserAsync(visitor, ct);
+        }
+        catch (DeviceHttpException ex)
+        {
+            return StatusCode(502,
+                $"Não foi possível obter o QR da controladora: {ex.Message}. Verifique se o controlador está online e se a URL/senha do painel web (API) estão corretas — ou use \"QR da controladora\" colando o texto manualmente.");
+        }
+
+        if (deviceQr is null)
+            return UnprocessableEntity(
+                "Nenhum controlador deste visitante tem a API HTTP configurada (URL + senha do painel web). " +
+                "Configure em Controladores, ou use \"QR da controladora\" colando o texto manualmente.");
+
+        var png = _encoder.EncodePng(deviceQr.QrBase64);
+        Response.Headers["X-Qr-Source"] = "device";
+        Response.Headers["X-Qr-Payload"] = deviceQr.Payload;
         return File(png, "image/png");
     }
 

@@ -62,8 +62,10 @@ export function VisitorsPage() {
       setQrVisitorName(visitorName);
       setQrBlob(blob);
       setQrImage(URL.createObjectURL(blob));
-    } catch {
-      setError("Falha ao gerar o QR.");
+    } catch (err) {
+      // O QR agora é LIDO da controladora (via API HTTP). Mensagens 422/502 explicam se falta
+      // configurar a API do controlador ou se ele está offline — surface para o operador.
+      setError(err instanceof ApiError ? err.message : "Falha ao obter o QR da controladora.");
     }
   }
 
