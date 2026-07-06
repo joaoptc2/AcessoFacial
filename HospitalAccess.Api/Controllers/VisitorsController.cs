@@ -18,6 +18,9 @@ public record CreateVisitorRequest(string Name, DateTime ValidUntil, int TimeGro
 /// <summary>Texto do QRCode copiado da controladora, para renderizar um PNG imprimível.</summary>
 public record RenderQrRequest(string Text);
 
+/// <summary>Troca o quarto (controlador/porta) de um visitante temporário.</summary>
+public record ChangeRoomRequest(Guid ControllerId);
+
 /// <summary>Cadastro de visitantes temporários e geração do QR de acesso.</summary>
 [ApiController]
 [Route("api/[controller]")]
@@ -182,11 +185,12 @@ public class VisitorsController : ControllerBase
         if (request.TimeGroup is < 1 or > 64)
             return BadRequest("TimeGroup deve estar entre 1 e 64.");
 
-        // Sem porta o visitante não é enviado a nenhum controlador e o QR não abre nada —
-        // exigir ao menos uma porta evita o estado confuso "criado mas não sincronizado".
+        // Gestão de leitos: o temporário fica em UM quarto (uma porta). O QR é cunhado por aparelho,
+        // então cadastrar em várias portas geraria QRs diferentes por porta — sem sentido para um
+        // paciente. Fica em 1 quarto e usa-se "Trocar quarto" (PUT /room) para mudá-lo.
         var controllerIds = (request.ControllerIds ?? []).Distinct().ToList();
-        if (controllerIds.Count == 0)
-            return BadRequest("Selecione ao menos uma porta: o visitante é cadastrado nela e o QR só abre onde ele foi enviado.");
+        if (controllerIds.Count != 1)
+            return BadRequest("Selecione exatamente UM quarto (porta): o visitante temporário fica em um leito por vez. Use \"Trocar quarto\" para mudá-lo depois.");
 
         var nextCode = await NextUserCodeAsync(ct);
 
@@ -217,6 +221,83 @@ public class VisitorsController : ControllerBase
         SyncInBackground(visitor.Id);
 
         return CreatedAtAction(nameof(GenerateQr), new { visitorId = visitor.Id }, new { visitor.Id, visitor.UserCode });
+    }
+
+    /// <summary>
+    /// Troca o quarto (porta/controlador) do visitante temporário. Remove a pessoa do quarto antigo
+    /// (invalida o QR antigo, via HTTP People/Delete + reconciliação do SDK) e sincroniza no novo,
+    /// gerando um novo QR. Usado na gestão de leitos quando o paciente muda de quarto.
+    /// </summary>
+    [HttpPut("{id:guid}/room")]
+    public async Task<IActionResult> ChangeRoom(Guid id, [FromBody] ChangeRoomRequest request, CancellationToken ct)
+    {
+        var visitor = await _db.Users.Include(u => u.Permissions)
+            .FirstOrDefaultAsync(u => u.Id == id && u.Type == UserType.Visitor, ct);
+        if (visitor is null) return NotFound();
+        if (visitor.RevokedAtUtc is not null) return Conflict("Visitante revogado.");
+        if (visitor.ValidUntil is not null && visitor.ValidUntil < DateTime.UtcNow)
+            return Conflict("Visitante com validade expirada.");
+        if (!await _db.Controllers.AnyAsync(c => c.Id == request.ControllerId, ct))
+            return BadRequest("Quarto (controlador) não existe.");
+
+        var currentIds = visitor.Permissions.Select(p => p.ControllerId).ToList();
+        if (currentIds.Count == 1 && currentIds[0] == request.ControllerId)
+            return Ok(new { visitor.Id, visitor.UserCode, ControllerId = request.ControllerId, Unchanged = true });
+
+        var oldControllerIds = currentIds.Where(cid => cid != request.ControllerId).ToList();
+
+        // Substitui a(s) permissão(ões) antiga(s) pela nova. As linhas de sincronização antigas são
+        // removidas; o SyncUserAsync (reconciliação) revoga a pessoa nos controladores fora da lista
+        // desejada e a cria no novo.
+        var permsToRemove = visitor.Permissions.Where(p => p.ControllerId != request.ControllerId).ToList();
+        _db.Permissions.RemoveRange(permsToRemove);
+        if (oldControllerIds.Count > 0)
+        {
+            var oldStatuses = await _db.SyncStatuses
+                .Where(s => s.UserId == id && oldControllerIds.Contains(s.ControllerId))
+                .ToListAsync(ct);
+            _db.SyncStatuses.RemoveRange(oldStatuses);
+        }
+        if (visitor.Permissions.All(p => p.ControllerId != request.ControllerId))
+            visitor.Permissions.Add(new AccessPermission { ControllerId = request.ControllerId, TimeGroup = visitor.TimeGroup });
+
+        UserAuditLogger.Record(_db, visitor, "Quarto alterado", User.Identity?.Name);
+        await _db.SaveChangesAsync(ct);
+
+        ChangeRoomInBackground(visitor.Id, visitor.UserCode, oldControllerIds);
+        return Ok(new { visitor.Id, visitor.UserCode, ControllerId = request.ControllerId });
+    }
+
+    /// <summary>Fora do ciclo HTTP: limpa o QR do quarto antigo (HTTP) e sincroniza o novo (SDK reconcilia).</summary>
+    private void ChangeRoomInBackground(Guid visitorId, uint userCode, List<Guid> oldControllerIds)
+    {
+        _ = Task.Run(async () =>
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var provider = scope.ServiceProvider;
+            // 1. Remove a pessoa (e o QRCode) do(s) quarto(s) antigo(s) via HTTP — invalida o QR antigo.
+            if (oldControllerIds.Count > 0)
+            {
+                try
+                {
+                    var deviceQr = provider.GetRequiredService<DeviceQrService>();
+                    await deviceQr.RemoveFromControllersAsync(userCode, oldControllerIds);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Falha ao limpar QR do quarto antigo do visitante {UserCode}.", userCode);
+                }
+            }
+            // 2. Sincroniza: SyncUserAsync reconcilia (remove via SDK dos antigos, cria no novo).
+            try
+            {
+                await provider.GetRequiredService<IUserSyncService>().SyncUserAsync(visitorId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Falha ao sincronizar novo quarto do visitante {UserId}.", visitorId);
+            }
+        });
     }
 
     /// <summary>Cadastra o visitante como pessoa (sem face) nos controladores das portas da visita, fora do ciclo HTTP.</summary>

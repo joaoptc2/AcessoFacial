@@ -537,6 +537,11 @@ export const api = {
     }),
   revokeVisitor: (id: string) => request<void>(`/visitors/${id}`, { method: "DELETE" }),
   deleteVisitor: (id: string) => request<void>(`/visitors/${id}/permanent`, { method: "DELETE" }),
+  changeVisitorRoom: (id: string, controllerId: string) =>
+    request<{ id: string; userCode: number; controllerId: string }>(`/visitors/${id}/room`, {
+      method: "PUT",
+      body: JSON.stringify({ controllerId }),
+    }),
 
   // ---- Feriados ----
   getHolidays: () => request<HolidayDto[]>("/holidays"),
