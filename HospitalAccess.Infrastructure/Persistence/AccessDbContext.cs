@@ -79,6 +79,8 @@ public class AccessDbContext : DbContext
             plain => string.IsNullOrEmpty(plain) ? plain : protector.Protect(plain),
             stored => string.IsNullOrEmpty(stored) ? stored : Unprotect(protector, stored));
         b.Entity<Controller>().Property(c => c.CommunicationPassword).HasConversion(encrypted);
+        // Senha do painel web (API HTTP) também criptografada em repouso.
+        b.Entity<Controller>().Property(c => c.ApiPassword).HasConversion(encrypted);
 
         b.Entity<GroupControllerDefault>().HasIndex(d => new { d.GroupId, d.ControllerId }).IsUnique();
         b.Entity<GroupControllerDefault>()

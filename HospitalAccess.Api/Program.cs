@@ -7,6 +7,7 @@ using HospitalAccess.Application.Qr;
 using HospitalAccess.Application.Sync;
 using HospitalAccess.Gateway;
 using HospitalAccess.Gateway.Connections;
+using HospitalAccess.Infrastructure.Devices;
 using HospitalAccess.Infrastructure.Persistence;
 using HospitalAccess.Infrastructure.Qr;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -66,6 +67,14 @@ builder.Services.AddSingleton(deviceTimeZone);
 // Gateway de dispositivos (SDK DoNetDrive). Singleton: o ConnectorAllocator é único.
 builder.Services.AddSingleton<ControllerConnectionFactory>();
 builder.Services.AddSingleton<IDeviceGateway, DoNetDriveGateway>();
+
+// Integração HTTP com o painel web dos controladores (para LER o QRCode que o aparelho gera e,
+// opcionalmente, provisionar via /api/People/New). Senha padrão global em Device:DefaultApiPassword.
+builder.Services.Configure<DeviceHttpOptions>(builder.Configuration.GetSection(DeviceHttpOptions.SectionName));
+builder.Services.AddSingleton<DeviceHttpClientFactory>();
+
+// Leitura/provisão do QR real via API HTTP do controlador (o QR que o aparelho valida).
+builder.Services.AddScoped<DeviceQrService>();
 
 // Sincronização multi-controlador e expiração de visitantes.
 builder.Services.AddScoped<IUserSyncService, UserSyncService>();

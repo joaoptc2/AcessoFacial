@@ -36,6 +36,9 @@ export interface ControllerDetailDto {
   lastClockSyncAtUtc: string | null;
   // A senha de comunicação NÃO é retornada pela API (segredo). Apenas indica se há uma definida.
   hasCommunicationPassword: boolean;
+  // API HTTP do painel web (para ler o QRCode do aparelho). Vazio = só SDK.
+  apiBaseUrl: string;
+  hasApiPassword: boolean;
 }
 
 export interface CreateControllerRequest {
@@ -46,6 +49,8 @@ export interface CreateControllerRequest {
   communicationPassword: string;
   supportsWaitRepeatMessage: boolean;
   connectionMode: ControllerConnectionMode;
+  apiBaseUrl?: string;
+  apiPassword?: string;
 }
 
 export interface UpdateControllerRequest {
@@ -60,6 +65,9 @@ export interface UpdateControllerRequest {
   relayIndex: number;
   timeoutMs: number;
   restartCount: number;
+  apiBaseUrl?: string;
+  // Em branco/omitido mantém a senha atual do painel web.
+  apiPassword?: string;
 }
 
 export interface SyncStatusDto {
@@ -521,6 +529,12 @@ export const api = {
   createVisitor: (body: CreateVisitorRequest) =>
     request<{ id: string; userCode: number }>("/visitors", { method: "POST", body: JSON.stringify(body) }),
   generateVisitorQr: (id: string) => requestBlob(`/visitors/${id}/qrcode`, { method: "POST" }),
+  renderQrFromText: (text: string) =>
+    requestBlob(`/visitors/qrcode/render`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    }),
   revokeVisitor: (id: string) => request<void>(`/visitors/${id}`, { method: "DELETE" }),
   deleteVisitor: (id: string) => request<void>(`/visitors/${id}/permanent`, { method: "DELETE" }),
 

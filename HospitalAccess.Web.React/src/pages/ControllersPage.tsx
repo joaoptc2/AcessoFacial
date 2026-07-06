@@ -14,6 +14,8 @@ interface FormModel {
   connectionMode: ControllerConnectionMode;
   timeoutMs: number;
   restartCount: number;
+  apiBaseUrl: string;
+  apiPassword: string;
 }
 
 const emptyForm: FormModel = {
@@ -26,6 +28,8 @@ const emptyForm: FormModel = {
   connectionMode: "TcpClient",
   timeoutMs: 3000,
   restartCount: 3,
+  apiBaseUrl: "",
+  apiPassword: "",
 };
 
 export function ControllersPage() {
@@ -76,6 +80,8 @@ export function ControllersPage() {
           communicationPassword: form.communicationPassword,
           supportsWaitRepeatMessage: form.supportsWaitRepeatMessage,
           connectionMode: form.connectionMode,
+          apiBaseUrl: form.apiBaseUrl || undefined,
+          apiPassword: form.apiPassword || undefined,
         });
       } else {
         // Preserva timeoutMs/restartCount/connectionMode do próprio formulário (antes eram
@@ -91,6 +97,8 @@ export function ControllersPage() {
           relayIndex: 0,
           timeoutMs: form.timeoutMs,
           restartCount: form.restartCount,
+          apiBaseUrl: form.apiBaseUrl || undefined,
+          apiPassword: form.apiPassword ? form.apiPassword : undefined,
         });
       }
       cancelEdit();
@@ -113,6 +121,8 @@ export function ControllersPage() {
       connectionMode: detail.connectionMode,
       timeoutMs: detail.timeoutMs,
       restartCount: detail.restartCount,
+      apiBaseUrl: detail.apiBaseUrl ?? "",
+      apiPassword: "", // não retornada pela API; em branco = manter a atual
     });
   }
 
@@ -296,6 +306,23 @@ export function ControllersPage() {
               <label htmlFor="waitRepeat" style={{ margin: 0 }}>
                 Firmware &gt;= v4.28
               </label>
+            </div>
+            <div className="form-field" style={{ minWidth: 200 }}>
+              <label>URL do painel web (QR)</label>
+              <input
+                placeholder="http://192.168.19.20"
+                value={form.apiBaseUrl}
+                onChange={(e) => setForm({ ...form, apiBaseUrl: e.target.value })}
+              />
+            </div>
+            <div className="form-field" style={{ minWidth: 150 }}>
+              <label>Senha do painel web</label>
+              <input
+                type="password"
+                placeholder={editingId !== null ? "(manter atual)" : "(padrão global)"}
+                value={form.apiPassword}
+                onChange={(e) => setForm({ ...form, apiPassword: e.target.value })}
+              />
             </div>
             <div className="form-field">
               <button type="submit" className="btn btn-primary">
