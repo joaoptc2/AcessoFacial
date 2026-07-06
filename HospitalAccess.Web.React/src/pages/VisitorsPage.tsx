@@ -20,7 +20,8 @@ export function VisitorsPage() {
   const [name, setName] = useState("");
   const [validUntil, setValidUntil] = useState(() => toLocalInputValue(new Date(Date.now() + 24 * 60 * 60 * 1000)));
   const [timeGroup, setTimeGroup] = useState(1);
-  const [selectedControllers, setSelectedControllers] = useState<string[]>([]);
+  const [selectedRoom, setSelectedRoom] = useState<string>("");
+  const [changingRoomId, setChangingRoomId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [qrImage, setQrImage] = useState<string | null>(null);
@@ -42,9 +43,6 @@ export function VisitorsPage() {
     api.getControllers().then(setControllers).catch(() => setControllers([]));
   }, []);
 
-  function toggleController(id: string) {
-    setSelectedControllers((prev) => (prev.includes(id) ? prev.filter((c) => c !== id) : [...prev, id]));
-  }
 
   const filtered = useMemo(
     () =>
@@ -108,8 +106,8 @@ export function VisitorsPage() {
       setError("Grupo de horário deve estar entre 1 e 64.");
       return;
     }
-    if (selectedControllers.length === 0) {
-      setError("Selecione ao menos uma porta — sem porta o visitante não é enviado a nenhum controlador e o QR não abre nada.");
+    if (!selectedRoom) {
+      setError("Selecione o quarto (porta) do visitante.");
       return;
     }
 
@@ -119,16 +117,29 @@ export function VisitorsPage() {
         name,
         validUntil: validUntilDate.toISOString(),
         timeGroup,
-        controllerIds: selectedControllers,
+        controllerIds: [selectedRoom],
       });
       await showQr(created.id, name);
       setName("");
-      setSelectedControllers([]);
+      setSelectedRoom("");
       await load();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Falha inesperada ao cadastrar.");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function handleChangeRoom(visitor: VisitorListItemDto, controllerId: string) {
+    setError(null);
+    setChangingRoomId(null);
+    try {
+      await api.changeVisitorRoom(visitor.id, controllerId);
+      await load();
+      // Regera o QR já apontando para o novo quarto (o antigo é invalidado no controlador).
+      await showQr(visitor.id, visitor.name);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Falha ao trocar o quarto.");
     }
   }
 
@@ -171,35 +182,32 @@ export function VisitorsPage() {
           <input type="number" value={timeGroup} onChange={(e) => setTimeGroup(Number(e.target.value))} />
         </div>
         <div className="form-field" style={{ marginBottom: "0.75rem" }}>
-          <label>Portas liberadas nesta visita</label>
+          <label>Quarto (porta)</label>
           <p className="text-muted" style={{ margin: "0 0 0.4rem", fontSize: "0.85rem" }}>
-            O visitante é cadastrado nessas portas com validade automática — o leitor abre pelo QR e o
-            próprio controlador bloqueia após o vencimento.
+            O visitante temporário fica em <strong>um quarto por vez</strong>. O QR é lido desse
+            controlador. Para mudar de quarto depois, use <strong>Trocar quarto</strong> na lista — o QR
+            antigo é invalidado e um novo é gerado.
           </p>
           {controllers.length === 0 ? (
             <span className="text-muted">Nenhum controlador cadastrado.</span>
           ) : (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem" }}>
+            <select value={selectedRoom} onChange={(e) => setSelectedRoom(e.target.value)}>
+              <option value="">(selecione o quarto)</option>
               {controllers.map((c) => (
-                <label key={c.id} style={{ display: "flex", alignItems: "center", gap: "0.3rem", margin: 0 }}>
-                  <input
-                    type="checkbox"
-                    checked={selectedControllers.includes(c.id)}
-                    onChange={() => toggleController(c.id)}
-                  />
+                <option key={c.id} value={c.id}>
                   {c.name}
-                </label>
+                </option>
               ))}
-            </div>
+            </select>
           )}
         </div>
         {error && <div className="alert alert-danger">{error}</div>}
-        <button type="submit" className="btn btn-primary" disabled={busy || selectedControllers.length === 0}>
+        <button type="submit" className="btn btn-primary" disabled={busy || !selectedRoom}>
           Cadastrar e gerar QR
         </button>
-        {selectedControllers.length === 0 && (
+        {!selectedRoom && (
           <p className="text-muted" style={{ fontSize: "0.8rem", marginBottom: 0 }}>
-            Selecione ao menos uma porta para habilitar o cadastro.
+            Selecione o quarto para habilitar o cadastro.
           </p>
         )}
       </form>
@@ -302,7 +310,7 @@ export function VisitorsPage() {
           <tr>
             <th>Nome</th>
             <th>Código</th>
-            <th>Válido de</th>
+            <th>Quarto</th>
             <th>Válido até</th>
             <th>Status</th>
             <th>Sincronização (QR)</th>
@@ -314,7 +322,25 @@ export function VisitorsPage() {
             <tr key={v.id}>
               <td>{v.name}</td>
               <td>{v.userCode}</td>
-              <td>{v.validFrom ? new Date(v.validFrom).toLocaleString() : "—"}</td>
+              <td>
+                {changingRoomId === v.id ? (
+                  <select
+                    autoFocus
+                    defaultValue={v.controllers[0]?.controllerId ?? ""}
+                    onChange={(e) => e.target.value && handleChangeRoom(v, e.target.value)}
+                    onBlur={() => setChangingRoomId(null)}
+                  >
+                    <option value="">(selecione)</option>
+                    {controllers.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <span>{v.controllers[0]?.controllerName ?? <span className="text-muted">—</span>}</span>
+                )}
+              </td>
               <td>{v.validUntil ? new Date(v.validUntil).toLocaleString() : "—"}</td>
               <td>
                 <span className={statusClass(v)}>{statusLabel(v)}</span>
@@ -338,6 +364,13 @@ export function VisitorsPage() {
                     <>
                       <button className="btn btn-outline btn-sm" onClick={() => showQr(v.id, v.name)}>
                         Ver QR
+                      </button>
+                      <button
+                        className="btn btn-outline btn-sm"
+                        onClick={() => setChangingRoomId(changingRoomId === v.id ? null : v.id)}
+                        title="Mudar o visitante de quarto: invalida o QR atual e gera um novo"
+                      >
+                        Trocar quarto
                       </button>
                       <button className="btn btn-danger-outline btn-sm" onClick={() => handleRevoke(v.id)}>
                         Revogar

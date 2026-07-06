@@ -70,6 +70,34 @@ public sealed class DeviceQrService
         return null;
     }
 
+    /// <summary>
+    /// Remove a pessoa (e, com ela, o QRCode guardado) dos controladores informados via HTTP
+    /// <c>/api/People/Delete</c>. Usado ao trocar o visitante de quarto: invalida o QR antigo.
+    /// Best-effort — falhas são logadas, não propagadas.
+    /// </summary>
+    public async Task RemoveFromControllersAsync(uint userCode, IEnumerable<Guid> controllerIds, CancellationToken ct = default)
+    {
+        var ids = controllerIds.Distinct().ToList();
+        if (ids.Count == 0) return;
+
+        var controllers = await _db.Controllers.Where(c => ids.Contains(c.Id)).ToListAsync(ct);
+        foreach (var controller in controllers.Where(_factory.CanUseHttp))
+        {
+            try
+            {
+                await using var client = _factory.Create(controller);
+                await client.EnsureAuthenticatedAsync(ct);
+                await client.DeleteUsersAsync(new[] { userCode.ToString() }, ct: ct);
+                await PersistTokenIfRefreshedAsync(controller, client, ct);
+                _logger.LogInformation("QR: removido {UserCode} do controlador {Controller} via HTTP.", userCode, controller.Name);
+            }
+            catch (DeviceHttpException ex)
+            {
+                _logger.LogWarning("Falha ao remover {UserCode} do controlador {Controller} via HTTP: {Msg}", userCode, controller.Name, ex.Message);
+            }
+        }
+    }
+
     private async Task<DeviceQrResult?> ReadOrProvisionAsync(Controller controller, User user, CancellationToken ct)
     {
         var userId = user.UserCode.ToString();
