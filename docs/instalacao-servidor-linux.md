@@ -190,6 +190,12 @@ server {
     listen 80;
     server_name acesso.hospital.local;
 
+    # O cadastro de usuário envia a foto de face (JPEG bruto do celular pode ter vários MB;
+    # a API reduz para <=120 KB no servidor). O padrão do Nginx é só 1 MB — sem esta linha,
+    # o upload é rejeitado com "413 Request Entity Too Large" antes de chegar na API.
+    # A API aceita até 10 MB ([RequestSizeLimit] no UsersController); 12m deixa uma folga.
+    client_max_body_size 12m;
+
     location / {
         proxy_pass         http://127.0.0.1:5080;
         proxy_http_version 1.1;

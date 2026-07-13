@@ -348,6 +348,20 @@ class ApiError extends Error {
   }
 }
 
+/**
+ * Mensagem legível a partir de uma resposta com falha. Evita despejar HTML cru na tela — o
+ * "413 Request Entity Too Large" do Nginx, por exemplo, vem como uma página HTML inteira.
+ */
+function friendlyError(status: number, body: string): string {
+  if (status === 413) {
+    return "A imagem enviada é muito grande. Reduza a resolução da foto e tente novamente.";
+  }
+  const trimmed = body.trim();
+  // Corpo vazio ou HTML (típico de erro de proxy/gateway): mostra só o status, não o HTML.
+  if (!trimmed || trimmed.startsWith("<")) return `Erro ${status}.`;
+  return trimmed;
+}
+
 function getToken(): string | null {
   return localStorage.getItem("token");
 }
@@ -383,7 +397,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   if (!response.ok) {
     if (response.status === 401) handleUnauthorized();
     const text = await response.text();
-    throw new ApiError(response.status, text || `Erro ${response.status}`);
+    throw new ApiError(response.status, friendlyError(response.status, text));
   }
 
   if (response.status === 204) return undefined as T;
@@ -400,7 +414,7 @@ async function requestBlob(path: string, options: RequestInit = {}): Promise<Blo
   if (!response.ok) {
     if (response.status === 401) handleUnauthorized();
     const text = await response.text();
-    throw new ApiError(response.status, text || `Erro ${response.status}`);
+    throw new ApiError(response.status, friendlyError(response.status, text));
   }
   return response.blob();
 }
