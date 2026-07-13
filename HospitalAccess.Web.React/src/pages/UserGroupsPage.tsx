@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { api, ApiError, type ControllerDto, type UserGroupDto } from "../lib/api";
+import { ControllerChecklist } from "../components/ControllerChecklist";
 
 interface FormModel {
   name: string;
@@ -36,15 +37,6 @@ export function UserGroupsPage() {
       ),
     [groups, search],
   );
-
-  function toggleDefault(controllerId: string, checked: boolean) {
-    setSelectedDefaults((prev) => {
-      const next = new Set(prev);
-      if (checked) next.add(controllerId);
-      else next.delete(controllerId);
-      return next;
-    });
-  }
 
   function startEdit(g: UserGroupDto) {
     setEditingId(g.id);
@@ -93,9 +85,10 @@ export function UserGroupsPage() {
     <div>
       <h2>Grupos de usuários</h2>
       <p className="text-muted">
-        Organização de usuários permanentes (ex.: "Enfermagem", "Manutenção"). Ao associar um usuário a um grupo, as
-        portas padrão definidas aqui são pré-selecionadas automaticamente para ele — o cadastro do usuário ainda
-        permite adicionar ou remover portas individualmente depois.
+        Organização de usuários permanentes (ex.: "Enfermagem", "Manutenção"). As portas padrão definidas aqui são
+        <strong> herdadas por todos os membros do grupo</strong>: adicionar ou remover uma porta aqui adiciona/remove
+        em todos eles (e sincroniza no hardware). No cadastro do usuário ainda dá para incluir portas extras
+        individuais, que não são afetadas por mudanças no grupo.
       </p>
 
       <form className="card" style={{ marginBottom: "1.25rem" }} onSubmit={handleSave}>
@@ -121,24 +114,9 @@ export function UserGroupsPage() {
             </div>
           )}
         </div>
-        <div style={{ marginTop: "0.75rem" }}>
-          <label style={{ fontSize: "0.82rem", fontWeight: 500, color: "var(--text-muted)" }}>Portas padrão do grupo</label>
-          {controllers.length === 0 ? (
-            <p className="text-muted">Nenhum controlador cadastrado ainda.</p>
-          ) : (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem", marginTop: "0.35rem" }}>
-              {controllers.map((c) => (
-                <label key={c.id} style={{ display: "flex", alignItems: "center", gap: "0.35rem", fontWeight: 400 }}>
-                  <input
-                    type="checkbox"
-                    checked={selectedDefaults.has(c.id)}
-                    onChange={(e) => toggleDefault(c.id, e.target.checked)}
-                  />
-                  {c.name}
-                </label>
-              ))}
-            </div>
-          )}
+        <div className="form-field" style={{ marginTop: "0.75rem" }}>
+          <label>Portas padrão do grupo (herdadas pelos membros)</label>
+          <ControllerChecklist controllers={controllers} selected={selectedDefaults} onChange={setSelectedDefaults} />
         </div>
       </form>
 

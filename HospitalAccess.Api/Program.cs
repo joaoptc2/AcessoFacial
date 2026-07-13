@@ -76,6 +76,9 @@ builder.Services.AddSingleton<DeviceHttpClientFactory>();
 // Leitura/provisão do QR real via API HTTP do controlador (o QR que o aparelho valida).
 builder.Services.AddScoped<DeviceQrService>();
 
+// Propaga as portas padrão do grupo organizacional para os membros (base + extras manuais).
+builder.Services.AddScoped<GroupAccessService>();
+
 // Sincronização multi-controlador e expiração de visitantes.
 builder.Services.AddScoped<IUserSyncService, UserSyncService>();
 builder.Services.AddScoped<IVisitorExpirationJob, VisitorExpirationJob>();

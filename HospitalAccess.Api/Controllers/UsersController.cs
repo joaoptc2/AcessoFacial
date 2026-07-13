@@ -26,12 +26,14 @@ public record UpdateUserRequest(string Name, int TimeGroup, Guid? GroupId, Guid[
 public class UsersController : ControllerBase
 {
     private readonly AccessDbContext _db;
+    private readonly GroupAccessService _groupAccess;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<UsersController> _logger;
 
-    public UsersController(AccessDbContext db, IServiceScopeFactory scopeFactory, ILogger<UsersController> logger)
+    public UsersController(AccessDbContext db, GroupAccessService groupAccess, IServiceScopeFactory scopeFactory, ILogger<UsersController> logger)
     {
         _db = db;
+        _groupAccess = groupAccess;
         _scopeFactory = scopeFactory;
         _logger = logger;
     }
@@ -121,10 +123,11 @@ public class UsersController : ControllerBase
         {
             if (!await _db.Controllers.AnyAsync(c => c.Id == controllerId, ct))
                 return BadRequest($"Controlador {controllerId} não existe.");
-            user.Permissions.Add(new AccessPermission { ControllerId = controllerId, TimeGroup = request.TimeGroup });
         }
 
         _db.Users.Add(user);
+        // Portas efetivas = manuais pedidas ∪ portas herdadas do grupo (o serviço marca a origem).
+        await _groupAccess.ReconcileUserPermissionsAsync(user, request.ControllerIds ?? [], request.TimeGroup, ct);
         UserAuditLogger.Record(_db, user, "Criado", CurrentUsername());
         await _db.SaveChangesAsync(ct);
 
@@ -169,37 +172,28 @@ public class UsersController : ControllerBase
                 return BadRequest($"Controlador {controllerId} não existe.");
         }
 
-        // Edição altera dados que o dispositivo já tem (foto/nome/TimeGroup) ou as portas: os
-        // status já 'Synced' precisam voltar a 'Pending', senão SyncUserAsync os pula e a
-        // alteração nunca chega ao hardware.
+        // Conjunto efetivo = portas manuais desejadas ∪ portas herdadas do grupo (sempre presentes).
+        var groupDoors = await _groupAccess.GetGroupDoorsAsync(user.GroupId, ct);
+        var effectiveIds = new HashSet<Guid>(desiredControllerIds);
+        effectiveIds.UnionWith(groupDoors);
+
+        var existingControllerIds = user.Permissions.Select(p => p.ControllerId).ToHashSet();
+        var addedControllerIds = effectiveIds.Where(cId => !existingControllerIds.Contains(cId)).ToList();
+        var removedControllerIds = existingControllerIds.Where(cId => !effectiveIds.Contains(cId)).ToList();
+
+        // Só as portas que PERMANECEM voltam a 'Pending' (força re-push de foto/nome/TimeGroup
+        // alterados). As portas REMOVIDAS ficam 'Synced' de propósito: assim SyncUserAsync as
+        // revoga no hardware — se fossem zeradas junto, a pessoa continuaria cadastrada na porta
+        // removida (a revogação só acontece a partir de um status 'Synced').
         var syncStatuses = await _db.SyncStatuses.Where(s => s.UserId == id).ToListAsync(ct);
-        foreach (var status in syncStatuses.Where(s => s.State == SyncState.Synced))
+        foreach (var status in syncStatuses.Where(s => s.State == SyncState.Synced && effectiveIds.Contains(s.ControllerId)))
         {
             status.State = SyncState.Pending;
             status.UpdatedAt = DateTime.UtcNow;
         }
 
-        // Remove permissões que não estão mais na lista desejada; adiciona as novas.
-        var existingControllerIds = user.Permissions.Select(p => p.ControllerId).ToHashSet();
-        var addedControllerIds = desiredControllerIds.Where(cId => !existingControllerIds.Contains(cId)).ToList();
-        var removedControllerIds = existingControllerIds.Where(cId => !desiredControllerIds.Contains(cId)).ToList();
-
-        var toRemove = user.Permissions.Where(p => !desiredControllerIds.Contains(p.ControllerId)).ToList();
-        foreach (var p in toRemove) _db.Permissions.Remove(p);
-
-        foreach (var controllerId in addedControllerIds)
-        {
-            // _db.Add (não user.Permissions.Add): como AccessPermission.Id já vem preenchido
-            // (Guid.NewGuid() no inicializador), o EF Core marca entidades adicionadas via fixup
-            // de uma coleção navigation já rastreada como Modified em vez de Added — gera UPDATE
-            // em vez de INSERT e lança DbUpdateConcurrencyException (0 linhas afetadas). DbSet.Add
-            // força o estado Added independente do valor da chave.
-            _db.Permissions.Add(new AccessPermission { UserId = user.Id, ControllerId = controllerId, TimeGroup = request.TimeGroup });
-        }
-        foreach (var p in user.Permissions.Where(p => desiredControllerIds.Contains(p.ControllerId)))
-        {
-            p.TimeGroup = request.TimeGroup;
-        }
+        // Reconcilia as permissões (portas do grupo herdadas + extras manuais) marcando a origem.
+        await _groupAccess.ReconcileUserPermissionsAsync(user, desiredControllerIds, request.TimeGroup, ct);
 
         UserAuditLogger.Record(_db, user, "Atualizado", CurrentUsername(),
             await BuildControllerChangeDetailsAsync(addedControllerIds, removedControllerIds, ct));
