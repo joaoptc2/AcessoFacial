@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useState, type FormEvent } from "react";
 import { api, ApiError, type ControllerDto, type UserAuditLogEntry, type UserGroupDto, type UserListItemDto } from "../lib/api";
+import { downscaleImageForUpload } from "../lib/image";
 import { useAuth } from "../lib/AuthContext";
 
 interface FormModel {
@@ -124,7 +125,8 @@ export function UsersPage() {
     if (form.groupId) formData.append("GroupId", form.groupId);
     if (cardNumber !== null) formData.append("CardNumber", String(cardNumber));
     for (const id of selectedControllers) formData.append("ControllerIds", id);
-    if (photo) formData.append("facePhoto", photo);
+    // Reduz a foto no navegador antes de enviar (evita o 413 do proxy com JPEG cru de celular).
+    if (photo) formData.append("facePhoto", await downscaleImageForUpload(photo));
 
     try {
       if (editingId === null) {
