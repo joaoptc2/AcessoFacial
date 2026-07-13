@@ -1,8 +1,9 @@
 # Sistema de Controle de Acesso Hospitalar — 8190H (A33_Face)
 
 Solução para gerenciar **30 controladores faciais 8190H** conectados por **TCP/IP**,
-com cadastro de face por upload, QR Code de acesso para visitantes, gestão de
-portas/permissões, sincronização multi-dispositivo e log de acessos auditável.
+com cadastro de face por upload, QR Code de acesso para visitantes (com gestão de
+leitos/quartos), gestão de portas/permissões, sincronização multi-dispositivo e log
+de acessos auditável.
 Rodando **on-premise** (.NET 8 + PostgreSQL).
 
 ---
@@ -46,33 +47,39 @@ usuário inexistente).
 ### 4. `WaitRepeatMessage`
 Configurável por controlador via `Controller.SupportsWaitRepeatMessage` (só firmware ≥ v4.28).
 
-### 5. QR de acesso: formato corrigido em 2026-07-02 (era diferente do documento de protocolo)
-A implementação original seguia o Appendix 8 do documento de protocolo: 14 bytes binários
-(9 cartão + 4 validade em tempo comprimido + 1 CRC8), cifrados com RC4. O cliente enviou um
-QR real e funcional gerado pelo sistema oficial do fabricante e confirmou que **é esse QR
-que a câmera do controlador lê para abrir a porta** — e o conteúdo decodificado não bate
-nada com o formato do documento. O QR de referência (Base64 → ASCII) é:
+### 5. QR de acesso: **lido do controlador**, não gerado no servidor — resolvido em 2026-07 (validado em hardware real)
+A geração do QR no servidor foi **abandonada**. Descobriu-se, com QRs reais enviados pelo
+cliente, que o firmware do FC-8190H cunha o próprio QR — **texto simples**
+`user_id={UserCode}_time={microssegundos desde a época Unix}` em Base64, ex.:
 
 ```
 user_id=1_time=1782921297138761
 ```
 
-Ou seja: **texto simples** `user_id={UserCode}_time={microssegundos desde a época Unix UTC}`,
-codificado em Base64. `QrAccessTokenService.BuildAccessToken(userCode, timestampUtc)` foi
-reescrito para gerar exatamente esse formato — validado por um teste golden-vector contra o
-QR de referência (`QrAccessTokenServiceTests.BuildAccessToken_MatchesVendorReferenceFormat`).
-O código RC4/CRC8/tempo-comprimido antigo (`Rc4.cs`, `VisitorCardNumber.cs`) foi removido por
-estar incorreto.
+— e valida o QR apresentado na câmera **contra esse texto exato que ele mesmo guardou**. O
+campo `time` é definido pelo aparelho no instante do cadastro, em microssegundos, e é
+**irreproduzível pelo servidor**: qualquer QR que gerássemos (mesmo com o formato certo) caía
+como "QR inválido", porque o `time` não batia com o guardado no device.
 
-⚠️ **Ainda não confirmado**: este formato não tem nenhuma criptografia/checksum — qualquer
-`user_id` pode ser forjado a partir do texto decodificado. Isso só é seguro se o controlador
-validar contra um servidor (o `user_id` está autorizado agora?) em vez de confiar cegamente
-no QR offline; não temos visibilidade de qual dos dois modelos o hardware realmente usa.
-Também não está confirmado se `time` é o instante de geração (nossa leitura — o valor de
-referência bate com "agora" no momento em que o QR de teste foi gerado) ou alguma janela de
-validade/replay diferente. `Visitor.ValidUntil` continua sendo a validade que o NOSSO sistema
-controla (`IVisitorExpirationJob` revoga automaticamente) — não é (e talvez nunca tenha sido)
-o que o hardware usa para decidir se deixa a porta abrir.
+A solução é **ler o QR real direto do controlador** pela API HTTP do painel web (ver
+[Integração HTTP com o painel web](#integração-http-com-o-painel-web-do-controlador-qr-real--provisionamento--eventos)):
+`POST /api/People/GetDetail` devolve o campo `QRCode` já cunhado; se a pessoa ainda não existe
+no aparelho, o sistema a provisiona via `POST /api/People/New` (o que faz o firmware cunhar o
+QR) e relê. Tudo isso fica em `DeviceQrService` (Api), consumido por
+`POST /api/visitors/{id}/qrcode`.
+
+✅ **Validado contra hardware real**: com a URL e a senha do painel configuradas no controlador,
+o QR baixado abre a porta normalmente (confirmação do cliente).
+
+O download do QR do visitante (`POST /api/visitors/{id}/qrcode`) passa **exclusivamente** pelo
+`DeviceQrService` (lê do aparelho) — não usa mais a geração de texto. O código antigo de geração
+(`QrAccessTokenService`, `Rc4.cs`, `VisitorCardNumber.cs` em `HospitalAccess.Application/Qr/`)
+**continua no repositório** (ainda referenciado/registrado, com seus testes), mas ficou **fora do
+caminho de download do QR do visitante**. Há ainda um endpoint de **fallback manual** para colar
+um QR já existente do painel e só re-renderizar o PNG (`POST /api/visitors/qrcode/render`).
+`Visitor.ValidUntil` continua sendo a validade que o NOSSO sistema controla
+(`IVisitorExpirationJob` revoga automaticamente) e é enviada ao aparelho como `ExpirationDate`
+(unix seconds, clampada à faixa aceita pelo firmware) no provisionamento.
 
 ### 6. Controlador = porta (não existe entidade `Door` separada)
 O hardware 8190H tem **um único relé/porta por controlador** — não há como um controlador
@@ -167,27 +174,97 @@ registrada nas seções 1-2 para o restante do gateway.
 
 ---
 
+## Integração HTTP com o painel web do controlador (QR real + provisionamento + eventos)
+
+Além do protocolo binário DoNetDrive por TCP (o Gateway/SDK, seções 1-9), o sistema fala com o
+controlador por um **segundo canal: a API REST HTTP do painel web** do próprio FC-8190H. Esse
+canal foi introduzido para resolver o QR (seção 5) e reaproveitado para provisionar visitantes
+e receber eventos. Todo esse código vive em **`HospitalAccess.Infrastructure/Devices/`**
+(`DeviceHttpClient`, `DeviceHttpClientFactory`, `DeviceHttpOptions`, `DeviceErrorCodes`,
+`DeviceHttpException`) e é consumido pela camada Api (`DeviceQrService`).
+
+- **Login** — `POST /api/User/Login` com corpo `{"password": MD5(Hash+senha+Hash) em maiúsculas,
+  "rememberMe":"true", "Hash": <GUID gerado pelo cliente>}` (não há campo de usuário). O painel
+  responde **HTTP 200 mesmo em erro** — o sucesso é lido pelo envelope `{result, content, errCode,
+  error}` (`result:false` = falha); o token vem em `content.token`. O token é cacheado em
+  `Controller.ApiToken` e revalidado (`CheckToken`); em 401 o cliente refaz o login
+  automaticamente.
+- **Ler / provisionar pessoa** — `POST /api/People/GetDetail` (lê `QRCode`, `ExpirationDate` etc.),
+  `POST /api/People/New` (cadastro/edição — multipart) e `POST /api/People/Delete`. O multipart é
+  **byte-exato**: a parte `PeopleJson` vai **sem `Content-Type`** (o firmware derruba a conexão se
+  tiver), a foto vai como `image/jpg` (não `image/jpeg`), boundary com prefixo `----facial`.
+- **Senha do painel** — global por padrão (`Device:DefaultApiPassword`), com **override por
+  controlador** (`Controller.ApiPassword`). A senha do controlador é **criptografada em repouso**
+  (mesma `ValueConverter` de DataProtection usada em `CommunicationPassword`), nunca é devolvida
+  pelo GET (a API expõe só `HasApiPassword`) e nunca é versionada. `Controller.ApiBaseUrl` vazio =
+  controlador só-SDK (sem QR HTTP).
+- **TLS** — o painel usa HTTPS com certificado autoassinado. O `DeviceHttpClientFactory` usa um
+  `SocketsHttpHandler` compartilhado com bypass de validação de certificado **restrito a esse
+  cliente** (o bypass **não** é global — ver a política de segurança do resto do sistema).
+- **Eventos (phone-home)** — endpoint `POST /note/insertNoteFace` (`DeviceCallbackController`,
+  `[AllowAnonymous]`): o controlador, quando configurado em modo "phone home", empurra os
+  reconhecimentos como multipart com `recordJson` **comprimido em gzip** (detectado pelo magic
+  `1F 8B`). O endpoint descomprime, faz o parse tolerando **aliases de campo** (`deviceKey`/
+  `deviceId`, `employeeId`/`employeeNoString`, etc.), casa o controlador por `SerialNumber` e grava
+  um `AccessLog`. É um **canal alternativo** ao `TransactionMessage` do SDK (seção 2) — útil se o
+  push por TCP não funcionar no hardware real. Responde `{"success":0,"msg":"OK"}` (0 = OK).
+- **Mapa de erros** — `DeviceErrorCodes` traduz os `errCode` do painel (ex.: `11` =
+  `ExpirationDate` fora da faixa) para mensagens legíveis; as falhas viram `DeviceHttpException`
+  e o endpoint devolve 502/422 com a causa.
+
+## Gestão de leitos (visitantes temporários)
+
+O visitante temporário representa um **acompanhante/paciente hospedado num quarto**. Como o QR é
+cunhado **por aparelho** (seção 5), a regra de negócio é: **cada visitante fica em exatamente uma
+porta/quarto**.
+
+- **Cadastro** (`POST /api/visitors`) exige **exatamente 1 controlador** (o quarto). A tela
+  (`VisitorsPage.tsx`) troca a lista de checkboxes por um único `<select>` de quarto.
+- **Trocar de quarto** (`PUT /api/visitors/{id}/room`): substitui a permissão pelo novo quarto,
+  **remove o cadastro do controlador antigo via HTTP `People/Delete`** (o que **invalida o QR
+  antigo**) e dispara a sincronização para o novo — o próximo download de QR já vem cunhado pelo
+  novo aparelho. Roda em segundo plano (mesmo padrão fire-and-forget da seção 7).
+- **Revogar vs. excluir** — `DELETE /api/visitors/{id}` revoga (mantém histórico);
+  `DELETE /api/visitors/{id}/permanent` apaga de vez. A expiração automática
+  (`IVisitorExpirationJob`) continua revogando ao passar de `ValidUntil`.
+
+> Um comparativo detalhado com um produto comercial de mercado (ZKTeco ZKBio CVAccess 4.0) e o
+> backlog de melhorias priorizado estão em
+> [`docs/comparativo-zkbio-melhorias.md`](docs/comparativo-zkbio-melhorias.md).
+
+---
+
 ## Arquitetura
 
 ```
 ┌──────────────────────────────────────┐
 │  HospitalAccess.Api                    │  ← serve também o front-end React
 │  (+ Application/Domain/Infra)          │     (SPA em wwwroot/, mesmo processo/porta)
-└─────────┬────────────────────────────┘
-          │ IUserSyncService / IDeviceGateway
-┌─────────▼─────────────┐   protocolo binário DoNetDrive (TCP/IP)
-│ HospitalAccess.        │ ◀──────────────────────────────────▶  30x 8190H
-│ Gateway (SDK DoNetDrive)│      eventos de acesso em tempo real
-└────────────────────────┘
+└───┬───────────────────────────────┬──┘
+    │ IUserSyncService/IDeviceGateway│ DeviceHttpClient (Infrastructure/Devices)
+    │                                │
+┌───▼────────────────────┐   binário │ REST HTTP (painel web): QR, cadastro,
+│ HospitalAccess.Gateway  │ ◀────────┼────────────────────────▶  30x 8190H
+│ (SDK DoNetDrive, TCP/IP)│  DoNetDrive│  + phone-home /note/insertNoteFace ▲
+└────────────────────────┘   eventos  └──────────────────────────────────┘
 ```
 
+Dois canais falam com o mesmo aparelho: o **Gateway/SDK** (protocolo binário DoNetDrive por
+TCP, seções 1-9) e o **cliente HTTP** do painel web (`Infrastructure/Devices/`, seção
+"Integração HTTP") usado para o QR real, provisionamento de visitante e o callback phone-home.
+
 - **HospitalAccess.Domain** — entidades e enums, sem dependência de framework
-  (`Controller` = porta física, `UserGroup` para organização de usuários).
+  (`Controller` = porta física, com os campos da API HTTP `ApiBaseUrl`/`ApiPassword`/`ApiToken`;
+  `UserGroup` para organização de usuários).
 - **HospitalAccess.Application** — QR (protocolo puro), contratos de sincronização.
-- **HospitalAccess.Infrastructure** — EF Core/PostgreSQL, encoder de QR (QRCoder).
-- **HospitalAccess.Gateway** — único componente que fala com o hardware (SDK `DoNetDrive.*`).
+- **HospitalAccess.Infrastructure** — EF Core/PostgreSQL, encoder de QR (QRCoder),
+  **cliente HTTP do painel web** (`Devices/`: `DeviceHttpClient` etc.) e criptografia de
+  segredos em repouso (DataProtection: `CommunicationPassword`, `ApiPassword`).
+- **HospitalAccess.Gateway** — único componente que fala o **protocolo binário** do hardware
+  (SDK `DoNetDrive.*`).
 - **HospitalAccess.Api** — API REST + JWT + hosted services (sync/expiração de usuários,
-  monitoramento em tempo real, coleta offline, health-check, retenção de dados). Serve
+  monitoramento em tempo real, coleta offline, health-check, retenção de dados), o
+  `DeviceQrService` (QR via HTTP) e o `DeviceCallbackController` (phone-home). Serve
   também o SPA React em `wwwroot/`.
 - **HospitalAccess.Web.React** — front-end React (Vite/TS), único front-end. O build gera
   os estáticos em `HospitalAccess.Api/wwwroot/`.
@@ -228,9 +305,13 @@ dotnet user-secrets set "Seed:AdminUsername" "admin"
 dotnet user-secrets set "Seed:AdminPassword" "<senha forte, trocar após o primeiro login>"
 ```
 Em produção, use variáveis de ambiente ou um cofre de segredos (Key Vault, etc.) — nunca
-`appsettings.json` versionado. Veja `appsettings.example.json` para as chaves esperadas.
-Senhas de comunicação de cada controlador (`Controller.CommunicationPassword`) ficam no
-banco — considere criptografia em repouso ou uma coluna protegida se o hospital exigir.
+`appsettings.json` versionado. Veja `appsettings.example.json` para as chaves esperadas,
+incluindo a seção **`Device`** (`DefaultApiPassword` — senha global do painel web usada quando
+o controlador não tem override —, `LoginPath`, `TimeoutMs`, `TimeZone`).
+Senhas por controlador — de comunicação (`Controller.CommunicationPassword`, SDK) e do painel
+web (`Controller.ApiPassword`, HTTP) — ficam no banco **criptografadas em repouso** via
+`ValueConverter` de ASP.NET DataProtection; nunca são devolvidas pelas APIs de leitura nem
+versionadas.
 
 ### Banco de dados
 ```bash
@@ -259,8 +340,15 @@ dotnet test HospitalAccess.Tests/HospitalAccess.Tests.csproj
 ```
 
 ## O que foi verificado de ponta a ponta neste ambiente de desenvolvimento
-- Build completo da solução (0 erros/warnings) e suíte de testes (3 passando, incluindo o
-  golden vector do QR contra a referência real do fabricante — ver item 5).
+- Build completo da solução (0 erros/warnings) e suíte de testes cobrindo QR, classificador de
+  eventos, conversor de imagem e o **cliente HTTP do painel** (`DeviceHttpClientTests`: o hash de
+  login MD5 contra o vetor do sistema de referência, o multipart byte-exato — `PeopleJson` sem
+  `Content-Type` e foto `image/jpg` — e a extração do `QRCode`).
+- **QR do visitante lido do controlador — validado contra hardware real** (seção 5): com a URL e a
+  senha do painel web configuradas, o QR baixado abre a porta (confirmação do cliente). A
+  integração HTTP em si (login → `content.token` → `GetDetail` vazio → provisiona via multipart
+  `People/New` → relê `QRCode` → decodifica `user_id=…_time=…`) também foi exercitada de ponta a
+  ponta contra um **servidor FC-8190H simulado**, confirmando que o multipart byte-exato é aceito.
 - API rodando contra PostgreSQL real: login JWT, CRUD de controladores (com comandos de
   porta), usuários (com grupo organizacional, cartão Mifare opcional e foto), grupos de
   usuários e visitantes, geração de QR (PNG real, byte-mode), feriados e grade horária
@@ -350,12 +438,20 @@ dotnet test HospitalAccess.Tests/HospitalAccess.Tests.csproj
 - **Troca de senha do StaffUser** e cadastro de novos operadores/recepcionistas: só via
   banco por enquanto; não há endpoint/tela dedicada.
 - **Integração HIS/AD**: fora de escopo por pedido explícito — não implementada.
-- **Modelo de validação do QR pelo hardware** (item 5 acima): o formato do QR em si já foi
-  confirmado contra um QR real e funcional, mas ainda não sabemos se o controlador valida
-  offline (confiando cegamente no texto do QR — inseguro, qualquer um forja um `user_id`) ou
-  online (consultando um servidor). Também não confirmamos se `time` é só o instante de
-  geração ou alguma janela de validade/replay. Só dá para esclarecer com o fabricante ou
-  testando contra hardware real.
+- **Modelo de validação do QR pelo hardware** (item 5): **resolvido na prática** — o QR é
+  cunhado e validado pelo próprio controlador (nós só lemos/provisionamos via HTTP) e abre a porta
+  em hardware real. Como o `time` (microssegundos) é definido pelo aparelho, um `user_id` não é
+  forjável sem esse valor exato. Fica em aberto apenas o detalhe de qual janela de validade/replay
+  o firmware aplica ao `time` — irrelevante para o fluxo atual, já que a validade operacional é
+  controlada pelo nosso `ValidUntil` (enviado como `ExpirationDate`).
+- **Dependência da API HTTP do painel** para o QR: só funciona em controladores com
+  `ApiBaseUrl` + senha do painel configuradas. Sem isso, o download do QR responde 422 e a
+  recepção cai no fallback manual (`qrcode/render`). O phone-home (`/note/insertNoteFace`) exige
+  configurar o controlador em modo "phone home" apontando para a URL da API — ainda não validado
+  contra hardware físico.
+- **Melhorias de produto** mapeadas contra o ZKBio CVAccess 4.0 em
+  [`docs/comparativo-zkbio-melhorias.md`](docs/comparativo-zkbio-melhorias.md) — próxima onda
+  sugerida: Áreas/zonas → Níveis de Acesso reutilizáveis → relatórios de auditoria de permissão.
 - **Descoberta por broadcast UDP** (item 9): implementada mas não validada contra hardware
   real — é um padrão de comando (multi-resposta) diferente do restante do gateway.
 - **Ajustes locais "não perturbe", clima e indicador de limpeza**: sem classe correspondente
