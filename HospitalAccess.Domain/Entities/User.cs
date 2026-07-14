@@ -16,6 +16,18 @@ public class User
     public string Name { get; set; } = string.Empty;
     public UserType Type { get; set; } = UserType.Permanent;
 
+    // --- Dados de cadastro (perfil) — todos opcionais. ---
+    /// <summary>Documento de identificação (CPF ou RG).</summary>
+    public string? Document { get; set; }
+    /// <summary>Matrícula/registro do funcionário.</summary>
+    public string? EmployeeId { get; set; }
+    /// <summary>Cargo/função (ex.: Enfermeiro, Técnico, Médico).</summary>
+    public string? JobTitle { get; set; }
+    public string? Phone { get; set; }
+    public string? Email { get; set; }
+    /// <summary>Anotações livres sobre o usuário.</summary>
+    public string? Notes { get; set; }
+
     /// <summary>Grupo organizacional (ex.: "Enfermagem"), só para organização — não é o TimeGroup do dispositivo.</summary>
     public Guid? GroupId { get; set; }
     public UserGroup? Group { get; set; }

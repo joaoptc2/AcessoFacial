@@ -18,9 +18,26 @@ interface FormModel {
   timeGroup: number;
   groupId: string;
   cardNumber: string;
+  document: string;
+  employeeId: string;
+  jobTitle: string;
+  phone: string;
+  email: string;
+  notes: string;
 }
 
-const emptyForm: FormModel = { name: "", timeGroup: 1, groupId: "", cardNumber: "" };
+const emptyForm: FormModel = {
+  name: "",
+  timeGroup: 1,
+  groupId: "",
+  cardNumber: "",
+  document: "",
+  employeeId: "",
+  jobTitle: "",
+  phone: "",
+  email: "",
+  notes: "",
+};
 
 /**
  * Formulário de usuário reutilizado pelo cadastro (painel recolhível) e pela edição inline (na
@@ -31,6 +48,7 @@ export function UserForm({ mode, userId, groups, controllers, onSaved, onCancel 
   const [form, setForm] = useState<FormModel>(emptyForm);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [photo, setPhoto] = useState<File | null>(null);
+  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(mode === "edit");
@@ -47,6 +65,12 @@ export function UserForm({ mode, userId, groups, controllers, onSaved, onCancel 
           timeGroup: detail.timeGroup,
           groupId: detail.groupId ?? "",
           cardNumber: detail.cardNumber?.toString() ?? "",
+          document: detail.document ?? "",
+          employeeId: detail.employeeId ?? "",
+          jobTitle: detail.jobTitle ?? "",
+          phone: detail.phone ?? "",
+          email: detail.email ?? "",
+          notes: detail.notes ?? "",
         });
         setSelected(new Set(detail.controllerIds));
       } catch (err) {
@@ -59,6 +83,36 @@ export function UserForm({ mode, userId, groups, controllers, onSaved, onCancel 
       active = false;
     };
   }, [mode, userId]);
+
+  // Pré-visualização da foto: o novo arquivo escolhido ou, em edição sem novo arquivo, a foto atual.
+  useEffect(() => {
+    let active = true;
+    let url: string | null = null;
+    if (photo) {
+      url = URL.createObjectURL(photo);
+      setPhotoPreview(url);
+      return () => {
+        if (url) URL.revokeObjectURL(url);
+      };
+    }
+    setPhotoPreview(null);
+    if (mode === "edit" && userId) {
+      (async () => {
+        try {
+          const blob = await api.getUserPhoto(userId);
+          if (!active) return;
+          url = URL.createObjectURL(blob);
+          setPhotoPreview(url);
+        } catch {
+          /* sem foto cadastrada: sem preview */
+        }
+      })();
+    }
+    return () => {
+      active = false;
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [photo, mode, userId]);
 
   // Portas herdadas do grupo escolhido: travadas na lista (não podem ser removidas individualmente).
   const lockedIds = useMemo(() => {
@@ -106,6 +160,16 @@ export function UserForm({ mode, userId, groups, controllers, onSaved, onCancel 
     formData.append("TimeGroup", String(form.timeGroup));
     if (form.groupId) formData.append("GroupId", form.groupId);
     if (cardNumber !== null) formData.append("CardNumber", String(cardNumber));
+    // Campos de perfil (só envia os preenchidos; ausente = limpo no servidor).
+    const profile: Array<[string, string]> = [
+      ["Document", form.document],
+      ["EmployeeId", form.employeeId],
+      ["JobTitle", form.jobTitle],
+      ["Phone", form.phone],
+      ["Email", form.email],
+      ["Notes", form.notes],
+    ];
+    for (const [key, value] of profile) if (value.trim()) formData.append(key, value.trim());
     // Garante que as portas do grupo (travadas) sempre vão junto, mesmo para cadastros antigos
     // que ainda não as tinham como permissão.
     for (const id of new Set([...selected, ...lockedIds])) formData.append("ControllerIds", id);
@@ -163,6 +227,39 @@ export function UserForm({ mode, userId, groups, controllers, onSaved, onCancel 
         </div>
       </div>
 
+      <div className="form-grid" style={{ marginTop: "0.75rem" }}>
+        <div className="form-field">
+          <label>Documento (CPF/RG)</label>
+          <input value={form.document} onChange={(e) => setForm({ ...form, document: e.target.value })} />
+        </div>
+        <div className="form-field">
+          <label>Matrícula</label>
+          <input value={form.employeeId} onChange={(e) => setForm({ ...form, employeeId: e.target.value })} />
+        </div>
+        <div className="form-field">
+          <label>Cargo / função</label>
+          <input value={form.jobTitle} onChange={(e) => setForm({ ...form, jobTitle: e.target.value })} placeholder="Ex.: Enfermeiro" />
+        </div>
+        <div className="form-field">
+          <label>Telefone</label>
+          <input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
+        </div>
+        <div className="form-field" style={{ flex: "2 1 220px" }}>
+          <label>E-mail</label>
+          <input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+        </div>
+      </div>
+
+      <div className="form-field" style={{ marginTop: "0.75rem" }}>
+        <label>Observações</label>
+        <textarea
+          rows={2}
+          value={form.notes}
+          onChange={(e) => setForm({ ...form, notes: e.target.value })}
+          placeholder="Anotações internas (opcional)"
+        />
+      </div>
+
       <div className="form-field" style={{ marginTop: "0.75rem" }}>
         <label>Portas com acesso permitido</label>
         {form.groupId && (
@@ -176,7 +273,10 @@ export function UserForm({ mode, userId, groups, controllers, onSaved, onCancel 
 
       <div className="form-field" style={{ marginTop: "0.75rem" }}>
         <label>Foto de face (JPG){mode === "edit" ? " — em branco mantém a atual" : ""}</label>
-        <input type="file" accept="image/jpeg" onChange={(e) => setPhoto(e.target.files?.[0] ?? null)} />
+        <div className="photo-field">
+          {photoPreview && <img src={photoPreview} alt="Foto de face" className="photo-thumb" />}
+          <input type="file" accept="image/jpeg" onChange={(e) => setPhoto(e.target.files?.[0] ?? null)} />
+        </div>
       </div>
 
       {error && <div className="alert alert-danger">{error}</div>}

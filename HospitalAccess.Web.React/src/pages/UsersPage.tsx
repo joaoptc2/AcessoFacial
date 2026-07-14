@@ -1,4 +1,5 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { api, ApiError, type ControllerDto, type UserAuditLogEntry, type UserGroupDto, type UserListItemDto } from "../lib/api";
 import { UserForm } from "../components/UserForm";
 import { useAuth } from "../lib/AuthContext";
@@ -18,15 +19,19 @@ export function UsersPage() {
   const [historyUserId, setHistoryUserId] = useState<string | null>(null);
   const [historyEntries, setHistoryEntries] = useState<UserAuditLogEntry[]>([]);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setUsers(await api.getUsers());
-    setGroups(await api.getUserGroups());
-    setControllers(await api.getControllers());
-  };
+    // Grupos/controladores só para o formulário (endpoints restritos a Admin/Operator); Recepção
+    // (só leitura) não os carrega, evitando 403.
+    if (canEdit) {
+      setGroups(await api.getUserGroups());
+      setControllers(await api.getControllers());
+    }
+  }, [canEdit]);
 
   useEffect(() => {
     load();
-  }, []);
+  }, [load]);
 
   const filtered = useMemo(
     () =>
@@ -139,7 +144,11 @@ export function UsersPage() {
             {filtered.map((u) => (
               <Fragment key={u.id}>
                 <tr className={editingId === u.id ? "row-active" : undefined} style={u.revokedAtUtc ? { background: "var(--surface-alt)" } : undefined}>
-                  <td>{u.name}</td>
+                  <td>
+                    <Link to={`/users/${u.id}`} className="link-strong">
+                      {u.name}
+                    </Link>
+                  </td>
                   <td>{u.userCode}</td>
                   <td>{u.groupName ?? "—"}</td>
                   <td>{u.cardNumber ?? "—"}</td>
@@ -177,6 +186,9 @@ export function UsersPage() {
                           </button>
                         </>
                       )}
+                      <Link className="btn btn-outline btn-sm" to={`/users/${u.id}`}>
+                        Perfil
+                      </Link>
                       <button className="btn btn-outline btn-sm" onClick={() => toggleHistory(u.id)}>
                         Histórico
                       </button>

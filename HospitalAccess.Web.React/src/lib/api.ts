@@ -203,6 +203,7 @@ export interface UserListItemDto {
   groupId: string | null;
   groupName: string | null;
   cardNumber: number | null;
+  jobTitle: string | null;
   hasFacePhoto: boolean;
   createdByUsername: string | null;
   createdAtUtc: string;
@@ -210,15 +211,62 @@ export interface UserListItemDto {
   controllers: UserControllerRef[];
 }
 
-export interface UserDetailDto {
+/** Campos de perfil opcionais compartilhados por criação/edição. */
+export interface UserProfileFields {
+  document?: string | null;
+  employeeId?: string | null;
+  jobTitle?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  notes?: string | null;
+}
+
+export interface UserDetailControllerRef extends UserControllerRef {
+  grantedByGroup: boolean;
+}
+
+export interface UserDetailDto extends UserProfileFields {
   id: string;
   userCode: number;
   name: string;
   timeGroup: number;
   groupId: string | null;
+  groupName: string | null;
   cardNumber: number | null;
   hasFacePhoto: boolean;
+  createdByUsername: string | null;
+  createdAtUtc: string;
+  revokedByUsername: string | null;
+  revokedAtUtc: string | null;
   controllerIds: string[];
+  controllers: UserDetailControllerRef[];
+}
+
+export interface UserAccessDoorSummary {
+  controllerId: string;
+  controllerName: string;
+  total: number;
+  granted: number;
+  lastUtc: string;
+}
+
+export interface UserAccessEvent {
+  timestampUtc: string;
+  controllerName: string;
+  method: string;
+  direction: number | null;
+  granted: boolean;
+}
+
+export interface UserAccessReport {
+  userCode: number;
+  total: number;
+  granted: number;
+  denied: number;
+  distinctDoors: number;
+  lastAccessUtc: string | null;
+  doors: UserAccessDoorSummary[];
+  items: UserAccessEvent[];
 }
 
 export interface UserAuditLogEntry {
@@ -537,6 +585,9 @@ export const api = {
   revokeUser: (id: string) => request<void>(`/users/${id}/revoke`, { method: "POST" }),
   reactivateUser: (id: string) => request<void>(`/users/${id}/reactivate`, { method: "POST" }),
   getUserAuditLog: (id: string) => request<UserAuditLogEntry[]>(`/users/${id}/audit-log`),
+  getUserPhoto: (id: string, bust?: number) => requestBlob(`/users/${id}/photo${bust ? `?v=${bust}` : ""}`),
+  getUserAccessLog: (id: string, params: { from?: string; to?: string; take?: number } = {}) =>
+    request<UserAccessReport>(`/users/${id}/access-log${buildQuery(params)}`),
 
   // ---- Visitantes ----
   getVisitors: () => request<VisitorListItemDto[]>("/visitors"),
