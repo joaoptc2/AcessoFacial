@@ -39,12 +39,20 @@ if (string.IsNullOrWhiteSpace(dpKeysPath)) dpKeysPath = "/var/lib/hospitalaccess
 try
 {
     Directory.CreateDirectory(dpKeysPath);
+    // Sonda de escrita: se o diretório NÃO for gravável pelo usuário do serviço, a criptografia de
+    // segredos (Protect) só falharia na hora de SALVAR uma senha — virando um 500 opaco. Detectar
+    // aqui, no boot, transforma isso numa mensagem clara no log.
+    var probe = Path.Combine(dpKeysPath, ".write-probe");
+    File.WriteAllText(probe, "ok");
+    File.Delete(probe);
 }
 catch (Exception ex)
 {
     Console.Error.WriteLine(
-        $"[DataProtection] Não foi possível criar/acessar o diretório de chaves '{dpKeysPath}': {ex.Message}. " +
-        "As senhas criptografadas podem não sobreviver a reinícios — ajuste DataProtection:KeysPath ou as permissões.");
+        $"[DataProtection] ATENÇÃO: o diretório de chaves '{dpKeysPath}' não é gravável ({ex.GetType().Name}: {ex.Message}).\n" +
+        "  Consequência: SALVAR a senha de um controlador falha com erro 500 (não dá para criptografar) e o chaveiro não persiste.\n" +
+        "  Correção: aponte DataProtection__KeysPath para um diretório gravável e persistente, OU dê posse do diretório ao usuário do serviço.\n" +
+        $"  Ex.: sudo install -d -o <usuario-do-servico> -g <grupo> {dpKeysPath}");
 }
 builder.Services.AddDataProtection()
     .SetApplicationName("HospitalAccess")

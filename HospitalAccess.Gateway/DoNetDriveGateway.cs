@@ -55,6 +55,14 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
     /// <summary>Controladores com monitoramento ativo, indexados por SN — usado para responder ao teste de conexão (0xA0).</summary>
     private readonly ConcurrentDictionary<string, Controller> _monitored = new();
 
+    /// <summary>
+    /// Um lock por controlador (Id): serializa TODOS os comandos ao MESMO aparelho (sync, health,
+    /// porta, leitura...). Sem isto, dois comandos concorrentes no mesmo controlador estouravam com
+    /// CommandStatus_Timeout (ex.: um AddPersonAndImage de face colidindo com o heartbeat do
+    /// health-check). Comandos a controladores DIFERENTES continuam em paralelo.
+    /// </summary>
+    private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _controllerGates = new();
+
     public DoNetDriveGateway(ControllerConnectionFactory connections, TimeZoneInfo deviceTimeZone)
     {
         _connections = connections;
@@ -86,24 +94,36 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
 
     private async Task RunAsync(INCommand cmd, string operation, Controller controller)
     {
+        // Serializa por controlador: nunca dois comandos ao mesmo aparelho ao mesmo tempo. O lock é
+        // mantido só durante o comando (que tem timeout próprio = cmdDtl.Timeout), então não trava
+        // indefinidamente. Controladores diferentes rodam em paralelo (locks distintos).
+        var gate = _controllerGates.GetOrAdd(controller.Id, static _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync();
         try
         {
-            await _allocator.AddCommandAsync(cmd);
-        }
-        catch (Exception ex)
-        {
-            throw new DeviceCommandException(
-                $"{operation} falhou no controlador '{controller.Name}' ({controller.IpAddress}:{controller.Port}): {ex.Message}", ex);
-        }
+            try
+            {
+                await _allocator.AddCommandAsync(cmd);
+            }
+            catch (Exception ex)
+            {
+                throw new DeviceCommandException(
+                    $"{operation} falhou no controlador '{controller.Name}' ({controller.IpAddress}:{controller.Port}): {ex.Message}", ex);
+            }
 
-        var status = cmd.GetStatus();
-        if (status is null || status.IsFaulted || status.IsCanceled)
+            var status = cmd.GetStatus();
+            if (status is null || status.IsFaulted || status.IsCanceled)
+            {
+                var reason = status?.IsCanceled == true ? "cancelado/timeout"
+                    : status?.IsFaulted == true ? "falha reportada pelo controlador"
+                    : "comando não confirmado";
+                throw new DeviceCommandException(
+                    $"{operation} não confirmado pelo controlador '{controller.Name}' ({controller.IpAddress}:{controller.Port}): {reason}.");
+            }
+        }
+        finally
         {
-            var reason = status?.IsCanceled == true ? "cancelado/timeout"
-                : status?.IsFaulted == true ? "falha reportada pelo controlador"
-                : "comando não confirmado";
-            throw new DeviceCommandException(
-                $"{operation} não confirmado pelo controlador '{controller.Name}' ({controller.IpAddress}:{controller.Port}): {reason}.");
+            gate.Release();
         }
     }
 

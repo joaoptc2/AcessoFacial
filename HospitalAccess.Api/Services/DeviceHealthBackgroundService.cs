@@ -48,6 +48,12 @@ public sealed class DeviceHealthBackgroundService : BackgroundService
         } while (await timer.WaitForNextTickAsync(stoppingToken));
     }
 
+    // Verifica os controladores EM PARALELO: antes era em série, então um controlador lento (ex.: com
+    // ping ruim, ~30s de timeout) atrasava a verificação de todos os seguintes — o LastSeenUtc dos
+    // saudáveis envelhecia além do limiar de 3 min e eles apareciam "offline" mesmo online. A
+    // serialização real é por-controlador (lock no gateway); aqui cada aparelho é checado no seu tempo.
+    private const int MaxParallelChecks = 12;
+
     private async Task CheckAllAsync(CancellationToken ct)
     {
         List<Domain.Entities.Controller> controllers;
@@ -57,14 +63,28 @@ public sealed class DeviceHealthBackgroundService : BackgroundService
             controllers = await db.Controllers.AsNoTracking().ToListAsync(ct);
         }
 
-        foreach (var controller in controllers)
+        using var gate = new SemaphoreSlim(MaxParallelChecks);
+        var tasks = controllers.Select(async controller =>
         {
-            if (ct.IsCancellationRequested) break;
+            await gate.WaitAsync(ct);
+            try { await CheckOneAsync(controller, ct); }
+            finally { gate.Release(); }
+        });
+        await Task.WhenAll(tasks);
+    }
 
+    private async Task CheckOneAsync(Domain.Entities.Controller controller, CancellationToken ct)
+    {
+        try
+        {
             string? error = null;
             try
             {
                 await _gateway.ReadSerialNumberAsync(controller, ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                return;
             }
             catch (Exception ex)
             {
@@ -88,6 +108,11 @@ public sealed class DeviceHealthBackgroundService : BackgroundService
                 await db.Controllers.Where(c => c.Id == id)
                     .ExecuteUpdateAsync(s => s.SetProperty(c => c.LastReachError, error), ct);
             }
+        }
+        catch (Exception ex)
+        {
+            // Uma falha (ex.: no banco) num controlador não deve abortar a verificação dos demais.
+            _logger.LogError(ex, "Falha ao verificar o controlador {ControllerId}.", controller.Id);
         }
     }
 }
