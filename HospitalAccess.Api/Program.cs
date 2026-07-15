@@ -10,6 +10,7 @@ using HospitalAccess.Gateway.Connections;
 using HospitalAccess.Infrastructure.Devices;
 using HospitalAccess.Infrastructure.Persistence;
 using HospitalAccess.Infrastructure.Qr;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.RateLimiting;
@@ -27,10 +28,27 @@ builder.Services.AddControllers()
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-// Proteção de dados: usada para criptografar em repouso a senha de comunicação dos
-// controladores (ver AccessDbContext). As chaves são persistidas no diretório de dados do
-// app; em produção com múltiplas instâncias, aponte para um store compartilhado (ver docs).
-builder.Services.AddDataProtection();
+// Proteção de dados: criptografa em repouso as senhas dos controladores (CommunicationPassword,
+// ApiPassword — ver AccessDbContext). O CHAVEIRO PRECISA SER PERSISTIDO num diretório FIXO: sem
+// isso (o default guarda em local volátil/efêmero), um restart ou redeploy gera chaves novas e as
+// senhas já cifradas ficam INDECIFRÁVEIS — o SDK então rejeita a senha com "Password Is Error".
+// SetApplicationName fixo mantém o mesmo escopo de proteção entre reinícios/instâncias.
+// O diretório precisa ser gravável pelo usuário do serviço e entrar no backup.
+var dpKeysPath = builder.Configuration["DataProtection:KeysPath"];
+if (string.IsNullOrWhiteSpace(dpKeysPath)) dpKeysPath = "/var/lib/hospitalaccess/dpkeys";
+try
+{
+    Directory.CreateDirectory(dpKeysPath);
+}
+catch (Exception ex)
+{
+    Console.Error.WriteLine(
+        $"[DataProtection] Não foi possível criar/acessar o diretório de chaves '{dpKeysPath}': {ex.Message}. " +
+        "As senhas criptografadas podem não sobreviver a reinícios — ajuste DataProtection:KeysPath ou as permissões.");
+}
+builder.Services.AddDataProtection()
+    .SetApplicationName("HospitalAccess")
+    .PersistKeysToFileSystem(new DirectoryInfo(dpKeysPath));
 
 // Banco (PostgreSQL). Connection string via config/secrets, nunca no código.
 // Fail-fast: sem a connection string o app subiria e só quebraria no primeiro acesso ao
