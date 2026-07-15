@@ -84,7 +84,13 @@ builder.Services.AddScoped<IUserSyncService, UserSyncService>();
 builder.Services.AddScoped<IVisitorExpirationJob, VisitorExpirationJob>();
 builder.Services.AddHostedService<VisitorExpirationBackgroundService>();
 
-// Reprocessa sincronizações pendentes/falhas (a "fila de retry" que antes nunca era executada).
+// Fila de sincronização: processa os cadastros/edições UM DE CADA VEZ ("por partes"), evitando o
+// CommandStatus_Timeout que ocorria com vários AddPersonAndImage concorrentes no mesmo controlador.
+builder.Services.AddSingleton<UserSyncQueue>();
+builder.Services.AddSingleton<IUserSyncQueue>(sp => sp.GetRequiredService<UserSyncQueue>());
+builder.Services.AddHostedService<UserSyncQueueWorker>();
+
+// Reprocessa sincronizações pendentes/falhas: reenfileira na fila serial (não processa em paralelo).
 builder.Services.AddHostedService<SyncRetryBackgroundService>();
 
 // Ativa e mantém o monitoramento em tempo real (BeginWatch) em todos os controladores — sem isto

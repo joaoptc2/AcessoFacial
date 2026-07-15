@@ -38,6 +38,7 @@ export function UserProfilePage() {
   const [controllers, setControllers] = useState<ControllerDto[]>([]);
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [range, setRange] = useState<{ from: string; to: string }>({ from: "", to: "" });
 
@@ -116,6 +117,17 @@ export function UserProfilePage() {
     }
   }
 
+  async function handleResync() {
+    setError(null);
+    setNotice(null);
+    try {
+      await api.resyncUser(id);
+      setNotice("Sincronização reenfileirada (roda em segundo plano).");
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Falha ao reenfileirar sincronização.");
+    }
+  }
+
   async function handleDelete() {
     setError(null);
     try {
@@ -153,6 +165,9 @@ export function UserProfilePage() {
             <button className="btn btn-primary" onClick={() => setEditing(true)}>
               Editar
             </button>
+            <button className="btn btn-outline" onClick={handleResync}>
+              Sincronizar
+            </button>
             {user.revokedAtUtc === null ? (
               <button className="btn btn-outline" onClick={() => act(() => api.revokeUser(id), "Falha ao revogar.")}>
                 Revogar
@@ -170,6 +185,7 @@ export function UserProfilePage() {
       </div>
 
       {error && <div className="alert alert-danger">{error}</div>}
+      {notice && <div className="alert alert-success">{notice}</div>}
 
       {editing && canEdit && (
         <div className="card" style={{ marginBottom: "1.25rem" }}>

@@ -29,13 +29,15 @@ public class UsersController : ControllerBase
 {
     private readonly AccessDbContext _db;
     private readonly GroupAccessService _groupAccess;
+    private readonly IUserSyncQueue _syncQueue;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<UsersController> _logger;
 
-    public UsersController(AccessDbContext db, GroupAccessService groupAccess, IServiceScopeFactory scopeFactory, ILogger<UsersController> logger)
+    public UsersController(AccessDbContext db, GroupAccessService groupAccess, IUserSyncQueue syncQueue, IServiceScopeFactory scopeFactory, ILogger<UsersController> logger)
     {
         _db = db;
         _groupAccess = groupAccess;
+        _syncQueue = syncQueue;
         _scopeFactory = scopeFactory;
         _logger = logger;
     }
@@ -320,6 +322,31 @@ public class UsersController : ControllerBase
         return NoContent();
     }
 
+    /// <summary>Reenfileira para sincronização TODOS os usuários com status de erro ou pendente (botão "Sincronizar com erro").</summary>
+    [HttpPost("sync-failed")]
+    [Authorize(Roles = "Admin,Operator")]
+    public async Task<IActionResult> SyncFailed(CancellationToken ct)
+    {
+        var userIds = await _db.SyncStatuses
+            .Where(s => s.State == SyncState.Pending || s.State == SyncState.Failed)
+            .Select(s => s.UserId)
+            .Distinct()
+            .ToListAsync(ct);
+
+        var enqueued = _syncQueue.EnqueueMany(userIds);
+        return Ok(new { enqueued });
+    }
+
+    /// <summary>Reenfileira um usuário específico para sincronização com seus controladores.</summary>
+    [HttpPost("{id:guid}/resync")]
+    [Authorize(Roles = "Admin,Operator")]
+    public async Task<IActionResult> Resync(Guid id, CancellationToken ct)
+    {
+        if (!await _db.Users.AnyAsync(u => u.Id == id && u.Type == UserType.Permanent, ct)) return NotFound();
+        _syncQueue.EnqueueSync(id);
+        return Accepted(new { message = "Sincronização reenfileirada." });
+    }
+
     /// <summary>
     /// Resolve um conflito de face duplicada em um controlador SUBSTITUINDO: exclui o usuário
     /// existente que colidiu e reenvia este usuário. Roda em segundo plano.
@@ -455,73 +482,17 @@ public class UsersController : ControllerBase
         _ => DateTime.SpecifyKind(value!.Value, DateTimeKind.Utc),
     };
 
-    /// <summary>
-    /// Roda a sincronização com os controladores fora do ciclo de requisição: os comandos ao
-    /// hardware são TCP com retries e podem levar minutos se um controlador estiver inacessível —
-    /// não devem bloquear a resposta HTTP. Progresso fica em DeviceSyncStatus (Pending/Synced/Failed),
-    /// reprocessado por IUserSyncService.RetryPendingAsync.
-    /// </summary>
-    private void SyncInBackground(Guid userId)
-    {
-        _ = Task.Run(async () =>
-        {
-            using var scope = _scopeFactory.CreateScope();
-            var sync = scope.ServiceProvider.GetRequiredService<IUserSyncService>();
-            try
-            {
-                await sync.SyncUserAsync(userId);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Falha ao sincronizar usuário {UserId} em segundo plano.", userId);
-            }
-        });
-    }
+    // Sincronização fora do ciclo da requisição: os comandos ao hardware são TCP com retries e podem
+    // levar minutos — não devem bloquear a resposta HTTP. Vão para a FILA SERIAL (UserSyncQueue), que
+    // processa um usuário de cada vez, evitando o CommandStatus_Timeout de vários AddPersonAndImage
+    // concorrentes no mesmo controlador. Progresso fica em DeviceSyncStatus (Pending/Synced/Failed).
+    private void SyncInBackground(Guid userId) => _syncQueue.EnqueueSync(userId);
 
-    /// <summary>Revoga (sem excluir) um usuário ainda cadastrado no banco, via IUserSyncService — mesmo caminho usado para visitantes.</summary>
-    private void RevokeInBackground(Guid userId)
-    {
-        _ = Task.Run(async () =>
-        {
-            using var scope = _scopeFactory.CreateScope();
-            var sync = scope.ServiceProvider.GetRequiredService<IUserSyncService>();
-            try
-            {
-                await sync.RevokeUserAsync(userId);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Falha ao revogar usuário {UserId} em segundo plano.", userId);
-            }
-        });
-    }
+    private void RevokeInBackground(Guid userId) => _syncQueue.EnqueueRevoke(userId);
 
-    /// <summary>Revoga um usuário já excluído do banco diretamente nos controladores informados (sem depender de linhas de Users/DeviceSyncStatus, que já foram removidas).</summary>
-    private void RevokeDeletedUserInBackground(uint userCode, List<Guid> controllerIds)
-    {
-        if (controllerIds.Count == 0) return;
-
-        _ = Task.Run(async () =>
-        {
-            using var scope = _scopeFactory.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<AccessDbContext>();
-            var gateway = scope.ServiceProvider.GetRequiredService<IDeviceGateway>();
-
-            foreach (var controllerId in controllerIds)
-            {
-                try
-                {
-                    var controller = await db.Controllers.FirstOrDefaultAsync(c => c.Id == controllerId);
-                    if (controller is null) continue;
-                    await gateway.DeletePersonAsync(controller, userCode);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Falha ao revogar usuário {UserCode} no controlador {ControllerId}.", userCode, controllerId);
-                }
-            }
-        });
-    }
+    /// <summary>Revoga (na fila) um usuário já excluído do banco, por código + controladores capturados antes do delete.</summary>
+    private void RevokeDeletedUserInBackground(uint userCode, List<Guid> controllerIds) =>
+        _syncQueue.EnqueueRevokeDeleted(userCode, controllerIds);
 
     private string? CurrentUsername() => User.Identity?.Name;
 
