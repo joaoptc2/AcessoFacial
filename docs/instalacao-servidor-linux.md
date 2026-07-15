@@ -105,10 +105,16 @@ Seed__AdminPassword=<senha forte só para o primeiro login>
 ```
 
 > `Jwt__Key` deve ter **pelo menos 32 bytes** — a API recusa subir com uma chave menor.
-> A senha de comunicação de cada controlador é criptografada em repouso via DataProtection;
-> em servidor único, as chaves ficam no perfil do usuário do serviço (persistem entre
-> reinícios). Em cluster/múltiplas instâncias, aponte o DataProtection para um store
-> compartilhado.
+>
+> ⚠️ **DataProtection (crítico):** as senhas dos controladores (comunicação e painel web) são
+> criptografadas em repouso via DataProtection. O **chaveiro precisa ser persistido num diretório
+> fixo** — o padrão é `/var/lib/hospitalaccess/dpkeys` (configurável por `DataProtection__KeysPath`).
+> Como o usuário do serviço é `--no-create-home`, **não** dá para confiar no `$HOME`: sem o
+> diretório persistido, todo reinício/atualização gera chaves novas e as senhas já cifradas ficam
+> **indecifráveis** (o SDK passa a rejeitar com "Password Is Error" e é preciso reentrar as senhas).
+> A unidade systemd abaixo cria e mantém esse diretório via `StateDirectory=hospitalaccess`.
+> **Inclua `/var/lib/hospitalaccess` no backup.** Em cluster/múltiplas instâncias, aponte o
+> `DataProtection__KeysPath` para um store compartilhado.
 
 A API escuta só em `127.0.0.1:5080` (loopback) e serve tanto os endpoints quanto o SPA
 React — o Nginx é o único ponto exposto à rede do hospital (seção 8).
@@ -148,6 +154,9 @@ RestartSec=5
 EnvironmentFile=/etc/hospitalaccess/api.env
 User=hospitalaccess
 Group=hospitalaccess
+# Cria/mantém /var/lib/hospitalaccess (dono = usuário do serviço) para o chaveiro da DataProtection
+# persistir entre reinícios/atualizações. Sem isto, as senhas cifradas dos controladores quebram.
+StateDirectory=hospitalaccess
 SyslogIdentifier=hospitalaccess-api
 
 [Install]
