@@ -21,15 +21,13 @@ public class UserGroupsController : ControllerBase
 {
     private readonly AccessDbContext _db;
     private readonly GroupAccessService _groupAccess;
-    private readonly IServiceScopeFactory _scopeFactory;
-    private readonly ILogger<UserGroupsController> _logger;
+    private readonly IUserSyncQueue _syncQueue;
 
-    public UserGroupsController(AccessDbContext db, GroupAccessService groupAccess, IServiceScopeFactory scopeFactory, ILogger<UserGroupsController> logger)
+    public UserGroupsController(AccessDbContext db, GroupAccessService groupAccess, IUserSyncQueue syncQueue)
     {
         _db = db;
         _groupAccess = groupAccess;
-        _scopeFactory = scopeFactory;
-        _logger = logger;
+        _syncQueue = syncQueue;
     }
 
     [HttpGet]
@@ -138,23 +136,8 @@ public class UserGroupsController : ControllerBase
     }
 
     /// <summary>
-    /// Sincroniza vários usuários com o hardware fora do ciclo da requisição (mesmo padrão
-    /// fire-and-forget do UsersController): comandos TCP com retry podem levar minutos e não devem
-    /// bloquear a resposta. Progresso fica em DeviceSyncStatus, reprocessado por RetryPendingAsync.
+    /// Enfileira a sincronização dos usuários afetados na fila serial (UserSyncQueue): os comandos ao
+    /// hardware não bloqueiam a resposta e são processados um de cada vez. Progresso em DeviceSyncStatus.
     /// </summary>
-    private void SyncUsersInBackground(IReadOnlyCollection<Guid> userIds)
-    {
-        if (userIds.Count == 0) return;
-
-        _ = Task.Run(async () =>
-        {
-            using var scope = _scopeFactory.CreateScope();
-            var sync = scope.ServiceProvider.GetRequiredService<IUserSyncService>();
-            foreach (var userId in userIds)
-            {
-                try { await sync.SyncUserAsync(userId); }
-                catch (Exception ex) { _logger.LogError(ex, "Falha ao sincronizar usuário {UserId} após mudança de grupo.", userId); }
-            }
-        });
-    }
+    private void SyncUsersInBackground(IReadOnlyCollection<Guid> userIds) => _syncQueue.EnqueueMany(userIds);
 }

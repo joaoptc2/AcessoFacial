@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { api, ApiError, type ControllerDto, type UserGroupDto } from "../lib/api";
 import { ControllerChecklist } from "../components/ControllerChecklist";
+import { Modal } from "../components/Modal";
 
 interface FormModel {
   name: string;
@@ -17,6 +18,8 @@ export function UserGroupsPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [confirmDelete, setConfirmDelete] = useState<UserGroupDto | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const load = async () => {
     setGroups(await api.getUserGroups());
@@ -71,13 +74,18 @@ export function UserGroupsPage() {
     }
   }
 
-  async function handleDelete(id: string) {
+  async function confirmDeleteGroup() {
+    if (!confirmDelete) return;
     setError(null);
+    setDeleting(true);
     try {
-      await api.deleteUserGroup(id);
+      await api.deleteUserGroup(confirmDelete.id);
+      setConfirmDelete(null);
       await load();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Falha inesperada ao excluir.");
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -155,7 +163,7 @@ export function UserGroupsPage() {
                   <button className="btn btn-outline btn-sm" onClick={() => startEdit(g)}>
                     Editar
                   </button>
-                  <button className="btn btn-danger-outline btn-sm" onClick={() => handleDelete(g.id)}>
+                  <button className="btn btn-danger-outline btn-sm" onClick={() => setConfirmDelete(g)}>
                     Excluir
                   </button>
                 </div>
@@ -164,6 +172,28 @@ export function UserGroupsPage() {
           ))}
         </tbody>
       </table>
+
+      {confirmDelete && (
+        <Modal title="Excluir grupo" onClose={() => (deleting ? null : setConfirmDelete(null))}>
+          <p style={{ marginTop: 0 }}>
+            Excluir o grupo <strong>{confirmDelete.name}</strong>?
+          </p>
+          <div className="alert alert-danger" style={{ marginTop: 0 }}>
+            Esta ação é irreversível. Os <strong>{confirmDelete.userCount} usuário(s)</strong> do grupo perderão as{" "}
+            <strong>{confirmDelete.defaultControllerIds.length} porta(s)</strong> herdada(s) dele e serão{" "}
+            <strong>removidos desses controladores</strong> (a revogação no hardware roda em segundo plano). As portas
+            adicionadas manualmente a cada usuário permanecem.
+          </div>
+          <div className="btn-group" style={{ justifyContent: "flex-end" }}>
+            <button className="btn btn-outline" onClick={() => setConfirmDelete(null)} disabled={deleting}>
+              Cancelar
+            </button>
+            <button className="btn btn-danger" onClick={confirmDeleteGroup} disabled={deleting}>
+              {deleting ? "Excluindo..." : "Excluir grupo"}
+            </button>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }

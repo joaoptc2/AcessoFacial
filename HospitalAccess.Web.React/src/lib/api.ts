@@ -584,6 +584,8 @@ export const api = {
   deleteUser: (id: string) => request<void>(`/users/${id}`, { method: "DELETE" }),
   revokeUser: (id: string) => request<void>(`/users/${id}/revoke`, { method: "POST" }),
   reactivateUser: (id: string) => request<void>(`/users/${id}/reactivate`, { method: "POST" }),
+  syncFailedUsers: () => request<{ enqueued: number }>("/users/sync-failed", { method: "POST" }),
+  resyncUser: (id: string) => request<{ message: string }>(`/users/${id}/resync`, { method: "POST" }),
   getUserAuditLog: (id: string) => request<UserAuditLogEntry[]>(`/users/${id}/audit-log`),
   getUserPhoto: (id: string, bust?: number) => requestBlob(`/users/${id}/photo${bust ? `?v=${bust}` : ""}`),
   getUserAccessLog: (id: string, params: { from?: string; to?: string; take?: number } = {}) =>
