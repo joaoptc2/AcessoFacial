@@ -91,17 +91,38 @@ compatibilidade futura caso surja um modelo multi-relé). `AccessPermission` lig
 e `UnlockDoor` (reverter o trancamento) — ficam em `IDeviceGateway` e são expostos por
 controlador em `POST /api/controllers/{id}/{open|close|hold-open|lock|unlock}`.
 
-### 7. Sincronização de usuário roda em segundo plano (fire-and-forget)
-Criar/editar/excluir um usuário grava no banco e dispara a sincronização com os
-controladores (`IUserSyncService`) **sem aguardar o resultado na requisição HTTP**: o
-comando ao hardware é TCP com retries e pode levar minutos se um controlador estiver
-inacessível, o que travaria a tela por tempo indefinido se fosse síncrono (bug encontrado
-via teste end-to-end contra um IP inexistente). O progresso fica em `DeviceSyncStatus`
-(Pending/Synced/Failed) e é reprocessado por `IUserSyncService.RetryPendingAsync` (job
-periódico). Exclusão de usuário: como a linha do `User` (e o `DeviceSyncStatus` em
-cascata) é apagada na hora, o `UserCode` e a lista de controladores são capturados
-*antes* do delete, e a revogação no hardware roda depois, direto pelo `IDeviceGateway`
-(ver `UsersController.RevokeDeletedUserInBackground`).
+### 7. Sincronização em segundo plano: fila **paralela entre controladores, serial em cada um**
+Criar/editar/excluir um usuário grava no banco e **enfileira** a sincronização com os
+controladores **sem aguardar o resultado na requisição HTTP** (o comando ao hardware é TCP
+com retries e pode levar minutos se um controlador estiver inacessível — travaria a tela se
+fosse síncrono). O modelo de concorrência é a parte mais importante a entender antes de mexer
+no gateway/sync:
+
+- **Lock por controlador no gateway** (`DoNetDriveGateway.RunAsync`, um `SemaphoreSlim` por
+  `Controller.Id`): **nunca dois comandos no MESMO aparelho ao mesmo tempo**. Sem isso, comandos
+  concorrentes no mesmo controlador estouravam com `CommandStatus_Timeout` (ex.: um
+  `AddPersonAndImage` de face colidindo com o heartbeat do health-check). Aparelhos DIFERENTES
+  rodam em paralelo (locks distintos). Isso vale para TODO comando (sync, porta, health, leitura).
+- **Fila de sincronização** (`UserSyncQueue` + `UserSyncQueueWorker`, ~8 workers paralelos):
+  substituiu o antigo `Task.Run` fire-and-forget, que gerava N `AddPersonAndImage` concorrentes
+  num mesmo controlador durante um lote de cadastros. Agora vários usuários sincronizam em
+  paralelo **em controladores diferentes**; um controlador lento bloqueia só o próprio worker,
+  não os demais. Coordenação por usuário: no máximo 1 processamento por usuário ao mesmo tempo
+  (dedup), com flag de **rerun** para não perder uma edição feita durante o processamento nem
+  empilhar duplicatas do job de retry.
+- **Progresso e retry**: fica em `DeviceSyncStatus` (Pending/Synced/Failed). O
+  `SyncRetryBackgroundService` (a cada 2 min) **reenfileira** na fila os usuários pendentes/falhos.
+  Há ainda `POST /api/users/sync-failed` (botão "Sincronizar com erro") e `POST /api/users/{id}/resync`.
+- **Revogação ao editar/remover porta**: ao remover uma permissão, o `DeviceSyncStatus` daquela
+  porta permanece `Synced` de propósito — assim o `SyncUserAsync` o **revoga** no hardware (a
+  revogação só parte de um status `Synced`). Exclusão de usuário: a linha do `User` (e o
+  `DeviceSyncStatus` em cascata) é apagada na hora, então o `UserCode` + controladores são
+  capturados *antes* do delete e a revogação é **enfileirada** (`EnqueueRevokeDeleted`).
+- **Health-check em paralelo** (`DeviceHealthBackgroundService`): a verificação de "online"
+  também é paralela entre controladores. Era em série, então um aparelho lento (~30 s de timeout)
+  atrasava a checagem dos seguintes e o `LastSeenUtc` deles envelhecia além do limiar de 3 min —
+  fazendo controladores **saudáveis aparecerem "offline"** (test-connection passava, mas o painel
+  mostrava offline). Regra geral: **paralelizar entre controladores, serializar dentro de cada um.**
 
 ### 8. Segurança física (fora do software)
 A política **fail-safe vs fail-secure** das portas em queda de energia/rede (isto é: se a
@@ -131,7 +152,7 @@ não implementadas" mais abaixo — a maioria virou item desta lista):
   `Door.Door8800.TimeGroup` + `Door.Door8800.Data.TimeGroup.WeekTimeGroup/DayTimeGroup/TimeSegment`):
   definições globais mantidas no banco (`Holiday`, `TimeGroupSchedule`/`TimeGroupSegment`) e
   empurradas para **todos** os controladores sob demanda (`POST /api/holidays/sync-all`,
-  `POST /api/timegroups/sync-all` — em segundo plano, mesmo padrão fire-and-forget do item 7).
+  `POST /api/timegroups/sync-all` — em segundo plano, sem bloquear a resposta, como no item 7).
   A tela de grade horária simplifica para uma janela por dia (o dispositivo suporta até 8);
   o domínio (`TimeGroupSegment.SegmentIndex`) já comporta mais, se precisar no futuro.
   Antes disso, o campo `TimeGroup` do usuário era gravado no dispositivo mas **nada definia o
@@ -223,7 +244,7 @@ porta/quarto**.
 - **Trocar de quarto** (`PUT /api/visitors/{id}/room`): substitui a permissão pelo novo quarto,
   **remove o cadastro do controlador antigo via HTTP `People/Delete`** (o que **invalida o QR
   antigo**) e dispara a sincronização para o novo — o próximo download de QR já vem cunhado pelo
-  novo aparelho. Roda em segundo plano (mesmo padrão fire-and-forget da seção 7).
+  novo aparelho. Roda em segundo plano, sem bloquear a resposta (como no item 7).
 - **Revogar vs. excluir** — `DELETE /api/visitors/{id}` revoga (mantém histórico);
   `DELETE /api/visitors/{id}/permanent` apaga de vez. A expiração automática
   (`IVisitorExpirationJob`) continua revogando ao passar de `ValidUntil`.
@@ -312,6 +333,13 @@ Senhas por controlador — de comunicação (`Controller.CommunicationPassword`,
 web (`Controller.ApiPassword`, HTTP) — ficam no banco **criptografadas em repouso** via
 `ValueConverter` de ASP.NET DataProtection; nunca são devolvidas pelas APIs de leitura nem
 versionadas.
+
+> ⚠️ **O chaveiro da DataProtection PRECISA ser persistido** num diretório fixo, gravável pelo
+> usuário do serviço e **incluído no backup** — padrão `/var/lib/hospitalaccess/dpkeys`,
+> configurável por `DataProtection__KeysPath` (ver `Program.cs` e o doc de instalação). Sem isso,
+> um restart/redeploy gera chaves novas e as senhas já cifradas ficam **indecifráveis**: o SDK
+> passa a rejeitar com `Password Is Error` e é preciso reentrar as senhas. Se o diretório não for
+> gravável, **salvar uma senha falha com 500** — o boot loga um aviso `[DataProtection] ATENÇÃO...`.
 
 ### Banco de dados
 ```bash
