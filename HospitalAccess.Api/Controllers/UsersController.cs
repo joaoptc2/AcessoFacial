@@ -11,8 +11,10 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace HospitalAccess.Api.Controllers;
 
-public record CreateUserRequest(string Name, int TimeGroup, Guid? GroupId, Guid[]? ControllerIds = null, uint? CardNumber = null);
-public record UpdateUserRequest(string Name, int TimeGroup, Guid? GroupId, Guid[]? ControllerIds = null, uint? CardNumber = null);
+public record CreateUserRequest(string Name, int TimeGroup, Guid? GroupId, Guid[]? ControllerIds = null, uint? CardNumber = null,
+    string? Document = null, string? EmployeeId = null, string? JobTitle = null, string? Phone = null, string? Email = null, string? Notes = null);
+public record UpdateUserRequest(string Name, int TimeGroup, Guid? GroupId, Guid[]? ControllerIds = null, uint? CardNumber = null,
+    string? Document = null, string? EmployeeId = null, string? JobTitle = null, string? Phone = null, string? Email = null, string? Notes = null);
 
 /// <summary>
 /// Cadastro/gestão de usuários permanentes (acesso por face) e disparo de sincronização.
@@ -26,12 +28,14 @@ public record UpdateUserRequest(string Name, int TimeGroup, Guid? GroupId, Guid[
 public class UsersController : ControllerBase
 {
     private readonly AccessDbContext _db;
+    private readonly GroupAccessService _groupAccess;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<UsersController> _logger;
 
-    public UsersController(AccessDbContext db, IServiceScopeFactory scopeFactory, ILogger<UsersController> logger)
+    public UsersController(AccessDbContext db, GroupAccessService groupAccess, IServiceScopeFactory scopeFactory, ILogger<UsersController> logger)
     {
         _db = db;
+        _groupAccess = groupAccess;
         _scopeFactory = scopeFactory;
         _logger = logger;
     }
@@ -54,6 +58,7 @@ public class UsersController : ControllerBase
                 u.GroupId,
                 GroupName = u.Group != null ? u.Group.Name : null,
                 u.CardNumber,
+                u.JobTitle,
                 HasFacePhoto = u.FacePhoto != null,
                 u.CreatedByUsername,
                 u.CreatedAtUtc,
@@ -69,7 +74,8 @@ public class UsersController : ControllerBase
     public async Task<IActionResult> Get(Guid id, CancellationToken ct)
     {
         var user = await _db.Users
-            .Include(u => u.Permissions)
+            .Include(u => u.Group)
+            .Include(u => u.Permissions).ThenInclude(p => p.Controller)
             .FirstOrDefaultAsync(u => u.Id == id && u.Type == UserType.Permanent, ct);
         if (user is null) return NotFound();
 
@@ -80,9 +86,23 @@ public class UsersController : ControllerBase
             user.Name,
             user.TimeGroup,
             user.GroupId,
+            GroupName = user.Group?.Name,
             user.CardNumber,
+            user.Document,
+            user.EmployeeId,
+            user.JobTitle,
+            user.Phone,
+            user.Email,
+            user.Notes,
             HasFacePhoto = user.FacePhoto != null,
+            user.CreatedByUsername,
+            user.CreatedAtUtc,
+            user.RevokedByUsername,
+            user.RevokedAtUtc,
             ControllerIds = user.Permissions.Select(p => p.ControllerId),
+            Controllers = user.Permissions
+                .Select(p => new { p.ControllerId, ControllerName = p.Controller!.Name, GrantedByGroup = p.GrantedByGroupId != null })
+                .OrderBy(c => c.ControllerName),
         });
     }
 
@@ -113,6 +133,12 @@ public class UsersController : ControllerBase
             TimeGroup = request.TimeGroup,
             GroupId = request.GroupId,
             CardNumber = request.CardNumber,
+            Document = NullIfBlank(request.Document),
+            EmployeeId = NullIfBlank(request.EmployeeId),
+            JobTitle = NullIfBlank(request.JobTitle),
+            Phone = NullIfBlank(request.Phone),
+            Email = NullIfBlank(request.Email),
+            Notes = NullIfBlank(request.Notes),
             FacePhoto = ms.ToArray(),
             CreatedByUsername = CurrentUsername(),
         };
@@ -121,10 +147,11 @@ public class UsersController : ControllerBase
         {
             if (!await _db.Controllers.AnyAsync(c => c.Id == controllerId, ct))
                 return BadRequest($"Controlador {controllerId} não existe.");
-            user.Permissions.Add(new AccessPermission { ControllerId = controllerId, TimeGroup = request.TimeGroup });
         }
 
         _db.Users.Add(user);
+        // Portas efetivas = manuais pedidas ∪ portas herdadas do grupo (o serviço marca a origem).
+        await _groupAccess.ReconcileUserPermissionsAsync(user, request.ControllerIds ?? [], request.TimeGroup, ct);
         UserAuditLogger.Record(_db, user, "Criado", CurrentUsername());
         await _db.SaveChangesAsync(ct);
 
@@ -154,6 +181,12 @@ public class UsersController : ControllerBase
         user.TimeGroup = request.TimeGroup;
         user.GroupId = request.GroupId;
         user.CardNumber = request.CardNumber;
+        user.Document = NullIfBlank(request.Document);
+        user.EmployeeId = NullIfBlank(request.EmployeeId);
+        user.JobTitle = NullIfBlank(request.JobTitle);
+        user.Phone = NullIfBlank(request.Phone);
+        user.Email = NullIfBlank(request.Email);
+        user.Notes = NullIfBlank(request.Notes);
 
         if (facePhoto is { Length: > 0 })
         {
@@ -169,37 +202,28 @@ public class UsersController : ControllerBase
                 return BadRequest($"Controlador {controllerId} não existe.");
         }
 
-        // Edição altera dados que o dispositivo já tem (foto/nome/TimeGroup) ou as portas: os
-        // status já 'Synced' precisam voltar a 'Pending', senão SyncUserAsync os pula e a
-        // alteração nunca chega ao hardware.
+        // Conjunto efetivo = portas manuais desejadas ∪ portas herdadas do grupo (sempre presentes).
+        var groupDoors = await _groupAccess.GetGroupDoorsAsync(user.GroupId, ct);
+        var effectiveIds = new HashSet<Guid>(desiredControllerIds);
+        effectiveIds.UnionWith(groupDoors);
+
+        var existingControllerIds = user.Permissions.Select(p => p.ControllerId).ToHashSet();
+        var addedControllerIds = effectiveIds.Where(cId => !existingControllerIds.Contains(cId)).ToList();
+        var removedControllerIds = existingControllerIds.Where(cId => !effectiveIds.Contains(cId)).ToList();
+
+        // Só as portas que PERMANECEM voltam a 'Pending' (força re-push de foto/nome/TimeGroup
+        // alterados). As portas REMOVIDAS ficam 'Synced' de propósito: assim SyncUserAsync as
+        // revoga no hardware — se fossem zeradas junto, a pessoa continuaria cadastrada na porta
+        // removida (a revogação só acontece a partir de um status 'Synced').
         var syncStatuses = await _db.SyncStatuses.Where(s => s.UserId == id).ToListAsync(ct);
-        foreach (var status in syncStatuses.Where(s => s.State == SyncState.Synced))
+        foreach (var status in syncStatuses.Where(s => s.State == SyncState.Synced && effectiveIds.Contains(s.ControllerId)))
         {
             status.State = SyncState.Pending;
             status.UpdatedAt = DateTime.UtcNow;
         }
 
-        // Remove permissões que não estão mais na lista desejada; adiciona as novas.
-        var existingControllerIds = user.Permissions.Select(p => p.ControllerId).ToHashSet();
-        var addedControllerIds = desiredControllerIds.Where(cId => !existingControllerIds.Contains(cId)).ToList();
-        var removedControllerIds = existingControllerIds.Where(cId => !desiredControllerIds.Contains(cId)).ToList();
-
-        var toRemove = user.Permissions.Where(p => !desiredControllerIds.Contains(p.ControllerId)).ToList();
-        foreach (var p in toRemove) _db.Permissions.Remove(p);
-
-        foreach (var controllerId in addedControllerIds)
-        {
-            // _db.Add (não user.Permissions.Add): como AccessPermission.Id já vem preenchido
-            // (Guid.NewGuid() no inicializador), o EF Core marca entidades adicionadas via fixup
-            // de uma coleção navigation já rastreada como Modified em vez de Added — gera UPDATE
-            // em vez de INSERT e lança DbUpdateConcurrencyException (0 linhas afetadas). DbSet.Add
-            // força o estado Added independente do valor da chave.
-            _db.Permissions.Add(new AccessPermission { UserId = user.Id, ControllerId = controllerId, TimeGroup = request.TimeGroup });
-        }
-        foreach (var p in user.Permissions.Where(p => desiredControllerIds.Contains(p.ControllerId)))
-        {
-            p.TimeGroup = request.TimeGroup;
-        }
+        // Reconcilia as permissões (portas do grupo herdadas + extras manuais) marcando a origem.
+        await _groupAccess.ReconcileUserPermissionsAsync(user, desiredControllerIds, request.TimeGroup, ct);
 
         UserAuditLogger.Record(_db, user, "Atualizado", CurrentUsername(),
             await BuildControllerChangeDetailsAsync(addedControllerIds, removedControllerIds, ct));
@@ -351,6 +375,86 @@ public class UsersController : ControllerBase
         return Ok(entries);
     }
 
+    /// <summary>Foto de face do usuário (JPEG). 404 se não houver. Cacheável por 5 min.</summary>
+    [HttpGet("{id:guid}/photo")]
+    public async Task<IActionResult> Photo(Guid id, CancellationToken ct)
+    {
+        var photo = await _db.Users
+            .Where(u => u.Id == id)
+            .Select(u => u.FacePhoto)
+            .FirstOrDefaultAsync(ct);
+        if (photo is null || photo.Length == 0) return NotFound();
+
+        Response.Headers.CacheControl = "private, max-age=300";
+        return File(photo, "image/jpeg");
+    }
+
+    /// <summary>
+    /// Relatório de portas que o usuário acessou: eventos do AccessLog (por UserCode) num período,
+    /// com um resumo agrupado por porta (quantas vezes, concedidos, última vez) e os eventos recentes.
+    /// </summary>
+    [HttpGet("{id:guid}/access-log")]
+    public async Task<IActionResult> AccessHistory(
+        Guid id, [FromQuery] DateTime? from, [FromQuery] DateTime? to, [FromQuery] int take = 100, CancellationToken ct = default)
+    {
+        var userCode = await _db.Users
+            .Where(u => u.Id == id && u.Type == UserType.Permanent)
+            .Select(u => (uint?)u.UserCode)
+            .FirstOrDefaultAsync(ct);
+        if (userCode is null) return NotFound();
+
+        take = Math.Clamp(take, 1, 500);
+        var fromUtc = ToUtc(from);
+        var toUtc = ToUtc(to);
+
+        var query = _db.AccessLogs.AsNoTracking().Where(l => l.UserCode == userCode);
+        if (fromUtc is not null) query = query.Where(l => l.TimestampUtc >= fromUtc);
+        if (toUtc is not null) query = query.Where(l => l.TimestampUtc <= toUtc);
+
+        var total = await query.CountAsync(ct);
+        var granted = await query.CountAsync(l => l.Granted, ct);
+
+        // Resumo por porta (o "relatório de portas"): quais portas, quantas vezes, última vez.
+        var doors = await query
+            .GroupBy(l => new { l.ControllerId, l.ControllerName })
+            .Select(g => new
+            {
+                g.Key.ControllerId,
+                g.Key.ControllerName,
+                Total = g.Count(),
+                Granted = g.Count(x => x.Granted),
+                LastUtc = g.Max(x => x.TimestampUtc),
+            })
+            .OrderByDescending(d => d.LastUtc)
+            .ToListAsync(ct);
+
+        var items = await query
+            .OrderByDescending(l => l.TimestampUtc)
+            .Take(take)
+            .Select(l => new { l.TimestampUtc, l.ControllerName, l.Method, l.Direction, l.Granted })
+            .ToListAsync(ct);
+
+        return Ok(new
+        {
+            userCode,
+            total,
+            granted,
+            denied = total - granted,
+            distinctDoors = doors.Count,
+            lastAccessUtc = doors.Count > 0 ? doors.Max(d => d.LastUtc) : (DateTime?)null,
+            doors,
+            items,
+        });
+    }
+
+    private static DateTime? ToUtc(DateTime? value) => value?.Kind switch
+    {
+        null => null,
+        DateTimeKind.Utc => value,
+        DateTimeKind.Local => value.Value.ToUniversalTime(),
+        _ => DateTime.SpecifyKind(value!.Value, DateTimeKind.Utc),
+    };
+
     /// <summary>
     /// Roda a sincronização com os controladores fora do ciclo de requisição: os comandos ao
     /// hardware são TCP com retries e podem levar minutos se um controlador estiver inacessível —
@@ -420,6 +524,9 @@ public class UsersController : ControllerBase
     }
 
     private string? CurrentUsername() => User.Identity?.Name;
+
+    /// <summary>Normaliza string de formulário vazia/em-branco para null (campos de perfil opcionais).</summary>
+    private static string? NullIfBlank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     /// <summary>
     /// Próximo UserCode via sequence do PostgreSQL: atômico entre requisições concorrentes e

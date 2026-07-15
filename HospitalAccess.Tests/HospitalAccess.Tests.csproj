@@ -14,6 +14,7 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="..\HospitalAccess.Api\HospitalAccess.Api.csproj" />
     <ProjectReference Include="..\HospitalAccess.Application\HospitalAccess.Application.csproj" />
     <ProjectReference Include="..\HospitalAccess.Domain\HospitalAccess.Domain.csproj" />
     <ProjectReference Include="..\HospitalAccess.Gateway\HospitalAccess.Gateway.csproj" />

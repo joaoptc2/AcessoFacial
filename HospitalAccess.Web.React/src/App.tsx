@@ -8,6 +8,7 @@ import { HomePage } from "./pages/HomePage";
 import { ControllersPage } from "./pages/ControllersPage";
 import { ControllerDetailPage } from "./pages/ControllerDetailPage";
 import { UsersPage } from "./pages/UsersPage";
+import { UserProfilePage } from "./pages/UserProfilePage";
 import { UserGroupsPage } from "./pages/UserGroupsPage";
 import { VisitorsPage } from "./pages/VisitorsPage";
 import { HolidaysPage } from "./pages/HolidaysPage";
@@ -50,6 +51,7 @@ function App() {
       <Route path="/controllers" element={protect(<ControllersPage />)} />
       <Route path="/controllers/:id" element={protect(<ControllerDetailPage />)} />
       <Route path="/users" element={protect(<UsersPage />)} />
+      <Route path="/users/:id" element={protect(<UserProfilePage />)} />
       <Route path="/usergroups" element={protect(<UserGroupsPage />)} />
       <Route path="/visitors" element={protect(<VisitorsPage />)} />
       <Route path="/holidays" element={protect(<HolidaysPage />)} />
