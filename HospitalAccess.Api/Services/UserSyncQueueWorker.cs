@@ -15,8 +15,10 @@ namespace HospitalAccess.Api.Services;
 /// </summary>
 public sealed class UserSyncQueueWorker : BackgroundService
 {
-    // Folga entre comandos: dá respiro ao controlador entre uploads de face pesados.
-    private static readonly TimeSpan GapBetweenItems = TimeSpan.FromMilliseconds(200);
+    // Workers paralelos: como a serialização real é POR CONTROLADOR (lock no gateway), vários usuários
+    // podem sincronizar ao mesmo tempo em controladores diferentes — um controlador lento não trava os
+    // demais. É trabalho de I/O (rede), não de CPU; 8 cobre bem um parque de ~30 aparelhos.
+    private const int WorkerCount = 8;
 
     private readonly UserSyncQueue _queue;
     private readonly IServiceScopeFactory _scopeFactory;
@@ -31,6 +33,12 @@ public sealed class UserSyncQueueWorker : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        var workers = Enumerable.Range(0, WorkerCount).Select(_ => WorkerLoopAsync(stoppingToken));
+        await Task.WhenAll(workers);
+    }
+
+    private async Task WorkerLoopAsync(CancellationToken stoppingToken)
+    {
         await foreach (var work in _queue.Reader.ReadAllAsync(stoppingToken))
         {
             try
@@ -39,8 +47,10 @@ public sealed class UserSyncQueueWorker : BackgroundService
                 switch (work)
                 {
                     case SyncUserWork w:
-                        _queue.MarkDequeued(w.UserId); // libera a dedup antes de processar (nova edição reenfileira)
-                        await scope.ServiceProvider.GetRequiredService<IUserSyncService>().SyncUserAsync(w.UserId, stoppingToken);
+                        // CompleteSync só no fim: garante exclusão por usuário (nenhum outro worker pega
+                        // o mesmo usuário) e reenfileira se surgiu um pedido de re-sync durante o processo.
+                        try { await scope.ServiceProvider.GetRequiredService<IUserSyncService>().SyncUserAsync(w.UserId, stoppingToken); }
+                        finally { _queue.CompleteSync(w.UserId); }
                         break;
                     case RevokeUserWork w:
                         await scope.ServiceProvider.GetRequiredService<IUserSyncService>().RevokeUserAsync(w.UserId, stoppingToken);
@@ -58,9 +68,6 @@ public sealed class UserSyncQueueWorker : BackgroundService
             {
                 _logger.LogError(ex, "Falha ao processar item de sincronização da fila.");
             }
-
-            try { await Task.Delay(GapBetweenItems, stoppingToken); }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
         }
     }
 

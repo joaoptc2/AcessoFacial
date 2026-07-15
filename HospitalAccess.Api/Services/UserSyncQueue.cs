@@ -34,21 +34,29 @@ public interface IUserSyncQueue
 
 public sealed class UserSyncQueue : IUserSyncQueue
 {
+    // Vários workers consomem em paralelo (a serialização real é POR CONTROLADOR, via lock do gateway),
+    // logo NÃO é SingleReader.
     private readonly Channel<SyncWork> _channel = Channel.CreateUnbounded<SyncWork>(
-        new UnboundedChannelOptions { SingleReader = true });
+        new UnboundedChannelOptions { SingleReader = false });
 
-    // Deduplicação só das sincronizações pendentes: evita a fila crescer com o mesmo usuário
-    // (ex.: o job de retry a cada 2 min reenfileirando os mesmos que falharam). Revogações não são
-    // deduplicadas (são pontuais). O worker remove o id ao retirar da fila (MarkDequeued), então uma
-    // edição durante o processamento reenfileira e é reprocessada.
-    private readonly ConcurrentDictionary<Guid, byte> _queuedSync = new();
+    // Coordena as sincronizações por usuário entre os workers paralelos. Chave presente = o usuário
+    // está NA FILA ou SENDO PROCESSADO (então só existe 1 item por usuário → nunca dois workers no
+    // mesmo usuário). Valor = "rerun pedido": alguém pediu nova sync ENQUANTO ele era processado —
+    // ao terminar, o worker reenfileira. Assim uma edição durante o processamento não se perde e o
+    // job de retry (a cada 2 min) não empilha duplicatas. Revogações são pontuais (sem dedup).
+    private readonly ConcurrentDictionary<Guid, bool> _active = new();
 
     internal ChannelReader<SyncWork> Reader => _channel.Reader;
 
-    public void EnqueueSync(Guid userId)
+    public void EnqueueSync(Guid userId) => EnqueueSyncCore(userId);
+
+    private bool EnqueueSyncCore(Guid userId)
     {
-        if (!_queuedSync.TryAdd(userId, 0)) return; // já na fila
-        _channel.Writer.TryWrite(new SyncUserWork(userId));
+        var added = false;
+        // Ausente → entra como "sem rerun" e vira um item na fila. Já presente → só marca rerun.
+        _active.AddOrUpdate(userId, _ => { added = true; return false; }, (_, _) => true);
+        if (added) _channel.Writer.TryWrite(new SyncUserWork(userId));
+        return added;
     }
 
     public void EnqueueRevoke(Guid userId) => _channel.Writer.TryWrite(new RevokeUserWork(userId));
@@ -63,14 +71,32 @@ public sealed class UserSyncQueue : IUserSyncQueue
     {
         var count = 0;
         foreach (var id in userIds)
-        {
-            if (!_queuedSync.TryAdd(id, 0)) continue;
-            _channel.Writer.TryWrite(new SyncUserWork(id));
-            count++;
-        }
+            if (EnqueueSyncCore(id)) count++;
         return count;
     }
 
-    /// <summary>Libera o id da deduplicação (chamado pelo worker ao retirar o item da fila).</summary>
-    internal void MarkDequeued(Guid userId) => _queuedSync.TryRemove(userId, out _);
+    /// <summary>
+    /// Chamado pelo worker ao TERMINAR de processar um usuário: se surgiu um pedido de re-sync durante
+    /// o processamento (rerun), reenfileira uma vez; senão, libera o usuário.
+    /// </summary>
+    internal void CompleteSync(Guid userId)
+    {
+        while (true)
+        {
+            if (!_active.TryGetValue(userId, out var rerun)) return;
+            if (rerun)
+            {
+                if (_active.TryUpdate(userId, false, comparisonValue: true))
+                {
+                    _channel.Writer.TryWrite(new SyncUserWork(userId));
+                    return;
+                }
+            }
+            else if (_active.TryRemove(new KeyValuePair<Guid, bool>(userId, false)))
+            {
+                return;
+            }
+            // Estado mudou concorrentemente entre a leitura e a escrita — tenta de novo.
+        }
+    }
 }
