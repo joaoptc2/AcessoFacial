@@ -28,12 +28,14 @@ public sealed class DeviceCallbackController : ControllerBase
 {
     private readonly AccessDbContext _db;
     private readonly TimeZoneInfo _deviceTimeZone;
+    private readonly IConfiguration _config;
     private readonly ILogger<DeviceCallbackController> _logger;
 
-    public DeviceCallbackController(AccessDbContext db, TimeZoneInfo deviceTimeZone, ILogger<DeviceCallbackController> logger)
+    public DeviceCallbackController(AccessDbContext db, TimeZoneInfo deviceTimeZone, IConfiguration config, ILogger<DeviceCallbackController> logger)
     {
         _db = db;
         _deviceTimeZone = deviceTimeZone;
+        _config = config;
         _logger = logger;
     }
 
@@ -52,6 +54,13 @@ public sealed class DeviceCallbackController : ControllerBase
 
         // O firmware manda gzip mesmo declarando application/json — detectar magic 1F 8B.
         var raw = IsGzip(recordBytes) ? Decompress(recordBytes) : recordBytes;
+
+        if (_config.GetValue<bool>("Diagnostics:CaptureDeviceRequests"))
+        {
+            var preview = Encoding.UTF8.GetString(raw);
+            if (preview.Length > 8192) preview = preview[..8192] + "...(truncado)";
+            _logger.LogWarning("[CAPTURA-DEVICE] POST /note/insertNoteFace ct={CT}\n  BODY: {Body}", Request.ContentType, preview);
+        }
 
         JsonDocument doc;
         try { doc = JsonDocument.Parse(raw); }
