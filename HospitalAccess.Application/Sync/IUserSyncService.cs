@@ -14,9 +14,6 @@ public interface IUserSyncService
     /// <summary>Remove o usuário dos controladores (ex.: visitante expirado).</summary>
     Task RevokeUserAsync(Guid userId, CancellationToken ct = default);
 
-    /// <summary>Reprocessa pendências/falhas (chamado por job periódico).</summary>
-    Task RetryPendingAsync(CancellationToken ct = default);
-
     /// <summary>
     /// Resolve um conflito de face duplicada "substituindo": exclui do controlador o usuário
     /// existente que colidiu e reenvia o novo usuário.

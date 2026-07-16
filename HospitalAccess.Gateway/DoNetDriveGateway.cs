@@ -72,6 +72,15 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
     }
 
     /// <summary>
+    /// Reenvios NO FIO (SDK) do upload de face (AddPersonAndImage). O SDK re-emite cada comando
+    /// falho RestartCount vezes antes de reportar erro; com o default por controlador (3), cada
+    /// falha de upload custava o payload de ~120 KB em triplicata. O retry com backoff da
+    /// aplicação é quem governa as novas tentativas, então 1 é o default correto aqui.
+    /// Os demais comandos (leves) continuam usando o RestartCount do controlador.
+    /// </summary>
+    public int FaceUploadWireRetries { get; set; } = 1;
+
+    /// <summary>
     /// Converte um horário UTC para o "relógio de parede" do fuso do aparelho. O campo de validade
     /// (Expiry) do controlador é BCD em horário LOCAL: o aparelho compara com o próprio relógio.
     /// Se enviarmos UTC, a validade fica adiantada (ex.: em UTC-3, o fim aparece 3h a mais no
@@ -176,7 +185,9 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
             WaitRepeatMessage = controller.SupportsWaitRepeatMessage,
         };
 
-        var cmd = new AddPeosonAndImage(_connections.CreateCommandDetail(controller), par); // grafia confirmada no SDK
+        var cmdDtl = _connections.CreateCommandDetail(controller);
+        cmdDtl.RestartCount = Math.Max(1, FaceUploadWireRetries);
+        var cmd = new AddPeosonAndImage(cmdDtl, par); // grafia confirmada no SDK
         await RunAsync(cmd, "AddPersonAndImage", controller);
 
         return MapAddFaceResult(cmd.getResult() as AddPersonAndImage_Result);

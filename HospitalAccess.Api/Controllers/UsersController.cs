@@ -317,6 +317,9 @@ public class UsersController : ControllerBase
         UserAuditLogger.Record(_db, user, "Reativado", CurrentUsername());
         await _db.SaveChangesAsync(ct);
 
+        // Reativar é ação manual: destrava backoff/quarentena (menos conflitos de duplicidade).
+        await ResetFailedForRetryAsync(
+            _db.SyncStatuses.Where(s => s.UserId == id && s.ConflictUserCode == null), ct);
         SyncInBackground(id);
 
         return NoContent();
@@ -327,8 +330,13 @@ public class UsersController : ControllerBase
     [Authorize(Roles = "Admin,Operator")]
     public async Task<IActionResult> SyncFailed(CancellationToken ct)
     {
+        // Ação manual destrava o backoff e a quarentena de falha permanente — exceto conflitos
+        // de duplicidade (ConflictUserCode), que têm fluxo próprio de resolução (substituir/manter):
+        // re-tentá-los sem resolver é upload garantido de ser rejeitado.
+        await ResetFailedForRetryAsync(_db.SyncStatuses.Where(s => s.ConflictUserCode == null), ct);
+
         var userIds = await _db.SyncStatuses
-            .Where(s => s.State == SyncState.Pending || s.State == SyncState.Failed)
+            .Where(s => s.State == SyncState.Pending)
             .Select(s => s.UserId)
             .Distinct()
             .ToListAsync(ct);
@@ -343,9 +351,23 @@ public class UsersController : ControllerBase
     public async Task<IActionResult> Resync(Guid id, CancellationToken ct)
     {
         if (!await _db.Users.AnyAsync(u => u.Id == id && u.Type == UserType.Permanent, ct)) return NotFound();
+        await ResetFailedForRetryAsync(
+            _db.SyncStatuses.Where(s => s.UserId == id && s.ConflictUserCode == null), ct);
         _syncQueue.EnqueueSync(id);
         return Accepted(new { message = "Sincronização reenfileirada." });
     }
+
+    /// <summary>
+    /// Volta status Failed para Pending zerando o backoff/quarentena (<see cref="SyncRetryPolicy"/>) —
+    /// usado pelas ações manuais de resync, que têm precedência sobre a espera automática.
+    /// </summary>
+    private static Task<int> ResetFailedForRetryAsync(IQueryable<DeviceSyncStatus> failedScope, CancellationToken ct) =>
+        failedScope.Where(s => s.State == SyncState.Failed)
+            .ExecuteUpdateAsync(u => u
+                .SetProperty(s => s.State, SyncState.Pending)
+                .SetProperty(s => s.RetryCount, 0)
+                .SetProperty(s => s.NextRetryAtUtc, (DateTime?)null)
+                .SetProperty(s => s.UpdatedAt, DateTime.UtcNow), ct);
 
     /// <summary>
     /// Resolve um conflito de face duplicada em um controlador SUBSTITUINDO: exclui o usuário

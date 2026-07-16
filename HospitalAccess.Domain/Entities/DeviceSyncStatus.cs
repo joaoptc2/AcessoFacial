@@ -22,6 +22,16 @@ public class DeviceSyncStatus
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 
     /// <summary>
+    /// Próxima tentativa automática (UTC), controlada pelo backoff exponencial:
+    /// - <see cref="SyncState.Pending"/>: sempre elegível (campo ignorado).
+    /// - <see cref="SyncState.Failed"/> com data futura: aguardando backoff.
+    /// - <see cref="SyncState.Failed"/> com <c>null</c>: falha PERMANENTE (foto sem rosto,
+    ///   feature code ilegível, duplicidade) — nunca teria sucesso com os mesmos dados, então o
+    ///   retry automático não a seleciona; só volta por ação manual (resync/nova foto/conflito).
+    /// </summary>
+    public DateTime? NextRetryAtUtc { get; set; }
+
+    /// <summary>
     /// Quando a falha é "foto/feature duplicado", guarda o código do usuário já existente no
     /// controlador cuja face colidiu — para a UI oferecer "substituir" (excluir o existente e
     /// enviar o novo) ou "manter o existente".

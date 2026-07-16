@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json.Serialization;
 using System.Threading.RateLimiting;
 using HospitalAccess.Api.Auth;
+using HospitalAccess.Api.Options;
 using HospitalAccess.Api.Services;
 using HospitalAccess.Application.Qr;
 using HospitalAccess.Application.Sync;
@@ -90,9 +91,22 @@ catch (Exception ex) when (ex is TimeZoneNotFoundException or InvalidTimeZoneExc
 }
 builder.Services.AddSingleton(deviceTimeZone);
 
+// Opções operacionais dos serviços de dispositivo (intervalos, backoff, sondas). Defaults
+// reproduzem o comportamento anterior; todas as chaves documentadas no appsettings.example.json.
+builder.Services.Configure<SyncRetryOptions>(builder.Configuration.GetSection(SyncRetryOptions.SectionName));
+builder.Services.Configure<SyncQueueOptions>(builder.Configuration.GetSection(SyncQueueOptions.SectionName));
+builder.Services.Configure<MonitoringOptions>(builder.Configuration.GetSection(MonitoringOptions.SectionName));
+builder.Services.Configure<OfflineCollectionOptions>(builder.Configuration.GetSection(OfflineCollectionOptions.SectionName));
+builder.Services.Configure<HealthCheckOptions>(builder.Configuration.GetSection(HealthCheckOptions.SectionName));
+
 // Gateway de dispositivos (SDK DoNetDrive). Singleton: o ConnectorAllocator é único.
 builder.Services.AddSingleton<ControllerConnectionFactory>();
-builder.Services.AddSingleton<IDeviceGateway, DoNetDriveGateway>();
+builder.Services.AddSingleton<IDeviceGateway>(sp => new DoNetDriveGateway(
+    sp.GetRequiredService<ControllerConnectionFactory>(),
+    sp.GetRequiredService<TimeZoneInfo>())
+{
+    FaceUploadWireRetries = sp.GetRequiredService<IOptions<SyncRetryOptions>>().Value.FaceUploadWireRetries,
+});
 
 // Integração HTTP com o painel web dos controladores (para LER o QRCode que o aparelho gera e,
 // opcionalmente, provisionar via /api/People/New). Senha padrão global em Device:DefaultApiPassword.

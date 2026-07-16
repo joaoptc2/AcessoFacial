@@ -1,3 +1,4 @@
+using HospitalAccess.Api.Options;
 using HospitalAccess.Application.Sync;
 using HospitalAccess.Domain.Entities;
 using HospitalAccess.Domain.Enums;
@@ -5,6 +6,7 @@ using HospitalAccess.Gateway;
 using HospitalAccess.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace HospitalAccess.Api.Services;
 
@@ -21,12 +23,15 @@ public sealed class UserSyncService : IUserSyncService
 {
     private readonly AccessDbContext _db;
     private readonly IDeviceGateway _gateway;
+    private readonly SyncRetryOptions _retryOptions;
     private readonly ILogger<UserSyncService> _logger;
 
-    public UserSyncService(AccessDbContext db, IDeviceGateway gateway, ILogger<UserSyncService> logger)
+    public UserSyncService(AccessDbContext db, IDeviceGateway gateway,
+        IOptions<SyncRetryOptions> retryOptions, ILogger<UserSyncService> logger)
     {
         _db = db;
         _gateway = gateway;
+        _retryOptions = retryOptions.Value;
         _logger = logger;
     }
 
@@ -66,10 +71,18 @@ public sealed class UserSyncService : IUserSyncService
             .Where(s => s.UserId == userId)
             .ToListAsync(ct);
 
+        var now = DateTime.UtcNow;
         foreach (var controllerId in desiredControllerIds)
         {
             var status = existingStatuses.FirstOrDefault(s => s.ControllerId == controllerId);
             if (status is { State: SyncState.Synced }) continue; // já ok, idempotente
+
+            // Backoff/quarentena: Failed com NextRetryAtUtc futuro ainda aguarda a janela;
+            // Failed com null é falha permanente (só ação manual reseta). Sem este filtro, um
+            // usuário reenfileirado por outro caminho re-enviaria a face antes da hora.
+            if (status is { State: SyncState.Failed } &&
+                (status.NextRetryAtUtc is null || status.NextRetryAtUtc > now))
+                continue;
 
             await SyncToControllerAsync(user, controllerId, status, ct);
         }
@@ -98,27 +111,6 @@ public sealed class UserSyncService : IUserSyncService
         }
     }
 
-    public async Task RetryPendingAsync(CancellationToken ct = default)
-    {
-        var pending = await _db.SyncStatuses
-            .Where(s => s.State == SyncState.Pending || s.State == SyncState.Failed)
-            .Select(s => s.UserId)
-            .Distinct()
-            .ToListAsync(ct);
-
-        foreach (var userId in pending)
-        {
-            try
-            {
-                await SyncUserAsync(userId, ct);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Falha ao reprocessar sync pendente do usuário {UserId}.", userId);
-            }
-        }
-    }
-
     private async Task SyncToControllerAsync(User user, Guid controllerId, DeviceSyncStatus? status, CancellationToken ct)
     {
         var controller = await _db.Controllers.FirstOrDefaultAsync(c => c.Id == controllerId, ct);
@@ -140,6 +132,8 @@ public sealed class UserSyncService : IUserSyncService
                 status.State = SyncState.Synced;
                 status.LastError = null;
                 status.ConflictUserCode = null;
+                status.RetryCount = 0;
+                status.NextRetryAtUtc = null;
             }
             else
             {
@@ -149,13 +143,27 @@ public sealed class UserSyncService : IUserSyncService
                 // Guarda o código do conflito só quando é duplicidade de face — a UI usa para
                 // oferecer "substituir" ou "manter o existente".
                 status.ConflictUserCode = result.Code == FaceUploadCode.Duplicate ? result.ConflictUserCode : null;
-                if (!result.Success) status.RetryCount++;
+                if (result.Success)
+                {
+                    status.RetryCount = 0;
+                    status.NextRetryAtUtc = null;
+                }
+                else
+                {
+                    status.RetryCount++;
+                    // Falha permanente sai do retry automático (null); transitória agenda o backoff.
+                    status.NextRetryAtUtc = SyncRetryPolicy.IsPermanent(result.Code)
+                        ? null
+                        : DateTime.UtcNow + SyncRetryPolicy.Backoff(status.RetryCount, _retryOptions);
+                }
             }
         }
         catch (Exception ex)
         {
+            // Exceção = falha transitória (aparelho offline, timeout): re-tenta com backoff.
             status.State = SyncState.Failed;
             status.RetryCount++;
+            status.NextRetryAtUtc = DateTime.UtcNow + SyncRetryPolicy.Backoff(status.RetryCount, _retryOptions);
             status.LastError = ex.Message;
             _logger.LogError(ex, "Falha ao sincronizar usuário {UserId} no controlador {ControllerId}.", user.Id, controllerId);
         }
@@ -183,6 +191,8 @@ public sealed class UserSyncService : IUserSyncService
             status.State = SyncState.Pending;
             status.ConflictUserCode = null;
             status.LastError = null;
+            status.RetryCount = 0;
+            status.NextRetryAtUtc = null;
             await _db.SaveChangesAsync(ct);
         }
 
@@ -243,11 +253,15 @@ public sealed class UserSyncService : IUserSyncService
             await _gateway.DeletePersonAsync(controller, userCode, ct);
             status.State = SyncState.Revoked;
             status.LastError = null;
+            status.RetryCount = 0;
+            status.NextRetryAtUtc = null;
         }
         catch (Exception ex)
         {
+            // Revogação falha é sempre transitória (aparelho inacessível): backoff e re-tenta.
             status.State = SyncState.Failed;
             status.RetryCount++;
+            status.NextRetryAtUtc = DateTime.UtcNow + SyncRetryPolicy.Backoff(status.RetryCount, _retryOptions);
             status.LastError = ex.Message;
             _logger.LogError(ex, "Falha ao revogar usuário {UserCode} no controlador {ControllerId}.", userCode, status.ControllerId);
         }
