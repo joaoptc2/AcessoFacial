@@ -98,12 +98,12 @@ public sealed class AccessEventRecorder : BackgroundService
         if (recordSerials.Count > 0)
         {
             var existing = await db.AccessLogs
-                .Where(l => serialNumbers.Contains(l.ControllerSerialNumber)
+                .Where(l => l.ControllerSerialNumber != null && serialNumbers.Contains(l.ControllerSerialNumber)
                             && l.RecordSerialNumber != null && recordSerials.Contains(l.RecordSerialNumber.Value))
                 .Select(l => new { l.ControllerSerialNumber, l.RecordSerialNumber })
                 .ToListAsync(ct);
             foreach (var row in existing)
-                known.Add((row.ControllerSerialNumber, row.RecordSerialNumber!.Value));
+                known.Add((row.ControllerSerialNumber!, row.RecordSerialNumber!.Value));
         }
 
         var codes = batch.Where(e => e.UserCode is not null).Select(e => e.UserCode!.Value).Distinct().ToList();
