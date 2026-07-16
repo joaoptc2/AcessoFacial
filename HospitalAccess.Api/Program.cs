@@ -130,6 +130,10 @@ builder.Services.AddSingleton<UserSyncQueue>();
 builder.Services.AddSingleton<IUserSyncQueue>(sp => sp.GetRequiredService<UserSyncQueue>());
 builder.Services.AddHostedService<UserSyncQueueWorker>();
 
+// Guarda de reentrância das operações pesadas por endpoint (resync-all, sync-all de
+// feriados/grades): cliques repetidos não empilham execuções concorrentes no hardware.
+builder.Services.AddSingleton<SingleFlight>();
+
 // Reprocessa sincronizações pendentes/falhas: reenfileira na fila serial (não processa em paralelo).
 builder.Services.AddHostedService<SyncRetryBackgroundService>();
 

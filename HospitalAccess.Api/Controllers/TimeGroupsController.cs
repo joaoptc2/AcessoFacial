@@ -1,3 +1,4 @@
+using HospitalAccess.Api.Services;
 using HospitalAccess.Domain.Entities;
 using HospitalAccess.Gateway;
 using HospitalAccess.Infrastructure.Persistence;
@@ -23,12 +24,15 @@ public class TimeGroupsController : ControllerBase
 {
     private readonly AccessDbContext _db;
     private readonly IServiceScopeFactory _scopeFactory;
+    private readonly SingleFlight _singleFlight;
     private readonly ILogger<TimeGroupsController> _logger;
 
-    public TimeGroupsController(AccessDbContext db, IServiceScopeFactory scopeFactory, ILogger<TimeGroupsController> logger)
+    public TimeGroupsController(AccessDbContext db, IServiceScopeFactory scopeFactory,
+        SingleFlight singleFlight, ILogger<TimeGroupsController> logger)
     {
         _db = db;
         _scopeFactory = scopeFactory;
+        _singleFlight = singleFlight;
         _logger = logger;
     }
 
@@ -127,10 +131,16 @@ public class TimeGroupsController : ControllerBase
     [HttpPost("sync-all")]
     public async Task<IActionResult> SyncAll(CancellationToken ct)
     {
+        // Single-flight global (como em Holidays): não empilha varreduras concorrentes dos 30 aparelhos.
+        if (!_singleFlight.TryBegin(FlightKey))
+            return Conflict(new { error = "Já existe uma sincronização de grade horária em andamento." });
+
         var controllerIds = await _db.Controllers.Select(c => c.Id).ToListAsync(ct);
         SyncInBackground(controllerIds);
         return Accepted(new { controllerCount = controllerIds.Count });
     }
+
+    private const string FlightKey = "timegroups:sync-all";
 
     private static bool ValidateSegments(List<TimeGroupSegmentRequest> segments, out string? error)
     {
@@ -148,27 +158,34 @@ public class TimeGroupsController : ControllerBase
     {
         _ = Task.Run(async () =>
         {
-            using var scope = _scopeFactory.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<AccessDbContext>();
-            var gateway = scope.ServiceProvider.GetRequiredService<IDeviceGateway>();
-
-            var schedules = await db.TimeGroupSchedules.Include(t => t.Segments).ToListAsync();
-            var entries = schedules.Select(t => new TimeGroupEntry(
-                t.GroupNumber,
-                t.Segments.Select(s => new TimeGroupSegmentEntry(s.Weekday, s.SegmentIndex, s.BeginTime, s.EndTime)).ToList())).ToList();
-
-            foreach (var controllerId in controllerIds)
+            try
             {
-                try
+                using var scope = _scopeFactory.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<AccessDbContext>();
+                var gateway = scope.ServiceProvider.GetRequiredService<IDeviceGateway>();
+
+                var schedules = await db.TimeGroupSchedules.Include(t => t.Segments).ToListAsync();
+                var entries = schedules.Select(t => new TimeGroupEntry(
+                    t.GroupNumber,
+                    t.Segments.Select(s => new TimeGroupSegmentEntry(s.Weekday, s.SegmentIndex, s.BeginTime, s.EndTime)).ToList())).ToList();
+
+                foreach (var controllerId in controllerIds)
                 {
-                    var controller = await db.Controllers.FirstOrDefaultAsync(c => c.Id == controllerId);
-                    if (controller is null) continue;
-                    await gateway.SyncTimeGroupsAsync(controller, entries);
+                    try
+                    {
+                        var controller = await db.Controllers.FirstOrDefaultAsync(c => c.Id == controllerId);
+                        if (controller is null) continue;
+                        await gateway.SyncTimeGroupsAsync(controller, entries);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Falha ao sincronizar grade horária no controlador {ControllerId}.", controllerId);
+                    }
                 }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Falha ao sincronizar grade horária no controlador {ControllerId}.", controllerId);
-                }
+            }
+            finally
+            {
+                _singleFlight.End(FlightKey);
             }
         });
     }

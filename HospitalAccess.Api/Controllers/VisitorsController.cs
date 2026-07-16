@@ -1,15 +1,12 @@
 using HospitalAccess.Api.Services;
 using HospitalAccess.Application.Qr;
-using HospitalAccess.Application.Sync;
 using HospitalAccess.Domain.Entities;
 using HospitalAccess.Domain.Enums;
-using HospitalAccess.Gateway;
 using HospitalAccess.Infrastructure.Devices;
 using HospitalAccess.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.DependencyInjection;
 
 namespace HospitalAccess.Api.Controllers;
 
@@ -31,19 +28,17 @@ public class VisitorsController : ControllerBase
     private readonly QrAccessTokenService _qr;
     private readonly IQrImageEncoder _encoder;
     private readonly DeviceQrService _deviceQr;
-    private readonly IServiceScopeFactory _scopeFactory;
-    private readonly ILogger<VisitorsController> _logger;
+    private readonly IUserSyncQueue _syncQueue;
 
     public VisitorsController(
         AccessDbContext db, QrAccessTokenService qr, IQrImageEncoder encoder,
-        DeviceQrService deviceQr, IServiceScopeFactory scopeFactory, ILogger<VisitorsController> logger)
+        DeviceQrService deviceQr, IUserSyncQueue syncQueue)
     {
         _db = db;
         _qr = qr;
         _encoder = encoder;
         _deviceQr = deviceQr;
-        _scopeFactory = scopeFactory;
-        _logger = logger;
+        _syncQueue = syncQueue;
     }
 
     /// <summary>Lista os visitantes/temporários (usuários permanentes ficam em /api/users).</summary>
@@ -86,12 +81,15 @@ public class VisitorsController : ControllerBase
         var visitor = await _db.Users.FirstOrDefaultAsync(u => u.Id == id && u.Type == UserType.Visitor, ct);
         if (visitor is null) return NotFound();
 
-        RevokeInBackground(id);
-
         visitor.RevokedByUsername = User.Identity?.Name;
         visitor.RevokedAtUtc = DateTime.UtcNow;
         UserAuditLogger.Record(_db, visitor, "Revogado", User.Identity?.Name);
         await _db.SaveChangesAsync(ct);
+
+        // Depois do commit (a revogação no hardware lê RevokedAtUtc do banco) e pela fila serial —
+        // o Task.Run antigo podia rodar ANTES do commit e concorria com o job de retry no mesmo
+        // usuário (fila garante 1 worker por usuário).
+        _syncQueue.EnqueueRevoke(id);
 
         return NoContent();
     }
@@ -121,52 +119,11 @@ public class VisitorsController : ControllerBase
         _db.Users.Remove(visitor);
         await _db.SaveChangesAsync(ct);
 
-        RevokeDeletedVisitorInBackground(userCode, controllerIds);
+        // Fila serial (mesmo caminho do UsersController.Delete): a revogação roda fora do ciclo
+        // HTTP sem concorrência ilimitada nem corrida com o job de retry.
+        _syncQueue.EnqueueRevokeDeleted(userCode, controllerIds);
 
         return NoContent();
-    }
-
-    /// <summary>Remove a pessoa dos controladores informados após o cadastro já ter sido apagado do banco.</summary>
-    private void RevokeDeletedVisitorInBackground(uint userCode, List<Guid> controllerIds)
-    {
-        if (controllerIds.Count == 0) return;
-        _ = Task.Run(async () =>
-        {
-            using var scope = _scopeFactory.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<AccessDbContext>();
-            var gateway = scope.ServiceProvider.GetRequiredService<IDeviceGateway>();
-            foreach (var controllerId in controllerIds)
-            {
-                try
-                {
-                    var controller = await db.Controllers.FirstOrDefaultAsync(c => c.Id == controllerId);
-                    if (controller is null) continue;
-                    await gateway.DeletePersonAsync(controller, userCode);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Falha ao remover visitante excluído {UserCode} do controlador {ControllerId}.", userCode, controllerId);
-                }
-            }
-        });
-    }
-
-    /// <summary>Roda a revogação fora do ciclo de requisição (mesmo motivo do UsersController: não bloquear a resposta HTTP em hardware inacessível).</summary>
-    private void RevokeInBackground(Guid userId)
-    {
-        _ = Task.Run(async () =>
-        {
-            using var scope = _scopeFactory.CreateScope();
-            var sync = scope.ServiceProvider.GetRequiredService<IUserSyncService>();
-            try
-            {
-                await sync.RevokeUserAsync(userId);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Falha ao revogar visitante {UserId} em segundo plano.", userId);
-            }
-        });
     }
 
     /// <summary>
@@ -218,7 +175,8 @@ public class VisitorsController : ControllerBase
         UserAuditLogger.Record(_db, visitor, "Criado", User.Identity?.Name);
         await _db.SaveChangesAsync(ct);
 
-        SyncInBackground(visitor.Id);
+        // Fila serial com dedup — um lote de criações não dispara Task.Run concorrentes no aparelho.
+        _syncQueue.EnqueueSync(visitor.Id);
 
         return CreatedAtAction(nameof(GenerateQr), new { visitorId = visitor.Id }, new { visitor.Id, visitor.UserCode });
     }
@@ -246,76 +204,22 @@ public class VisitorsController : ControllerBase
 
         var oldControllerIds = currentIds.Where(cid => cid != request.ControllerId).ToList();
 
-        // Substitui a(s) permissão(ões) antiga(s) pela nova. As linhas de sincronização antigas são
-        // removidas; o SyncUserAsync (reconciliação) revoga a pessoa nos controladores fora da lista
-        // desejada e a cria no novo.
+        // Substitui a(s) permissão(ões) antiga(s) pela nova. As linhas de sincronização antigas
+        // PERMANECEM de propósito: a reconciliação do SyncUserAsync só revoga no hardware a partir
+        // de um status 'Synced' cuja porta saiu da lista desejada — apagá-las aqui (comportamento
+        // antigo) deixava a pessoa cadastrada via SDK no quarto antigo para sempre (só o QR era
+        // limpo, via HTTP, e apenas quando ApiBaseUrl estava configurado).
         var permsToRemove = visitor.Permissions.Where(p => p.ControllerId != request.ControllerId).ToList();
         _db.Permissions.RemoveRange(permsToRemove);
-        if (oldControllerIds.Count > 0)
-        {
-            var oldStatuses = await _db.SyncStatuses
-                .Where(s => s.UserId == id && oldControllerIds.Contains(s.ControllerId))
-                .ToListAsync(ct);
-            _db.SyncStatuses.RemoveRange(oldStatuses);
-        }
         if (visitor.Permissions.All(p => p.ControllerId != request.ControllerId))
             visitor.Permissions.Add(new AccessPermission { ControllerId = request.ControllerId, TimeGroup = visitor.TimeGroup });
 
         UserAuditLogger.Record(_db, visitor, "Quarto alterado", User.Identity?.Name);
         await _db.SaveChangesAsync(ct);
 
-        ChangeRoomInBackground(visitor.Id, visitor.UserCode, oldControllerIds);
+        // Fila serial: limpa o QR antigo (HTTP) e re-sincroniza (SDK revoga o antigo, cadastra o novo).
+        _syncQueue.EnqueueChangeRoom(visitor.Id, visitor.UserCode, oldControllerIds);
         return Ok(new { visitor.Id, visitor.UserCode, ControllerId = request.ControllerId });
-    }
-
-    /// <summary>Fora do ciclo HTTP: limpa o QR do quarto antigo (HTTP) e sincroniza o novo (SDK reconcilia).</summary>
-    private void ChangeRoomInBackground(Guid visitorId, uint userCode, List<Guid> oldControllerIds)
-    {
-        _ = Task.Run(async () =>
-        {
-            using var scope = _scopeFactory.CreateScope();
-            var provider = scope.ServiceProvider;
-            // 1. Remove a pessoa (e o QRCode) do(s) quarto(s) antigo(s) via HTTP — invalida o QR antigo.
-            if (oldControllerIds.Count > 0)
-            {
-                try
-                {
-                    var deviceQr = provider.GetRequiredService<DeviceQrService>();
-                    await deviceQr.RemoveFromControllersAsync(userCode, oldControllerIds);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Falha ao limpar QR do quarto antigo do visitante {UserCode}.", userCode);
-                }
-            }
-            // 2. Sincroniza: SyncUserAsync reconcilia (remove via SDK dos antigos, cria no novo).
-            try
-            {
-                await provider.GetRequiredService<IUserSyncService>().SyncUserAsync(visitorId);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Falha ao sincronizar novo quarto do visitante {UserId}.", visitorId);
-            }
-        });
-    }
-
-    /// <summary>Cadastra o visitante como pessoa (sem face) nos controladores das portas da visita, fora do ciclo HTTP.</summary>
-    private void SyncInBackground(Guid userId)
-    {
-        _ = Task.Run(async () =>
-        {
-            using var scope = _scopeFactory.CreateScope();
-            var sync = scope.ServiceProvider.GetRequiredService<IUserSyncService>();
-            try
-            {
-                await sync.SyncUserAsync(userId);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Falha ao sincronizar visitante {UserId} em segundo plano.", userId);
-            }
-        });
     }
 
     private static DateTime ToUtc(DateTime value) => value.Kind switch

@@ -1,3 +1,4 @@
+using HospitalAccess.Api.Options;
 using HospitalAccess.Application.Sync;
 using HospitalAccess.Gateway;
 using HospitalAccess.Infrastructure.Persistence;
@@ -5,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace HospitalAccess.Api.Services;
 
@@ -17,23 +19,26 @@ public sealed class UserSyncQueueWorker : BackgroundService
 {
     // Workers paralelos: como a serialização real é POR CONTROLADOR (lock no gateway), vários usuários
     // podem sincronizar ao mesmo tempo em controladores diferentes — um controlador lento não trava os
-    // demais. É trabalho de I/O (rede), não de CPU; 8 cobre bem um parque de ~30 aparelhos.
-    private const int WorkerCount = 8;
+    // demais. É trabalho de I/O (rede), não de CPU; o default 8 cobre bem um parque de ~30 aparelhos
+    // (SyncQueue:WorkerCount).
+    private readonly int _workerCount;
 
     private readonly UserSyncQueue _queue;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<UserSyncQueueWorker> _logger;
 
-    public UserSyncQueueWorker(UserSyncQueue queue, IServiceScopeFactory scopeFactory, ILogger<UserSyncQueueWorker> logger)
+    public UserSyncQueueWorker(UserSyncQueue queue, IServiceScopeFactory scopeFactory,
+        IOptions<SyncQueueOptions> options, ILogger<UserSyncQueueWorker> logger)
     {
         _queue = queue;
         _scopeFactory = scopeFactory;
+        _workerCount = Math.Max(1, options.Value.WorkerCount);
         _logger = logger;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        var workers = Enumerable.Range(0, WorkerCount).Select(_ => WorkerLoopAsync(stoppingToken));
+        var workers = Enumerable.Range(0, _workerCount).Select(_ => WorkerLoopAsync(stoppingToken));
         await Task.WhenAll(workers);
     }
 
@@ -58,6 +63,9 @@ public sealed class UserSyncQueueWorker : BackgroundService
                     case RevokeDeletedUserWork w:
                         await RevokeDeletedAsync(scope.ServiceProvider, w, stoppingToken);
                         break;
+                    case ChangeVisitorRoomWork w:
+                        await ChangeRoomAsync(scope.ServiceProvider, w, stoppingToken);
+                        break;
                 }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -69,6 +77,30 @@ public sealed class UserSyncQueueWorker : BackgroundService
                 _logger.LogError(ex, "Falha ao processar item de sincronização da fila.");
             }
         }
+    }
+
+    /// <summary>
+    /// Troca de quarto de um visitante: (1) limpa o QR/pessoa do(s) quarto(s) antigo(s) via HTTP —
+    /// best-effort, o QR antigo deixa de abrir a porta; (2) sincroniza — a reconciliação do
+    /// SyncUserAsync revoga via SDK nos controladores fora da lista desejada (os status antigos
+    /// permanecem 'Synced' até lá) e cadastra a pessoa no quarto novo, gerando o QR novo.
+    /// </summary>
+    private async Task ChangeRoomAsync(IServiceProvider provider, ChangeVisitorRoomWork work, CancellationToken ct)
+    {
+        if (work.OldControllerIds.Count > 0)
+        {
+            try
+            {
+                var deviceQr = provider.GetRequiredService<DeviceQrService>();
+                await deviceQr.RemoveFromControllersAsync(work.UserCode, work.OldControllerIds, ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Falha ao limpar QR do quarto antigo do visitante {UserCode}.", work.UserCode);
+            }
+        }
+
+        await provider.GetRequiredService<IUserSyncService>().SyncUserAsync(work.UserId, ct);
     }
 
     /// <summary>Revoga no hardware um usuário já excluído do banco (linhas de Users/DeviceSyncStatus já não existem).</summary>

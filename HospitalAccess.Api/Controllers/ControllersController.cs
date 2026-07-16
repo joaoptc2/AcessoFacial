@@ -1,3 +1,4 @@
+using HospitalAccess.Api.Services;
 using HospitalAccess.Application.Sync;
 using HospitalAccess.Domain.Entities;
 using HospitalAccess.Domain.Enums;
@@ -47,14 +48,17 @@ public class ControllersController : ControllerBase
     private readonly AccessDbContext _db;
     private readonly IDeviceGateway _gateway;
     private readonly IServiceScopeFactory _scopeFactory;
+    private readonly SingleFlight _singleFlight;
     private readonly ILogger<ControllersController> _logger;
 
     public ControllersController(
-        AccessDbContext db, IDeviceGateway gateway, IServiceScopeFactory scopeFactory, ILogger<ControllersController> logger)
+        AccessDbContext db, IDeviceGateway gateway, IServiceScopeFactory scopeFactory,
+        SingleFlight singleFlight, ILogger<ControllersController> logger)
     {
         _db = db;
         _gateway = gateway;
         _scopeFactory = scopeFactory;
+        _singleFlight = singleFlight;
         _logger = logger;
     }
 
@@ -482,19 +486,29 @@ public class ControllersController : ControllerBase
         var controller = await _db.Controllers.FirstOrDefaultAsync(c => c.Id == id, ct);
         if (controller is null) return NotFound();
 
+        // Single-flight por controlador: cliques repetidos empilhavam ClearAllPersons +
+        // re-upload COMPLETO concorrentes no mesmo aparelho — a operação mais cara que existe.
+        var flightKey = $"resync:{id}";
+        if (!_singleFlight.TryBegin(flightKey))
+            return Conflict(new { error = "Já existe uma resincronização em andamento neste controlador." });
+
         await AuditAsync(controller, "ResincronizarForçado", success: true, error: null, ct);
 
         _ = Task.Run(async () =>
         {
-            using var scope = _scopeFactory.CreateScope();
-            var sync = scope.ServiceProvider.GetRequiredService<IUserSyncService>();
             try
             {
+                using var scope = _scopeFactory.CreateScope();
+                var sync = scope.ServiceProvider.GetRequiredService<IUserSyncService>();
                 await sync.ForceResyncControllerAsync(id);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Falha no resync forçado do controlador {ControllerId}.", id);
+            }
+            finally
+            {
+                _singleFlight.End(flightKey);
             }
         });
 

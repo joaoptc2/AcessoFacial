@@ -1,3 +1,4 @@
+using HospitalAccess.Api.Services;
 using HospitalAccess.Domain.Entities;
 using HospitalAccess.Gateway;
 using HospitalAccess.Infrastructure.Persistence;
@@ -21,12 +22,15 @@ public class HolidaysController : ControllerBase
 {
     private readonly AccessDbContext _db;
     private readonly IServiceScopeFactory _scopeFactory;
+    private readonly SingleFlight _singleFlight;
     private readonly ILogger<HolidaysController> _logger;
 
-    public HolidaysController(AccessDbContext db, IServiceScopeFactory scopeFactory, ILogger<HolidaysController> logger)
+    public HolidaysController(AccessDbContext db, IServiceScopeFactory scopeFactory,
+        SingleFlight singleFlight, ILogger<HolidaysController> logger)
     {
         _db = db;
         _scopeFactory = scopeFactory;
+        _singleFlight = singleFlight;
         _logger = logger;
     }
 
@@ -93,36 +97,50 @@ public class HolidaysController : ControllerBase
     [HttpPost("sync-all")]
     public async Task<IActionResult> SyncAll(CancellationToken ct)
     {
+        // Single-flight global: cliques repetidos não empilham varreduras concorrentes dos 30
+        // aparelhos (dentro de cada varredura o loop já é sequencial).
+        if (!_singleFlight.TryBegin(FlightKey))
+            return Conflict(new { error = "Já existe uma sincronização de feriados em andamento." });
+
         var controllerIds = await _db.Controllers.Select(c => c.Id).ToListAsync(ct);
         SyncInBackground(controllerIds);
         return Accepted(new { controllerCount = controllerIds.Count });
     }
 
+    private const string FlightKey = "holidays:sync-all";
+
     private void SyncInBackground(List<Guid> controllerIds)
     {
         _ = Task.Run(async () =>
         {
-            using var scope = _scopeFactory.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<AccessDbContext>();
-            var gateway = scope.ServiceProvider.GetRequiredService<IDeviceGateway>();
-
-            var holidays = await db.Holidays.OrderBy(h => h.Index).ToListAsync();
-            var entries = holidays
-                .Select(h => new HolidayEntry(h.Index, h.Date, h.RepeatsYearly, h.HolidayType))
-                .ToList();
-
-            foreach (var controllerId in controllerIds)
+            try
             {
-                try
+                using var scope = _scopeFactory.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<AccessDbContext>();
+                var gateway = scope.ServiceProvider.GetRequiredService<IDeviceGateway>();
+
+                var holidays = await db.Holidays.OrderBy(h => h.Index).ToListAsync();
+                var entries = holidays
+                    .Select(h => new HolidayEntry(h.Index, h.Date, h.RepeatsYearly, h.HolidayType))
+                    .ToList();
+
+                foreach (var controllerId in controllerIds)
                 {
-                    var controller = await db.Controllers.FirstOrDefaultAsync(c => c.Id == controllerId);
-                    if (controller is null) continue;
-                    await gateway.SyncHolidaysAsync(controller, entries);
+                    try
+                    {
+                        var controller = await db.Controllers.FirstOrDefaultAsync(c => c.Id == controllerId);
+                        if (controller is null) continue;
+                        await gateway.SyncHolidaysAsync(controller, entries);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Falha ao sincronizar feriados no controlador {ControllerId}.", controllerId);
+                    }
                 }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Falha ao sincronizar feriados no controlador {ControllerId}.", controllerId);
-                }
+            }
+            finally
+            {
+                _singleFlight.End(FlightKey);
             }
         });
     }
