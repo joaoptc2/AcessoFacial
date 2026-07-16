@@ -1,3 +1,4 @@
+using HospitalAccess.Api.Options;
 using HospitalAccess.Domain.Entities;
 using HospitalAccess.Gateway;
 using HospitalAccess.Infrastructure.Persistence;
@@ -5,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace HospitalAccess.Api.Services;
 
@@ -13,31 +15,43 @@ namespace HospitalAccess.Api.Services;
 /// não chegaram pelo push em tempo real — recupera eventos ocorridos com o servidor offline.
 /// Deduplica contra o AccessLog por (SN do controlador + nº de série do registro). Defesa em
 /// profundidade sobre o monitoramento em tempo real. Não validado contra hardware real.
+///
+/// Intervalo em OfflineCollection:IntervalMinutes. Com OfflineCollection:SkipWhenPushHealthy
+/// (opt-in), controladores com push recente são pulados — só ligar depois de validar em hardware
+/// que o push avança o ponteiro de leitura do aparelho (senão a varredura re-baixa os mesmos
+/// registros a cada ciclo, e pulá-la deixaria de consumi-los). A primeira varredura após o boot
+/// é sempre completa (recupera o backlog do período em que o servidor esteve fora).
 /// </summary>
 public sealed class OfflineRecordCollectorBackgroundService : BackgroundService
 {
-    private static readonly TimeSpan Interval = TimeSpan.FromMinutes(15);
-
     private readonly IDeviceGateway _gateway;
     private readonly IServiceScopeFactory _scopeFactory;
+    private readonly OfflineCollectionOptions _options;
+    private readonly TimeSpan _pushIdleThreshold;
     private readonly ILogger<OfflineRecordCollectorBackgroundService> _logger;
+    private bool _firstSweepDone;
 
     public OfflineRecordCollectorBackgroundService(
-        IDeviceGateway gateway, IServiceScopeFactory scopeFactory, ILogger<OfflineRecordCollectorBackgroundService> logger)
+        IDeviceGateway gateway, IServiceScopeFactory scopeFactory,
+        IOptions<OfflineCollectionOptions> options, IOptions<MonitoringOptions> monitoringOptions,
+        ILogger<OfflineRecordCollectorBackgroundService> logger)
     {
         _gateway = gateway;
         _scopeFactory = scopeFactory;
+        _options = options.Value;
+        _pushIdleThreshold = TimeSpan.FromMinutes(monitoringOptions.Value.PushIdleThresholdMinutes);
         _logger = logger;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        using var timer = new PeriodicTimer(Interval);
+        using var timer = new PeriodicTimer(TimeSpan.FromMinutes(_options.IntervalMinutes));
         do
         {
             try
             {
                 await CollectAllAsync(stoppingToken);
+                _firstSweepDone = true;
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -64,6 +78,8 @@ public sealed class OfflineRecordCollectorBackgroundService : BackgroundService
             if (ct.IsCancellationRequested) break;
             try
             {
+                if (ShouldSkip(controller)) continue;
+
                 var events = await _gateway.CollectAccessRecordsAsync(controller, ct);
                 if (events.Count == 0) continue;
 
@@ -77,6 +93,13 @@ public sealed class OfflineRecordCollectorBackgroundService : BackgroundService
                     controller.Name, controller.IpAddress);
             }
         }
+    }
+
+    private bool ShouldSkip(Domain.Entities.Controller controller)
+    {
+        if (!_options.SkipWhenPushHealthy || !_firstSweepDone) return false;
+        var lastPush = _gateway.GetLastPushActivityUtc(controller.SerialNumber);
+        return lastPush is not null && DateTime.UtcNow - lastPush < _pushIdleThreshold;
     }
 
     private static async Task PersistAsync(
