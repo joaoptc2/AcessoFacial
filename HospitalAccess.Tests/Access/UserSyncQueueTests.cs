@@ -77,4 +77,37 @@ public class UserSyncQueueTests
         Assert.IsType<RevokeUserWork>(w1);
         Assert.IsType<RevokeUserWork>(w2);
     }
+
+    [Fact]
+    public void EnqueueChangeRoom_CarriesSnapshotAndIsNotDeduped()
+    {
+        var q = new UserSyncQueue();
+        var oldRooms = new[] { B };
+        // Como as revogações, cada troca é um item próprio (carrega o snapshot das portas antigas).
+        q.EnqueueChangeRoom(A, 42, oldRooms);
+        q.EnqueueChangeRoom(A, 42, oldRooms);
+
+        Assert.True(TryDequeue(q, out var w1));
+        var work = Assert.IsType<ChangeVisitorRoomWork>(w1);
+        Assert.Equal(A, work.UserId);
+        Assert.Equal(42u, work.UserCode);
+        Assert.Equal(oldRooms, work.OldControllerIds);
+        Assert.True(TryDequeue(q, out var w2));
+        Assert.IsType<ChangeVisitorRoomWork>(w2);
+    }
+
+    [Fact]
+    public void EnqueueChangeRoom_DoesNotBlockSyncDedupForSameUser()
+    {
+        var q = new UserSyncQueue();
+        q.EnqueueChangeRoom(A, 42, new[] { B });
+        // A troca de quarto não marca o usuário como "ativo" na dedup de sync:
+        // um EnqueueSync posterior ainda produz o item dele normalmente.
+        q.EnqueueSync(A);
+
+        Assert.True(TryDequeue(q, out var w1));
+        Assert.IsType<ChangeVisitorRoomWork>(w1);
+        Assert.True(TryDequeue(q, out var w2));
+        Assert.IsType<SyncUserWork>(w2);
+    }
 }
