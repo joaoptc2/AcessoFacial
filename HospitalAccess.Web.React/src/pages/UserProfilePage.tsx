@@ -66,7 +66,6 @@ export function UserProfilePage() {
         setGroups(grp);
         setControllers(ctrls);
       }
-      setPhotoVer((v) => v + 1); // força recarregar a foto (evita cache após trocar a foto ao editar)
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Falha ao carregar o perfil.");
     } finally {
@@ -83,17 +82,19 @@ export function UserProfilePage() {
     loadReport("", "");
   }, [loadReport]);
 
-  // Foto (buscada com autenticação; cache-buster photoVer reflete troca de foto após editar).
+  // Foto (buscada com autenticação). O cache-buster photoVer só entra APÓS uma edição (única
+  // ação que pode trocar a foto) — a visita normal usa a URL limpa e aproveita o Cache-Control
+  // de 5 min do endpoint em vez de re-baixar o blob a cada ação no perfil.
   useEffect(() => {
     let active = true;
     let url: string | null = null;
-    if (!user?.hasFacePhoto || photoVer === 0) {
+    if (!user?.hasFacePhoto) {
       setPhotoUrl(null);
       return;
     }
     (async () => {
       try {
-        const blob = await api.getUserPhoto(id, photoVer);
+        const blob = await api.getUserPhoto(id, photoVer > 0 ? photoVer : undefined);
         if (!active) return;
         url = URL.createObjectURL(blob);
         setPhotoUrl(url);
@@ -197,6 +198,7 @@ export function UserProfilePage() {
             controllers={controllers}
             onSaved={() => {
               setEditing(false);
+              setPhotoVer((v) => v + 1); // a edição pode ter trocado a foto — força re-download
               load();
             }}
             onCancel={() => setEditing(false)}

@@ -88,21 +88,35 @@ public class ControllersController : ControllerBase
         var onlineThreshold = now.AddMinutes(-3); // heartbeat a cada 1 min; 3 min sem contato = offline
         var recentAlarmSince = now.AddHours(-24);
 
-        var controllers = await _db.Controllers.AsNoTracking()
+        // É o endpoint mais consultado (polling do dashboard): 3 queries agregadas no total,
+        // em vez de 2 subqueries COUNT correlacionadas POR controlador na projeção.
+        var pendingByController = await _db.SyncStatuses.AsNoTracking()
+            .Where(s => s.State == Domain.Enums.SyncState.Pending || s.State == Domain.Enums.SyncState.Failed)
+            .GroupBy(s => s.ControllerId)
+            .Select(g => new { ControllerId = g.Key, Count = g.Count() })
+            .ToDictionaryAsync(g => g.ControllerId, g => g.Count, ct);
+        var alarmsByController = await _db.AlarmEvents.AsNoTracking()
+            .Where(a => !a.Cleared && a.TimestampUtc >= recentAlarmSince)
+            .GroupBy(a => a.ControllerId)
+            .Select(g => new { ControllerId = g.Key, Count = g.Count() })
+            .ToDictionaryAsync(g => g.ControllerId, g => g.Count, ct);
+
+        var rows = await _db.Controllers.AsNoTracking()
             .OrderBy(c => c.Name)
-            .Select(c => new
-            {
-                c.Id,
-                c.Name,
-                c.IpAddress,
-                c.LastSeenUtc,
-                c.LastReachError,
-                Online = c.LastSeenUtc != null && c.LastSeenUtc >= onlineThreshold,
-                PendingSync = _db.SyncStatuses.Count(s => s.ControllerId == c.Id
-                    && (s.State == Domain.Enums.SyncState.Pending || s.State == Domain.Enums.SyncState.Failed)),
-                ActiveAlarms = _db.AlarmEvents.Count(a => a.ControllerId == c.Id && !a.Cleared && a.TimestampUtc >= recentAlarmSince),
-            })
+            .Select(c => new { c.Id, c.Name, c.IpAddress, c.LastSeenUtc, c.LastReachError })
             .ToListAsync(ct);
+
+        var controllers = rows.Select(c => new
+        {
+            c.Id,
+            c.Name,
+            c.IpAddress,
+            c.LastSeenUtc,
+            c.LastReachError,
+            Online = c.LastSeenUtc != null && c.LastSeenUtc >= onlineThreshold,
+            PendingSync = pendingByController.GetValueOrDefault(c.Id),
+            ActiveAlarms = alarmsByController.GetValueOrDefault(c.Id),
+        }).ToList();
 
         return Ok(new
         {
