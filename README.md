@@ -490,6 +490,28 @@ dotnet test HospitalAccess.Tests/HospitalAccess.Tests.csproj
   A sessão (JWT em `localStorage`) sobrevive a um F5. **O front-end Blazor (`HospitalAccess.Web`)
   foi aposentado e removido do repositório** — o React é o único front-end.
 
+## Troubleshooting: `CommandStatus_Timeout` com o aparelho "online"
+
+O ping/painel responder **não** garante que o protocolo binário responda. O 8190H **descarta em
+silêncio** qualquer quadro cujo SN ou senha de comunicação não batam com os dele (não devolve
+erro — vira timeout do nosso lado). Cheque nesta ordem:
+
+1. **IP certo?** Aparelho em DHCP pode ter trocado de IP (fixe IP/reserva no roteador). O ping
+   "online" pode estar vindo de OUTRA máquina que herdou o IP antigo.
+2. **Porta** do cadastro = porta do protocolo configurada no aparelho (tela de rede dele).
+3. **SN (16 dígitos) e senha de comunicação** exatamente iguais aos do aparelho — errados =
+   timeout silencioso, não mensagem de erro.
+4. **"Testar conexão"** na tela do controlador faz um `ReadSN` real (e ignora o disjuntor).
+5. **Aparelho degradado** (lento a ponto de nem o painel web local abrir): reboot/firmware — é
+   problema do dispositivo. Enquanto isso, o **disjuntor por controlador** abre após 3 falhas
+   consecutivas (cooldown exponencial 1→15 min; badge "protocolo em espera" no painel) para não
+   martelar o aparelho doente; um "Testar conexão" bem-sucedido fecha o circuito na hora. Para
+   aparelhos cronicamente lentos, suba o `TimeoutMs` do cadastro (o upload de face já usa piso
+   de 15 s).
+6. **Divergência de cadastro** (auditoria acusa usuários faltando apesar de "Synced"): use o
+   botão **"Reparar divergências"** na aba Auditoria — os faltantes voltam a Pending e são
+   re-enviados pela fila.
+
 ## Limitações conhecidas / próximos passos
 - **Exportação em PDF** do log de acessos: não implementada (só CSV). Toda biblioteca PDF
   popular para .NET tem alguma pegada de licença para uma organização do porte de um

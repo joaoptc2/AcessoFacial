@@ -53,7 +53,9 @@ public class DevLogsController : ControllerBase
     [HttpPost("mode")]
     public async Task<IActionResult> SetMode([FromBody] SetDevModeRequest request, CancellationToken ct)
     {
-        var settings = await _db.SystemSettings.FirstOrDefaultAsync(ct);
+        // Por chave (linha única) — evita o warning de EF "First without OrderBy".
+        var settings = await _db.SystemSettings
+            .FirstOrDefaultAsync(s => s.Id == SystemSettings.SingletonId, ct);
         if (settings is null)
         {
             settings = new SystemSettings { Id = SystemSettings.SingletonId };

@@ -49,16 +49,18 @@ public class ControllersController : ControllerBase
     private readonly IDeviceGateway _gateway;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly SingleFlight _singleFlight;
+    private readonly IUserSyncQueue _syncQueue;
     private readonly ILogger<ControllersController> _logger;
 
     public ControllersController(
         AccessDbContext db, IDeviceGateway gateway, IServiceScopeFactory scopeFactory,
-        SingleFlight singleFlight, ILogger<ControllersController> logger)
+        SingleFlight singleFlight, IUserSyncQueue syncQueue, ILogger<ControllersController> logger)
     {
         _db = db;
         _gateway = gateway;
         _scopeFactory = scopeFactory;
         _singleFlight = singleFlight;
+        _syncQueue = syncQueue;
         _logger = logger;
     }
 
@@ -125,6 +127,9 @@ public class ControllersController : ControllerBase
             PendingSync = pendingByController.TryGetValue(c.Id, out var p) ? p.Count : 0,
             AwaitingManualSync = pendingByController.TryGetValue(c.Id, out var m) ? m.AwaitingManual : 0,
             ActiveAlarms = alarmsByController.GetValueOrDefault(c.Id),
+            // Disjuntor aberto = "rede OK, mas o protocolo não responde — comandos em espera
+            // até HH:mm para proteger o aparelho". null = circuito fechado (normal).
+            CircuitOpenUntilUtc = _gateway.GetCircuitOpenUntilUtc(c.Id),
         }).ToList();
 
         return Ok(new
@@ -474,6 +479,65 @@ public class ControllersController : ControllerBase
         }
         catch (Exception ex)
         {
+            return StatusCode(502, new { error = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// REPARA a divergência detectada pela auditoria: usuários ativos com permissão nesta porta
+    /// cujo status diz 'Synced' mas que estão AUSENTES no aparelho voltam a 'Pending' (com
+    /// retry/quarentena zerados) e são reenfileirados na fila de sincronização. Divergência
+    /// típica herdada da era do "sucesso silencioso" (escrita marcada Synced sem o aparelho ter
+    /// gravado). Usuários EXTRAS no aparelho são apenas reportados — a remoção segue manual.
+    /// </summary>
+    [HttpPost("{id:guid}/personnel-audit/repair")]
+    [Authorize(Roles = "Admin,Operator")]
+    public async Task<IActionResult> RepairPersonnelAudit(Guid id, CancellationToken ct)
+    {
+        var controller = await _db.Controllers.FirstOrDefaultAsync(c => c.Id == id, ct);
+        if (controller is null) return NotFound();
+
+        try
+        {
+            var onDevice = (await _gateway.ReadRegisteredUserCodesAsync(controller, ct)).ToHashSet();
+
+            // Candidatos: permissão nesta porta + usuário ativo + status Synced (o banco acha
+            // que está lá) + AUSENTE no aparelho. Visitante expirado fica de fora (não recadastrar).
+            var now = DateTime.UtcNow;
+            var candidates = await _db.SyncStatuses
+                .Where(s => s.ControllerId == id
+                            && s.State == SyncState.Synced
+                            && s.User!.RevokedAtUtc == null
+                            && (s.User.ValidUntil == null || s.User.ValidUntil > now)
+                            && _db.Permissions.Any(p => p.ControllerId == id && p.UserId == s.UserId))
+                .Include(s => s.User)
+                .ToListAsync(ct);
+
+            var repairedUserIds = new List<Guid>();
+            foreach (var status in candidates)
+            {
+                if (onDevice.Contains(status.User!.UserCode)) continue; // realmente está no aparelho
+
+                status.State = SyncState.Pending;
+                status.RetryCount = 0;
+                status.NextRetryAtUtc = null;
+                status.LastError = null;
+                status.UpdatedAt = DateTime.UtcNow;
+                repairedUserIds.Add(status.UserId);
+            }
+            await _db.SaveChangesAsync(ct);
+
+            var enqueued = _syncQueue.EnqueueMany(repairedUserIds.Distinct());
+            await AuditAsync(controller, $"RepararAuditoria#{repairedUserIds.Count}", success: true, error: null, ct);
+            _logger.LogInformation(
+                "Reparo de auditoria no controlador {Controller}: {Count} usuário(s) marcados para re-envio ({Enqueued} enfileirados).",
+                controller.Name, repairedUserIds.Count, enqueued);
+
+            return Ok(new { repaired = repairedUserIds.Count, enqueued });
+        }
+        catch (Exception ex)
+        {
+            await AuditAsync(controller, "RepararAuditoria", success: false, error: ex.Message, ct);
             return StatusCode(502, new { error = ex.Message });
         }
     }

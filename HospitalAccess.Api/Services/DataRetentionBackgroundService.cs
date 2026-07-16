@@ -50,7 +50,9 @@ public sealed class DataRetentionBackgroundService : BackgroundService
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AccessDbContext>();
 
-        var settings = await db.SystemSettings.AsNoTracking().FirstOrDefaultAsync(ct)
+        // Por chave (linha única) — evita o warning de EF "First without OrderBy".
+        var settings = await db.SystemSettings.AsNoTracking()
+                           .FirstOrDefaultAsync(s => s.Id == SystemSettings.SingletonId, ct)
                        ?? new SystemSettings();
         var now = DateTime.UtcNow;
 

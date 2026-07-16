@@ -310,6 +310,8 @@ export interface ControllerStatusItem {
   /** Subconjunto de pendingSync em QUARENTENA (erro permanente): o retry automático não resolve — precisa de ação manual. */
   awaitingManualSync: number;
   activeAlarms: number;
+  /** Disjuntor de comandos aberto até este horário (UTC): rede OK, mas o protocolo não responde — comandos em espera para proteger o aparelho. null = normal. */
+  circuitOpenUntilUtc: string | null;
 }
 
 export interface DashboardDto {
@@ -571,6 +573,8 @@ export const api = {
 
   // ---- Auditoria / leitura reversa ----
   getPersonnelAudit: (id: string) => request<PersonnelAudit>(`/controllers/${id}/personnel-audit`),
+  repairPersonnelAudit: (id: string) =>
+    request<{ repaired: number; enqueued: number }>(`/controllers/${id}/personnel-audit/repair`, { method: "POST" }),
 
   // ---- Foto do evento ----
   downloadEventPhotos: (id: string, quantity: number) =>

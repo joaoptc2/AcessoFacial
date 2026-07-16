@@ -115,6 +115,15 @@ export function HomePage() {
                   <span className={c.online ? "pill pill-success" : "pill pill-danger"}>
                     {c.online ? "Online" : "Offline"}
                   </span>
+                  {c.circuitOpenUntilUtc && (
+                    <span
+                      className="pill pill-warning"
+                      style={{ marginLeft: "0.35rem" }}
+                      title="O aparelho responde à rede mas não ao protocolo; os comandos estão em espera para protegê-lo. Use 'Testar conexão' na tela do controlador para sondar agora."
+                    >
+                      protocolo em espera até {new Date(c.circuitOpenUntilUtc).toLocaleTimeString()}
+                    </span>
+                  )}
                 </td>
                 <td>{c.lastSeenUtc ? new Date(c.lastSeenUtc).toLocaleString() : "nunca"}</td>
                 <td>

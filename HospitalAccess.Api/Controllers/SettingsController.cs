@@ -69,7 +69,10 @@ public class SettingsController : ControllerBase
 
     private async Task<SystemSettings> GetOrCreateAsync(CancellationToken ct)
     {
-        var settings = await _db.SystemSettings.FirstOrDefaultAsync(ct);
+        // Por chave (linha única): FirstOrDefault sem filtro dispara o warning de EF
+        // "First without OrderBy" a cada chamada — ruído no log espelhado do modo dev.
+        var settings = await _db.SystemSettings
+            .FirstOrDefaultAsync(s => s.Id == SystemSettings.SingletonId, ct);
         if (settings is null)
         {
             settings = new SystemSettings { Id = SystemSettings.SingletonId };

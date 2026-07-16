@@ -139,6 +139,13 @@ public interface IDeviceGateway
     /// </summary>
     DateTime? GetLastEventPushUtc(string serialNumber);
 
+    /// <summary>
+    /// Se o disjuntor de comandos deste controlador está aberto (falhas consecutivas de
+    /// protocolo → cooldown que protege o aparelho degradado), devolve até quando (UTC);
+    /// senão null. O painel usa para explicar "rede OK, protocolo em espera".
+    /// </summary>
+    DateTime? GetCircuitOpenUntilUtc(Guid controllerId);
+
     /// <summary>Limpa o estado local (gate, monitoramento, push, conexão) de um controlador excluído do cadastro.</summary>
     void ForgetController(Controller controller);
 

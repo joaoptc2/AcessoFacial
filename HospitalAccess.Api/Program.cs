@@ -110,7 +110,8 @@ builder.Services.Configure<HealthCheckOptions>(builder.Configuration.GetSection(
 builder.Services.AddSingleton<ControllerConnectionFactory>();
 builder.Services.AddSingleton<IDeviceGateway>(sp => new DoNetDriveGateway(
     sp.GetRequiredService<ControllerConnectionFactory>(),
-    sp.GetRequiredService<TimeZoneInfo>())
+    sp.GetRequiredService<TimeZoneInfo>(),
+    sp.GetRequiredService<ILogger<DoNetDriveGateway>>())
 {
     FaceUploadWireRetries = sp.GetRequiredService<IOptions<SyncRetryOptions>>().Value.FaceUploadWireRetries,
 });
@@ -220,8 +221,10 @@ using (var scope = app.Services.CreateScope())
     var logger = scope.ServiceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Startup");
     await StaffUserSeeder.SeedAsync(db, builder.Configuration, logger);
 
-    // Restaura o toggle do modo de desenvolvimento (persistido em SystemSettings).
+    // Restaura o toggle do modo de desenvolvimento (persistido em SystemSettings; leitura por
+    // chave — FirstOrDefault sem filtro dispara o warning de EF "First without OrderBy").
     var devMode = await db.SystemSettings
+        .Where(s => s.Id == HospitalAccess.Domain.Entities.SystemSettings.SingletonId)
         .Select(s => s.DevelopmentModeEnabled)
         .FirstOrDefaultAsync();
     devLogBuffer.SetEnabled(devMode);
