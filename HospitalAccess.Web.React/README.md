@@ -44,9 +44,11 @@ mantém a sessão.
 
 ## Estrutura
 
-- `src/lib/api.ts` — cliente HTTP tipado para a API (mesma responsabilidade do
-  `ApiClient.cs` do lado Blazor) — cobre todos os endpoints usados pelas telas abaixo.
+- `src/lib/api.ts` — cliente HTTP tipado para a API — cobre todos os endpoints usados
+  pelas telas abaixo.
 - `src/lib/AuthContext.tsx` — estado de autenticação (token/role/username).
+- `src/lib/controllerStatusStore.ts` — polling compartilhado do `/api/controllers/status`
+  (um único intervalo de 30s por aba, consumido por `StatusBanner` e `HomePage`).
 - `src/components/` — `Sidebar` (navegação) e `Modal` (usado no controle de dispositivo).
 - `src/pages/`:
   - `LoginPage`, `HomePage`

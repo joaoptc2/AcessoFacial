@@ -1,8 +1,11 @@
 namespace HospitalAccess.Domain.Enums;
 
 /// <summary>
-/// Tipo de alarme reportado pelo controlador (AlarmTransaction.TransactionCode do SDK,
-/// código base sem o bit de "cancelamento" — ver AlarmEvent.Cleared).
+/// Tipo de alarme normalizado. Os alarmes chegam como LOG DE SISTEMA do controlador
+/// (SystemTransaction, push com CmdIndex == 3 — protocolo Classe IX §9.4) e são mapeados
+/// por TransactionCodeClassifier.TryMapSystemAlarm: códigos 14–20 disparam e 21–27 limpam
+/// (ver AlarmEvent.Cleared). Os valores abaixo são a numeração interna do sistema, não os
+/// códigos crus do protocolo.
 /// </summary>
 public enum AlarmKind
 {
