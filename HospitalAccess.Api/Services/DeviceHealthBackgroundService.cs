@@ -83,6 +83,7 @@ public sealed class DeviceHealthBackgroundService : BackgroundService
 
         var sw = Stopwatch.StartNew();
         var reachable = 0;
+        var unreachable = new System.Collections.Concurrent.ConcurrentBag<string>();
         using var gate = new SemaphoreSlim(Math.Max(1, _options.MaxParallelChecks));
         var tasks = controllers.Select(async controller =>
         {
@@ -90,6 +91,7 @@ public sealed class DeviceHealthBackgroundService : BackgroundService
             try
             {
                 if (await CheckOneAsync(controller, ct)) Interlocked.Increment(ref reachable);
+                else unreachable.Add($"{controller.Name} ({controller.IpAddress})");
             }
             finally
             {
@@ -100,14 +102,26 @@ public sealed class DeviceHealthBackgroundService : BackgroundService
         sw.Stop();
 
         var offline = controllers.Count - reachable;
-        // Muitos falhando de uma vez = sinal de gargalo LOCAL (não dos aparelhos). Loga o estado do
-        // thread pool para diagnóstico — essa é a instrumentação para "ver" o problema.
-        if (offline > 0 && offline >= controllers.Count / 2)
+        // Nomeia os inalcançáveis na própria linha (até 5) — sem isso o operador via a contagem
+        // mas precisava abrir o painel para descobrir QUAL aparelho olhar.
+        var offlineNames = string.Join(", ", unreachable.Take(5))
+            + (unreachable.Count > 5 ? $" (+{unreachable.Count - 5})" : "");
+
+        if (HealthProbeHeuristics.SuspectLocalBottleneck(offline, controllers.Count))
         {
+            // Muitos caindo DE UMA VEZ = sinal de gargalo LOCAL (não dos aparelhos). Loga o estado
+            // do thread pool para diagnóstico — essa é a instrumentação para "ver" o problema.
             ThreadPool.GetAvailableThreads(out var worker, out var io);
             _logger.LogWarning(
-                "Health-check: {Reach}/{Total} alcançáveis em {Ms}ms (⚠ {Off} inalcançáveis DE UMA VEZ — suspeita de gargalo local). ThreadPool: worker livres={W}, IO livres={IO}, threads={Count}.",
-                reachable, controllers.Count, sw.ElapsedMilliseconds, offline, worker, io, ThreadPool.ThreadCount);
+                "Health-check: {Reach}/{Total} alcançáveis em {Ms}ms (⚠ {Off} inalcançáveis DE UMA VEZ — suspeita de gargalo local). Inalcançáveis: {Names}. ThreadPool: worker livres={W}, IO livres={IO}, threads={Count}.",
+                reachable, controllers.Count, sw.ElapsedMilliseconds, offline, offlineNames, worker, io, ThreadPool.ThreadCount);
+        }
+        else if (offline > 0)
+        {
+            // Caso comum: um ou poucos aparelhos realmente fora (energia/cabo/IP) — sem alarde
+            // de gargalo, mas em Warning e dizendo quem é.
+            _logger.LogWarning("Health-check: {Reach}/{Total} alcançáveis em {Ms}ms. Inalcançáveis: {Names}.",
+                reachable, controllers.Count, sw.ElapsedMilliseconds, offlineNames);
         }
         else
         {

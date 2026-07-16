@@ -89,7 +89,23 @@ public sealed class UserSyncService : IUserSyncService
                 (status.NextRetryAtUtc is null || status.NextRetryAtUtc > now))
                 continue;
 
-            await SyncToControllerAsync(user, controllerId, status, ct);
+            try
+            {
+                await SyncToControllerAsync(user, controllerId, status, ct);
+            }
+            catch (OperationCanceledException)
+            {
+                throw; // desligamento: não mascarar
+            }
+            catch (Exception ex)
+            {
+                // Isolamento POR PORTA: uma exceção fora do caminho tratado (ex.: falha no
+                // SaveChanges) não pode abortar as portas seguintes — visto em produção como
+                // "usuário nem aparece no status de sincronização" das outras controladoras.
+                _logger.LogError(ex,
+                    "Falha inesperada ao sincronizar usuário {UserId} no controlador {ControllerId}; seguindo para as demais portas.",
+                    user.Id, controllerId);
+            }
         }
 
         // Permissão removida: revogar nos controladores onde a pessoa não deveria mais existir.
@@ -153,6 +169,8 @@ public sealed class UserSyncService : IUserSyncService
                 status.ConflictUserCode = null;
                 status.RetryCount = 0;
                 status.NextRetryAtUtc = null;
+                _logger.LogInformation("Visitante {Name} (#{Code}) sincronizado no controlador {Controller}.",
+                    user.Name, user.UserCode, controller.Name);
             }
             else
             {
@@ -166,6 +184,8 @@ public sealed class UserSyncService : IUserSyncService
                 {
                     status.RetryCount = 0;
                     status.NextRetryAtUtc = null;
+                    _logger.LogInformation("Usuário {Name} (#{Code}) sincronizado com face no controlador {Controller}.",
+                        user.Name, user.UserCode, controller.Name);
                 }
                 else
                 {
@@ -174,6 +194,12 @@ public sealed class UserSyncService : IUserSyncService
                     status.NextRetryAtUtc = SyncRetryPolicy.IsPermanent(result.Code)
                         ? null
                         : DateTime.UtcNow + SyncRetryPolicy.Backoff(status.RetryCount, _retryOptions);
+                    _logger.LogWarning(
+                        "Falha ao sincronizar {Name} (#{Code}) no controlador {Controller}: {Error} — {NextStep}.",
+                        user.Name, user.UserCode, controller.Name, result.Message,
+                        status.NextRetryAtUtc is { } next
+                            ? $"nova tentativa automática às {next:HH:mm:ss} UTC"
+                            : "erro PERMANENTE, em quarentena (resolva pelo botão de resync/conflito ou troque a foto)");
                 }
             }
         }

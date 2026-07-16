@@ -90,11 +90,19 @@ public class ControllersController : ControllerBase
 
         // É o endpoint mais consultado (polling do dashboard): 3 queries agregadas no total,
         // em vez de 2 subqueries COUNT correlacionadas POR controlador na projeção.
+        // PendingSync inclui as falhas; AwaitingManual destaca as em QUARENTENA (erro permanente,
+        // NextRetryAtUtc null) — o retry automático não vai resolvê-las, e o banner precisa
+        // dizer isso em vez de parecer que o sistema "não sincroniza".
         var pendingByController = await _db.SyncStatuses.AsNoTracking()
             .Where(s => s.State == Domain.Enums.SyncState.Pending || s.State == Domain.Enums.SyncState.Failed)
             .GroupBy(s => s.ControllerId)
-            .Select(g => new { ControllerId = g.Key, Count = g.Count() })
-            .ToDictionaryAsync(g => g.ControllerId, g => g.Count, ct);
+            .Select(g => new
+            {
+                ControllerId = g.Key,
+                Count = g.Count(),
+                AwaitingManual = g.Count(s => s.State == Domain.Enums.SyncState.Failed && s.NextRetryAtUtc == null),
+            })
+            .ToDictionaryAsync(g => g.ControllerId, g => new { g.Count, g.AwaitingManual }, ct);
         var alarmsByController = await _db.AlarmEvents.AsNoTracking()
             .Where(a => !a.Cleared && a.TimestampUtc >= recentAlarmSince)
             .GroupBy(a => a.ControllerId)
@@ -114,7 +122,8 @@ public class ControllersController : ControllerBase
             c.LastSeenUtc,
             c.LastReachError,
             Online = c.LastSeenUtc != null && c.LastSeenUtc >= onlineThreshold,
-            PendingSync = pendingByController.GetValueOrDefault(c.Id),
+            PendingSync = pendingByController.TryGetValue(c.Id, out var p) ? p.Count : 0,
+            AwaitingManualSync = pendingByController.TryGetValue(c.Id, out var m) ? m.AwaitingManual : 0,
             ActiveAlarms = alarmsByController.GetValueOrDefault(c.Id),
         }).ToList();
 

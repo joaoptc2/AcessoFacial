@@ -117,18 +117,49 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
     // falha/cancelamento/timeout.
     // ----------------------------------------------------------------------------------
 
+    /// <summary>
+    /// Tetos de segurança contra travamento SILENCIOSO do pipeline: maiores que qualquer comando
+    /// legítimo (o mais longo é a foto de evento: 30s × RestartCount 3 = 90s), mas finitos.
+    /// Sem eles, um comando que o SDK nunca completa (visto em produção: usuário 'Pending'
+    /// eternamente, sem linha de status nas demais portas e sem NENHUM log) segurava o gate do
+    /// controlador e um worker da fila PARA SEMPRE.
+    /// </summary>
+    private static readonly TimeSpan GateWaitCap = TimeSpan.FromMinutes(3);
+    private static readonly TimeSpan CommandHardCap = TimeSpan.FromMinutes(3);
+
     private async Task RunAsync(INCommand cmd, string operation, Controller controller)
     {
         // Serializa por controlador: nunca dois comandos ao mesmo aparelho ao mesmo tempo. O lock é
         // mantido só durante o comando (que tem timeout próprio = cmdDtl.Timeout), então não trava
         // indefinidamente. Controladores diferentes rodam em paralelo (locks distintos).
         var gate = _controllerGates.GetOrAdd(controller.Id, static _ => new SemaphoreSlim(1, 1));
-        await gate.WaitAsync();
+        if (!await gate.WaitAsync(GateWaitCap))
+        {
+            // Vira Failed + backoff no chamador em vez de pendurar o worker junto.
+            throw new DeviceCommandException(
+                $"{operation} não iniciou: o controlador '{controller.Name}' ({controller.IpAddress}:{controller.Port}) " +
+                $"está ocupado há mais de {GateWaitCap.TotalSeconds:F0}s com um comando anterior (possível comando pendurado no SDK).");
+        }
         try
         {
             try
             {
-                await _allocator.AddCommandAsync(cmd);
+                var commandTask = _allocator.AddCommandAsync(cmd);
+                // Teto DURO independente do timeout interno do SDK: se a promessa nunca completar,
+                // abandona o comando (órfão inofensivo — o aparelho já não está respondendo) e
+                // libera o gate/worker. Sem isto o await podia ficar pendurado para sempre.
+                var finished = await Task.WhenAny(commandTask, Task.Delay(CommandHardCap));
+                if (finished != commandTask)
+                {
+                    throw new DeviceCommandException(
+                        $"{operation} excedeu o teto de {CommandHardCap.TotalSeconds:F0}s sem resposta do SDK no controlador " +
+                        $"'{controller.Name}' ({controller.IpAddress}:{controller.Port}) — comando abandonado.");
+                }
+                await commandTask; // propaga a exceção do SDK, se houver
+            }
+            catch (DeviceCommandException)
+            {
+                throw;
             }
             catch (Exception ex)
             {

@@ -307,6 +307,8 @@ export interface ControllerStatusItem {
   lastReachError: string | null;
   online: boolean;
   pendingSync: number;
+  /** Subconjunto de pendingSync em QUARENTENA (erro permanente): o retry automático não resolve — precisa de ação manual. */
+  awaitingManualSync: number;
   activeAlarms: number;
 }
 
