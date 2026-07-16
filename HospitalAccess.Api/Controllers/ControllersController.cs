@@ -14,7 +14,7 @@ namespace HospitalAccess.Api.Controllers;
 
 public record CreateControllerRequest(
     string Name, string IpAddress, int Port, string SerialNumber,
-    string CommunicationPassword, bool SupportsWaitRepeatMessage, int RelayIndex = 0,
+    string CommunicationPassword, bool SupportsWaitRepeatMessage,
     ControllerConnectionMode ConnectionMode = ControllerConnectionMode.TcpClient,
     // API HTTP do painel web (para ler o QRCode). ApiBaseUrl vazio = só SDK. ApiPassword vazio =
     // usar o padrão global (Device:DefaultApiPassword).
@@ -24,7 +24,7 @@ public record CreateControllerRequest(
 // devolvida pelo GET, então o formulário não a tem para reenviar). ApiPassword segue a mesma regra.
 public record UpdateControllerRequest(
     string Name, string IpAddress, int Port, string SerialNumber,
-    string? CommunicationPassword, bool SupportsWaitRepeatMessage, int RelayIndex,
+    string? CommunicationPassword, bool SupportsWaitRepeatMessage,
     int TimeoutMs, int RestartCount,
     ControllerConnectionMode ConnectionMode = ControllerConnectionMode.TcpClient,
     string? ApiBaseUrl = null, string? ApiPassword = null);
@@ -70,7 +70,7 @@ public class ControllersController : ControllerBase
             .Select(c => new
             {
                 c.Id, c.Name, c.IpAddress, c.Port, c.SerialNumber, c.SupportsWaitRepeatMessage,
-                c.RelayIndex, c.TimeoutMs, c.RestartCount,
+                c.TimeoutMs, c.RestartCount,
                 UserCount = c.Permissions.Count,
             })
             .ToListAsync(ct);
@@ -140,7 +140,7 @@ public class ControllersController : ControllerBase
         return Ok(new
         {
             controller.Id, controller.Name, controller.IpAddress, controller.Port, controller.SerialNumber,
-            controller.SupportsWaitRepeatMessage, controller.RelayIndex, controller.ConnectionMode,
+            controller.SupportsWaitRepeatMessage, controller.ConnectionMode,
             controller.TimeoutMs, controller.RestartCount, controller.LastClockSyncAtUtc,
             HasCommunicationPassword = !string.IsNullOrEmpty(controller.CommunicationPassword),
             controller.ApiBaseUrl,
@@ -179,7 +179,6 @@ public class ControllersController : ControllerBase
             SerialNumber = request.SerialNumber,
             CommunicationPassword = request.CommunicationPassword,
             SupportsWaitRepeatMessage = request.SupportsWaitRepeatMessage,
-            RelayIndex = request.RelayIndex,
             ConnectionMode = request.ConnectionMode,
             ApiBaseUrl = (request.ApiBaseUrl ?? string.Empty).TrimEnd('/'),
             ApiPassword = request.ApiPassword ?? string.Empty,
@@ -215,7 +214,6 @@ public class ControllersController : ControllerBase
         if (!string.IsNullOrEmpty(request.CommunicationPassword))
             controller.CommunicationPassword = request.CommunicationPassword;
         controller.SupportsWaitRepeatMessage = request.SupportsWaitRepeatMessage;
-        controller.RelayIndex = request.RelayIndex;
         controller.ConnectionMode = request.ConnectionMode;
         controller.TimeoutMs = request.TimeoutMs;
         controller.RestartCount = request.RestartCount;
@@ -262,6 +260,11 @@ public class ControllersController : ControllerBase
 
         _db.Controllers.Remove(controller);
         await _db.SaveChangesAsync(ct);
+
+        // Limpa o estado local do gateway (gate de serialização, monitoramento, conexão
+        // persistente) — sem isto, o singleton acumulava estado de aparelhos excluídos.
+        _gateway.ForgetController(controller);
+
         return NoContent();
     }
 

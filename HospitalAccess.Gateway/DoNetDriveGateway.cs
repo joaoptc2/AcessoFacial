@@ -791,6 +791,31 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
     }
 
     /// <summary>
+    /// Esquece o estado local de um controlador EXCLUÍDO do cadastro: gate de serialização,
+    /// registro de monitoramento, última atividade de push e a conexão persistente. Sem isto,
+    /// gates/conexões de aparelhos removidos ficavam vivos no singleton para sempre.
+    /// (Não envia CloseWatch: o aparelho pode nem estar acessível — apenas limpeza local.)
+    /// </summary>
+    public void ForgetController(Controller controller)
+    {
+        if (_controllerGates.TryRemove(controller.Id, out var gate))
+            gate.Dispose();
+        _monitored.TryRemove(controller.SerialNumber, out _);
+        _lastPushUtc.TryRemove(controller.SerialNumber, out _);
+
+        try
+        {
+            var cmdDtl = _connections.CreateCommandDetail(controller);
+            var connector = _allocator.GetConnector(cmdDtl.Connector);
+            connector?.CloseForciblyConnect();
+        }
+        catch
+        {
+            // Senha indecifrável ou detalhe inválido não podem impedir a limpeza local.
+        }
+    }
+
+    /// <summary>
     /// Fábrica de tipos de registro para o Door8800RequestHandle decodificar o push, idêntica ao
     /// demo oficial (FrmMain.RequestHandleFactory): cmdIndex 1-4 usam a tabela do facial, 0x22 é
     /// keep-alive e 0xA0 é o teste de conexão.

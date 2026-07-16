@@ -132,6 +132,9 @@ public interface IDeviceGateway
     /// </summary>
     DateTime? GetLastPushActivityUtc(string serialNumber);
 
+    /// <summary>Limpa o estado local (gate, monitoramento, push, conexão) de um controlador excluído do cadastro.</summary>
+    void ForgetController(Controller controller);
+
     /// <summary>
     /// Evento de acesso em tempo real empurrado por um controlador.
     /// A implementação assina os eventos do SDK e dispara este callback.

@@ -16,7 +16,6 @@ export interface ControllerDto {
   port: number;
   serialNumber: string;
   supportsWaitRepeatMessage: boolean;
-  relayIndex: number;
   timeoutMs: number;
   restartCount: number;
   userCount: number;
@@ -29,7 +28,6 @@ export interface ControllerDetailDto {
   port: number;
   serialNumber: string;
   supportsWaitRepeatMessage: boolean;
-  relayIndex: number;
   timeoutMs: number;
   restartCount: number;
   connectionMode: ControllerConnectionMode;
@@ -62,7 +60,6 @@ export interface UpdateControllerRequest {
   communicationPassword?: string;
   supportsWaitRepeatMessage: boolean;
   connectionMode: ControllerConnectionMode;
-  relayIndex: number;
   timeoutMs: number;
   restartCount: number;
   apiBaseUrl?: string;

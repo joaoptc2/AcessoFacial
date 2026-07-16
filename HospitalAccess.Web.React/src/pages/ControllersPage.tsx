@@ -94,7 +94,6 @@ export function ControllersPage() {
           communicationPassword: form.communicationPassword ? form.communicationPassword : undefined,
           supportsWaitRepeatMessage: form.supportsWaitRepeatMessage,
           connectionMode: form.connectionMode,
-          relayIndex: 0,
           timeoutMs: form.timeoutMs,
           restartCount: form.restartCount,
           apiBaseUrl: form.apiBaseUrl || undefined,
