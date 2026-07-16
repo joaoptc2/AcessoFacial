@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Npgsql;
 
 namespace HospitalAccess.Api.Services;
 
@@ -45,9 +46,7 @@ public sealed class AccessEventRecorder : BackgroundService
         {
             while (await _queue.Reader.WaitToReadAsync(stoppingToken))
             {
-                var batch = new List<DeviceAccessEvent>(MaxBatchSize);
-                while (batch.Count < MaxBatchSize && _queue.Reader.TryRead(out var e))
-                    batch.Add(e);
+                var batch = ReadBatch();
                 if (batch.Count == 0) continue;
 
                 try
@@ -65,9 +64,41 @@ public sealed class AccessEventRecorder : BackgroundService
                 }
             }
         }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            // desligamento normal — drenagem no finally
+        }
         finally
         {
             _gateway.AccessEventReceived -= OnAccessEventReceived;
+            // Drenagem best-effort no desligamento: sem isto, o que estava na fila (até a
+            // capacidade inteira) era descartado em silêncio a cada restart do serviço.
+            await DrainOnShutdownAsync();
+        }
+    }
+
+    private List<DeviceAccessEvent> ReadBatch()
+    {
+        var batch = new List<DeviceAccessEvent>(MaxBatchSize);
+        while (batch.Count < MaxBatchSize && _queue.Reader.TryRead(out var e))
+            batch.Add(e);
+        return batch;
+    }
+
+    private async Task DrainOnShutdownAsync()
+    {
+        try
+        {
+            while (true)
+            {
+                var batch = ReadBatch();
+                if (batch.Count == 0) break;
+                await PersistBatchAsync(batch, CancellationToken.None);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Falha ao drenar eventos de acesso pendentes no desligamento.");
         }
     }
 
@@ -84,6 +115,23 @@ public sealed class AccessEventRecorder : BackgroundService
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AccessDbContext>();
 
+        try
+        {
+            await InsertNewEventsAsync(db, batch, ct);
+        }
+        catch (DbUpdateException ex) when (ex.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation })
+        {
+            // Corrida com a coleta offline ENTRE a query de dedup e o SaveChanges: o mesmo
+            // (SN, nº de série) foi gravado pelo outro caminho primeiro e o índice único
+            // rejeitou. Sem este retry, a colisão de UM registro derrubava o lote inteiro
+            // (até 50 eventos). Re-consulta a dedup e regrava só o que ainda falta.
+            db.ChangeTracker.Clear();
+            await InsertNewEventsAsync(db, batch, ct);
+        }
+    }
+
+    private static async Task InsertNewEventsAsync(AccessDbContext db, List<DeviceAccessEvent> batch, CancellationToken ct)
+    {
         var serialNumbers = batch.Select(e => e.ControllerSerialNumber).Distinct().ToList();
         var controllers = await db.Controllers
             .Where(c => serialNumbers.Contains(c.SerialNumber))

@@ -81,9 +81,12 @@ public sealed class UserSyncQueueWorker : BackgroundService
 
     /// <summary>
     /// Troca de quarto de um visitante: (1) limpa o QR/pessoa do(s) quarto(s) antigo(s) via HTTP —
-    /// best-effort, o QR antigo deixa de abrir a porta; (2) sincroniza — a reconciliação do
-    /// SyncUserAsync revoga via SDK nos controladores fora da lista desejada (os status antigos
-    /// permanecem 'Synced' até lá) e cadastra a pessoa no quarto novo, gerando o QR novo.
+    /// best-effort, o QR antigo deixa de abrir a porta; (2) REENFILEIRA a sincronização pela
+    /// dedup por usuário (nunca dois workers no mesmo usuário — chamar SyncUserAsync direto aqui
+    /// correria por fora dessa exclusão e podia colidir com um SyncUserWork simultâneo no índice
+    /// único de DeviceSyncStatus). A reconciliação do sync revoga via SDK os controladores fora
+    /// da lista desejada (os status antigos permanecem 'Synced' até lá) e cadastra a pessoa no
+    /// quarto novo, gerando o QR novo.
     /// </summary>
     private async Task ChangeRoomAsync(IServiceProvider provider, ChangeVisitorRoomWork work, CancellationToken ct)
     {
@@ -100,7 +103,7 @@ public sealed class UserSyncQueueWorker : BackgroundService
             }
         }
 
-        await provider.GetRequiredService<IUserSyncService>().SyncUserAsync(work.UserId, ct);
+        _queue.EnqueueSync(work.UserId);
     }
 
     /// <summary>Revoga no hardware um usuário já excluído do banco (linhas de Users/DeviceSyncStatus já não existem).</summary>

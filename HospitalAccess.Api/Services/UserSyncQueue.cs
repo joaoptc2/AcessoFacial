@@ -11,8 +11,9 @@ public sealed record RevokeDeletedUserWork(uint UserCode, IReadOnlyList<Guid> Co
 
 /// <summary>
 /// Troca de quarto de um visitante: limpa o QR do(s) quarto(s) antigo(s) via HTTP (best-effort)
-/// e então sincroniza (a reconciliação revoga via SDK nos antigos e cadastra no novo). Um único
-/// item mantém as duas fases ordenadas dentro da fila.
+/// e então REENFILEIRA a sincronização pela dedup por usuário (a reconciliação revoga via SDK
+/// nos antigos e cadastra no novo). A limpeza do QR acontece antes do enqueue, então a ordem
+/// das duas fases é preservada.
 /// </summary>
 public sealed record ChangeVisitorRoomWork(Guid UserId, uint UserCode, IReadOnlyList<Guid> OldControllerIds) : SyncWork;
 

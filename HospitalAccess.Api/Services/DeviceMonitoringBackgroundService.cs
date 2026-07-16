@@ -18,8 +18,9 @@ namespace HospitalAccess.Api.Services;
 ///
 /// O re-arme periódico é CONDICIONADO para não gerar tráfego à toa (antes: OpenForciblyConnect +
 /// troca de handler + BeginWatch em TODOS os aparelhos a cada ciclo, mesmo já monitorando):
-/// 1. Push recente (janela Monitoring:PushIdleThresholdMinutes) → pula sem nenhum comando.
-/// 2. Sem push recente → ReadWatchState (comando leve): ativo → só garante o canal local;
+/// 1. Push de EVENTO recente (janela Monitoring:PushIdleThresholdMinutes; keep-alive NÃO conta —
+///    é do phone-home, independente do watch) → pula sem nenhum comando.
+/// 2. Sem evento recente → ReadWatchState (comando leve): ativo → só garante o canal local;
 ///    inativo/erro → re-arme completo (BeginWatch).
 ///
 /// ⚠️ Não validado contra hardware real (ver README seção 2). Se o modelo de conexão do hardware
@@ -47,7 +48,8 @@ public sealed class DeviceMonitoringBackgroundService : BackgroundService
         // Primeira ativação imediata na subida do serviço, depois re-arma periodicamente.
         await ArmAllAsync(stoppingToken);
 
-        using var timer = new PeriodicTimer(TimeSpan.FromMinutes(_options.RearmIntervalMinutes));
+        // Math.Max: config 0/negativa não pode derrubar o host (PeriodicTimer exige período > 0).
+        using var timer = new PeriodicTimer(TimeSpan.FromMinutes(Math.Max(1, _options.RearmIntervalMinutes)));
         while (await timer.WaitForNextTickAsync(stoppingToken))
         {
             await ArmAllAsync(stoppingToken);
@@ -76,9 +78,12 @@ public sealed class DeviceMonitoringBackgroundService : BackgroundService
             if (ct.IsCancellationRequested) break;
             try
             {
-                // 1. Push recente = canal comprovadamente vivo: nada a fazer (zero tráfego).
-                var lastPush = _gateway.GetLastPushActivityUtc(controller.SerialNumber);
-                if (lastPush is not null && DateTime.UtcNow - lastPush < pushIdleThreshold)
+                // 1. Push de EVENTO recente = monitoramento comprovadamente entregando: nada a
+                // fazer (zero tráfego). Usa GetLastEventPushUtc, NÃO o keep-alive: o 0x22 é do
+                // phone-home e chega mesmo com o watch desligado — contá-lo aqui suprimiria o
+                // re-arme para sempre num aparelho com keepalive ativo e monitoramento off.
+                var lastEventPush = _gateway.GetLastEventPushUtc(controller.SerialNumber);
+                if (lastEventPush is not null && DateTime.UtcNow - lastEventPush < pushIdleThreshold)
                 {
                     skipped++;
                     continue;

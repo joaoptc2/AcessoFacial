@@ -17,10 +17,10 @@ namespace HospitalAccess.Api.Services;
 /// profundidade sobre o monitoramento em tempo real. Não validado contra hardware real.
 ///
 /// Intervalo em OfflineCollection:IntervalMinutes. Com OfflineCollection:SkipWhenPushHealthy
-/// (opt-in), controladores com push recente são pulados — só ligar depois de validar em hardware
-/// que o push avança o ponteiro de leitura do aparelho (senão a varredura re-baixa os mesmos
-/// registros a cada ciclo, e pulá-la deixaria de consumi-los). A primeira varredura após o boot
-/// é sempre completa (recupera o backlog do período em que o servidor esteve fora).
+/// (opt-in), controladores com push de EVENTO recente são pulados — só ligar depois de validar
+/// em hardware que o push avança o ponteiro de leitura do aparelho (senão a varredura re-baixa
+/// os mesmos registros a cada ciclo, e pulá-la deixaria de consumi-los). Cada controlador só
+/// passa a ser pulado depois de UMA coleta bem-sucedida desde o boot (backlog drenado).
 /// </summary>
 public sealed class OfflineRecordCollectorBackgroundService : BackgroundService
 {
@@ -29,7 +29,14 @@ public sealed class OfflineRecordCollectorBackgroundService : BackgroundService
     private readonly OfflineCollectionOptions _options;
     private readonly TimeSpan _pushIdleThreshold;
     private readonly ILogger<OfflineRecordCollectorBackgroundService> _logger;
-    private bool _firstSweepDone;
+
+    /// <summary>
+    /// Controladores (por Id) que já tiveram UMA coleta bem-sucedida desde o boot. Um flag
+    /// global de "primeira varredura feita" não serve: se a rede estava fora no boot e TODOS
+    /// falharam, o backlog nunca teria sido drenado e o SkipWhenPushHealthy pularia os
+    /// aparelhos assim que o push voltasse.
+    /// </summary>
+    private readonly HashSet<Guid> _collectedOnceSinceBoot = new();
 
     public OfflineRecordCollectorBackgroundService(
         IDeviceGateway gateway, IServiceScopeFactory scopeFactory,
@@ -45,13 +52,13 @@ public sealed class OfflineRecordCollectorBackgroundService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        using var timer = new PeriodicTimer(TimeSpan.FromMinutes(_options.IntervalMinutes));
+        // Math.Max: config 0/negativa não pode derrubar o host (PeriodicTimer exige período > 0).
+        using var timer = new PeriodicTimer(TimeSpan.FromMinutes(Math.Max(1, _options.IntervalMinutes)));
         do
         {
             try
             {
                 await CollectAllAsync(stoppingToken);
-                _firstSweepDone = true;
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -81,6 +88,7 @@ public sealed class OfflineRecordCollectorBackgroundService : BackgroundService
                 if (ShouldSkip(controller)) continue;
 
                 var events = await _gateway.CollectAccessRecordsAsync(controller, ct);
+                _collectedOnceSinceBoot.Add(controller.Id); // backlog deste aparelho drenado 1× desde o boot
                 if (events.Count == 0) continue;
 
                 using var scope = _scopeFactory.CreateScope();
@@ -97,9 +105,11 @@ public sealed class OfflineRecordCollectorBackgroundService : BackgroundService
 
     private bool ShouldSkip(Domain.Entities.Controller controller)
     {
-        if (!_options.SkipWhenPushHealthy || !_firstSweepDone) return false;
-        var lastPush = _gateway.GetLastPushActivityUtc(controller.SerialNumber);
-        return lastPush is not null && DateTime.UtcNow - lastPush < _pushIdleThreshold;
+        // Só pula quem já teve UMA coleta bem-sucedida desde o boot (backlog drenado) E está com
+        // push de EVENTO recente (keep-alive não conta: prova presença, não entrega de eventos).
+        if (!_options.SkipWhenPushHealthy || !_collectedOnceSinceBoot.Contains(controller.Id)) return false;
+        var lastEventPush = _gateway.GetLastEventPushUtc(controller.SerialNumber);
+        return lastEventPush is not null && DateTime.UtcNow - lastEventPush < _pushIdleThreshold;
     }
 
     private static async Task PersistAsync(

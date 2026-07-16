@@ -102,7 +102,18 @@ public class HolidaysController : ControllerBase
         if (!_singleFlight.TryBegin(FlightKey))
             return Conflict(new { error = "Já existe uma sincronização de feriados em andamento." });
 
-        var controllerIds = await _db.Controllers.Select(c => c.Id).ToListAsync(ct);
+        List<Guid> controllerIds;
+        try
+        {
+            controllerIds = await _db.Controllers.Select(c => c.Id).ToListAsync(ct);
+        }
+        catch
+        {
+            // Falha ANTES de agendar o job: liberar a chave, senão o endpoint fica preso em 409.
+            _singleFlight.End(FlightKey);
+            throw;
+        }
+
         SyncInBackground(controllerIds);
         return Accepted(new { controllerCount = controllerIds.Count });
     }

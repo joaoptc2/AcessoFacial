@@ -24,6 +24,7 @@ export function HomePage() {
 
     setEmergencyBusy(true);
     setEmergencyResult(null);
+    setError(null); // um erro de comando anterior não pode ficar preso na tela
     try {
       const result =
         kind === "activate"

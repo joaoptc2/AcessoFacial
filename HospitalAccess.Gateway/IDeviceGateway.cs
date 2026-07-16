@@ -132,6 +132,13 @@ public interface IDeviceGateway
     /// </summary>
     DateTime? GetLastPushActivityUtc(string serialNumber);
 
+    /// <summary>
+    /// Último push de EVENTO (CmdIndex 1–4) deste SN — prova que o monitoramento está de fato
+    /// entregando (o keep-alive 0x22 fica de fora: é do phone-home, independente do watch).
+    /// Usado pelo gate do re-arme de monitoramento.
+    /// </summary>
+    DateTime? GetLastEventPushUtc(string serialNumber);
+
     /// <summary>Limpa o estado local (gate, monitoramento, push, conexão) de um controlador excluído do cadastro.</summary>
     void ForgetController(Controller controller);
 

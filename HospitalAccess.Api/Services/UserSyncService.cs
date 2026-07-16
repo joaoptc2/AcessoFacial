@@ -47,6 +47,11 @@ public sealed class UserSyncService : IUserSyncService
             // Usuário revogado (mas não excluído): nunca (re)cadastrar nos controladores,
             // mesmo que uma permissão nova tenha sido adicionada nesse meio-tempo — só volta
             // a sincronizar depois de reativado (ver UsersController.Reactivate).
+            // RE-TENTA a revogação nas portas ainda não revogadas: sem isto, uma revogação que
+            // falhou (aparelho offline na hora do RevokeUserWork) nunca era reprocessada — a
+            // varredura de retry reenfileirava o usuário, este método retornava cedo e a
+            // credencial ficava ATIVA no hardware para sempre.
+            await RevokeUserAsync(userId, ct);
             return;
         }
 
@@ -88,8 +93,14 @@ public sealed class UserSyncService : IUserSyncService
         }
 
         // Permissão removida: revogar nos controladores onde a pessoa não deveria mais existir.
-        var toRevoke = existingStatuses
-            .Where(s => s.State == SyncState.Synced && !desiredControllerIds.Contains(s.ControllerId));
+        // Inclui também Pending/Failed fora do conjunto desejado (respeitando o backoff): sem
+        // isso, essas linhas órfãs ficavam elegíveis para sempre — a varredura de retry as
+        // reenfileirava a cada ciclo e este método não fazia NADA com elas (não estavam no
+        // desejado nem eram Synced). O DeletePerson é idempotente no aparelho; sucesso → Revoked.
+        var toRevoke = existingStatuses.Where(s =>
+            !desiredControllerIds.Contains(s.ControllerId)
+            && s.State != SyncState.Revoked
+            && !(s.State == SyncState.Failed && (s.NextRetryAtUtc is null || s.NextRetryAtUtc > now)));
         foreach (var status in toRevoke)
         {
             await RevokeFromControllerAsync(user.UserCode, status, ct);
@@ -105,8 +116,16 @@ public sealed class UserSyncService : IUserSyncService
             .Where(s => s.UserId == userId && s.State != SyncState.Revoked)
             .ToListAsync(ct);
 
+        // Respeita a janela de backoff das falhas de revogação anteriores (a varredura de retry
+        // reenfileira o usuário quando qualquer porta fica elegível — sem este filtro, TODAS as
+        // portas seriam marteladas a cada passagem). Failed com NextRetryAtUtc null (quarentena
+        // de upload) NÃO é pulado aqui: a foto antiga pode continuar cadastrada no aparelho e a
+        // revogação precisa acontecer.
+        var now = DateTime.UtcNow;
         foreach (var status in statuses)
         {
+            if (status is { State: SyncState.Failed, NextRetryAtUtc: not null } && status.NextRetryAtUtc > now)
+                continue;
             await RevokeFromControllerAsync(user.UserCode, status, ct);
         }
     }

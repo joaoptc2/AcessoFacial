@@ -509,7 +509,16 @@ public class ControllersController : ControllerBase
         if (!_singleFlight.TryBegin(flightKey))
             return Conflict(new { error = "Já existe uma resincronização em andamento neste controlador." });
 
-        await AuditAsync(controller, "ResincronizarForçado", success: true, error: null, ct);
+        try
+        {
+            await AuditAsync(controller, "ResincronizarForçado", success: true, error: null, ct);
+        }
+        catch
+        {
+            // Falha ANTES de agendar o job: liberar a chave, senão o endpoint fica preso em 409.
+            _singleFlight.End(flightKey);
+            throw;
+        }
 
         _ = Task.Run(async () =>
         {

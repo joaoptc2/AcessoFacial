@@ -19,19 +19,26 @@ type Snapshot = { dashboard: DashboardDto | null; error: string | null };
 
 let snapshot: Snapshot = { dashboard: null, error: null };
 let lastFetchAt = 0;
+let fetchSeq = 0;
 const listeners = new Set<(s: Snapshot) => void>();
 let timer: number | null = null;
 
 async function fetchStatus(): Promise<void> {
   lastFetchAt = Date.now();
+  // Guarda de corrida: um refresh manual pode sobrepor o polling — se outra busca começou
+  // depois desta, o resultado desta (mais antigo) não pode sobrescrever o mais novo.
+  const seq = ++fetchSeq;
+  let next: Snapshot;
   try {
-    snapshot = { dashboard: await api.getControllerStatus(), error: null };
+    next = { dashboard: await api.getControllerStatus(), error: null };
   } catch (err) {
-    snapshot = {
+    next = {
       dashboard: snapshot.dashboard,
       error: err instanceof ApiError ? err.message : "Falha ao carregar o status.",
     };
   }
+  if (seq !== fetchSeq) return; // resposta obsoleta
+  snapshot = next;
   listeners.forEach((notify) => notify(snapshot));
 }
 

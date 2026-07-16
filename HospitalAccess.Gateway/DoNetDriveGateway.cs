@@ -57,10 +57,19 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
 
     /// <summary>
     /// Última atividade de push (UTC) por SN — QUALQUER Door8800Transaction conta, inclusive
-    /// keep-alive (0x22) e teste de conexão (0xA0). Usado para pular re-arme de monitoramento e
-    /// sondas de presença em aparelhos comprovadamente vivos: zero tráfego em regime permanente.
+    /// keep-alive (0x22) e teste de conexão (0xA0). Prova só PRESENÇA (o aparelho está vivo e
+    /// alcançável) — usada pela sonda do health-check.
     /// </summary>
     private readonly ConcurrentDictionary<string, DateTime> _lastPushUtc = new();
+
+    /// <summary>
+    /// Último push de EVENTO (UTC) por SN — apenas CmdIndex 1–4 (autenticação, sensor, log de
+    /// sistema, temperatura). Prova que o MONITORAMENTO (BeginWatch) está de fato entregando.
+    /// O keep-alive 0x22 fica de fora de propósito: ele é do phone-home (independente do estado
+    /// do watch — protocolo Classe I/IX), então contá-lo aqui suprimiria o re-arme para sempre
+    /// num aparelho com keepalive ativo e monitoramento desligado.
+    /// </summary>
+    private readonly ConcurrentDictionary<string, DateTime> _lastEventPushUtc = new();
 
     /// <summary>
     /// Um lock por controlador (Id): serializa TODOS os comandos ao MESMO aparelho (sync, health,
@@ -775,6 +784,10 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
     public DateTime? GetLastPushActivityUtc(string serialNumber) =>
         _lastPushUtc.TryGetValue(serialNumber, out var ts) ? ts : null;
 
+    /// <summary>Último push de EVENTO (CmdIndex 1–4) deste SN — prova de monitoramento entregando.</summary>
+    public DateTime? GetLastEventPushUtc(string serialNumber) =>
+        _lastEventPushUtc.TryGetValue(serialNumber, out var ts) ? ts : null;
+
     public async Task StopMonitoringAsync(Controller controller, CancellationToken ct = default)
     {
         _monitored.TryRemove(controller.SerialNumber, out _);
@@ -798,10 +811,13 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
     /// </summary>
     public void ForgetController(Controller controller)
     {
-        if (_controllerGates.TryRemove(controller.Id, out var gate))
-            gate.Dispose();
+        // Remove SEM Dispose: um comando em voo ainda segura o gate e o Release() num semáforo
+        // disposado lançaria ObjectDisposedException. Sem AvailableWaitHandle o SemaphoreSlim não
+        // tem recurso não gerenciado — órfão, é coletado pelo GC quando o comando terminar.
+        _controllerGates.TryRemove(controller.Id, out _);
         _monitored.TryRemove(controller.SerialNumber, out _);
         _lastPushUtc.TryRemove(controller.SerialNumber, out _);
+        _lastEventPushUtc.TryRemove(controller.SerialNumber, out _);
 
         try
         {
@@ -842,9 +858,11 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
     {
         if (eventData is not Door8800Transaction transaction) return;
 
-        // Qualquer push (evento, keep-alive 0x22, teste 0xA0) prova que o aparelho está vivo e
-        // com o canal funcionando — alimenta os gates que evitam re-arme/sonda desnecessários.
+        // Qualquer push (evento, keep-alive 0x22, teste 0xA0) prova que o aparelho está vivo —
+        // alimenta a sonda de presença. Só push de EVENTO (1–4) prova monitoramento ativo.
         _lastPushUtc[transaction.SN] = DateTime.UtcNow;
+        if (transaction.CmdIndex is >= 1 and <= 4)
+            _lastEventPushUtc[transaction.SN] = DateTime.UtcNow;
 
         // Mantém a conexão aberta ao receber push (padrão do demo).
         var connector = _allocator.GetConnector(connectorDetail);

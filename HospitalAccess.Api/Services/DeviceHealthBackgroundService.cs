@@ -45,8 +45,9 @@ public sealed class DeviceHealthBackgroundService : BackgroundService
         _scopeFactory = scopeFactory;
         _gateway = gateway;
         _options = options.Value;
-        _interval = TimeSpan.FromSeconds(_options.IntervalSeconds);
-        _probeTimeout = TimeSpan.FromSeconds(_options.ProbeTimeoutSeconds);
+        // Math.Max: config 0/negativa não pode derrubar o host (PeriodicTimer exige período > 0).
+        _interval = TimeSpan.FromSeconds(Math.Max(1, _options.IntervalSeconds));
+        _probeTimeout = TimeSpan.FromSeconds(Math.Max(1, _options.ProbeTimeoutSeconds));
         _logger = logger;
     }
 

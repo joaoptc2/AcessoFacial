@@ -39,9 +39,7 @@ public sealed class AlarmEventRecorder : BackgroundService
         {
             while (await _queue.Reader.WaitToReadAsync(stoppingToken))
             {
-                var batch = new List<DeviceAlarmEvent>(MaxBatchSize);
-                while (batch.Count < MaxBatchSize && _queue.Reader.TryRead(out var e))
-                    batch.Add(e);
+                var batch = ReadBatch();
                 if (batch.Count == 0) continue;
 
                 try
@@ -58,9 +56,41 @@ public sealed class AlarmEventRecorder : BackgroundService
                 }
             }
         }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            // desligamento normal — drenagem no finally
+        }
         finally
         {
             _gateway.AlarmEventReceived -= OnAlarmEventReceived;
+            // Alarme NÃO tem recuperação offline (a coleta de retaguarda cobre só acessos):
+            // drenar o que já está na fila antes de morrer é a única chance de persisti-los.
+            await DrainOnShutdownAsync();
+        }
+    }
+
+    private List<DeviceAlarmEvent> ReadBatch()
+    {
+        var batch = new List<DeviceAlarmEvent>(MaxBatchSize);
+        while (batch.Count < MaxBatchSize && _queue.Reader.TryRead(out var e))
+            batch.Add(e);
+        return batch;
+    }
+
+    private async Task DrainOnShutdownAsync()
+    {
+        try
+        {
+            while (true)
+            {
+                var batch = ReadBatch();
+                if (batch.Count == 0) break;
+                await PersistBatchAsync(batch, CancellationToken.None);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Falha ao drenar eventos de alarme pendentes no desligamento.");
         }
     }
 

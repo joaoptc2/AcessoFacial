@@ -34,7 +34,8 @@ public sealed class SyncRetryBackgroundService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(_options.ScanIntervalSeconds));
+        // Math.Max: config 0/negativa não pode derrubar o host (PeriodicTimer exige período > 0).
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(Math.Max(1, _options.ScanIntervalSeconds)));
         do
         {
             try
