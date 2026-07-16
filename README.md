@@ -511,6 +511,12 @@ erro — vira timeout do nosso lado). Cheque nesta ordem:
 6. **Divergência de cadastro** (auditoria acusa usuários faltando apesar de "Synced"): use o
    botão **"Reparar divergências"** na aba Auditoria — os faltantes voltam a Pending e são
    re-enviados pela fila.
+7. **Aviso "Health-check caiu no TCP connect da porta do SDK"**: a sonda de presença esgotou os
+   caminhos neutros (ping ICMP falhou e não há painel HTTP para testar) e está usando a porta
+   do protocolo como último recurso — funciona, mas abre/derruba uma conexão no canal do
+   protocolo a cada ciclo. Saída: liberar ICMP até o aparelho **ou** preencher o `ApiBaseUrl`
+   dele (ex.: `http://192.168.19.197`); depois, desligue `HealthCheck:AllowSdkPortFallback`
+   no appsettings. O aviso sai uma vez por controlador a cada subida do serviço.
 
 ## Limitações conhecidas / próximos passos
 - **Exportação em PDF** do log de acessos: não implementada (só CSV). Toda biblioteca PDF
