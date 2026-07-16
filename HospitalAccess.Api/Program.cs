@@ -138,7 +138,8 @@ builder.Services.AddSingleton<SingleFlight>();
 builder.Services.AddHostedService<SyncRetryBackgroundService>();
 
 // Ativa e mantém o monitoramento em tempo real (BeginWatch) em todos os controladores — sem isto
-// o 8190H não empurra eventos (default OFF, não persiste após reboot; protocolo §10).
+// o 8190H não empurra eventos (default OFF, não persiste após reboot; protocolo Classe I 0x01 0x0B,
+// push na Classe IX). Re-arme condicionado por push recente/ReadWatchState (ver o serviço).
 builder.Services.AddHostedService<DeviceMonitoringBackgroundService>();
 
 // Coleta de retaguarda dos registros offline (recupera eventos ocorridos com o servidor fora do ar).
