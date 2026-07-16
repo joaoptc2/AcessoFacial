@@ -246,6 +246,18 @@ e receber eventos. Todo esse código vive em **`HospitalAccess.Infrastructure/De
   `ExpirationDate` fora da faixa) para mensagens legíveis; as falhas viram `DeviceHttpException`
   e o endpoint devolve 502/422 com a causa.
 
+## Modo de desenvolvimento (tela "Logs (Dev)", só Admin)
+
+Ferramenta de diagnóstico em produção sem acesso ao servidor: com o **modo de desenvolvimento**
+ativo (toggle persistido em `SystemSettings`, sobrevive a restart), os logs importantes do
+processo — Information+ das categorias `HospitalAccess.*` (sincronização, monitoramento,
+health-check, comandos aos controladores) e Warning+ do framework — são espelhados num **ring
+buffer em memória** (últimas 2000 linhas, `DevLogBuffer`) e exibidos na tela **Logs (Dev)** com
+filtro por nível/texto, botão de ativar/desativar e botão de limpar. API: `GET /api/devlogs`
+(busca incremental por id), `POST /api/devlogs/mode`, `DELETE /api/devlogs`. Desligado o custo é
+zero; nada vai para disco (o log completo do serviço continua no journal/console) e o conteúdo se
+perde no restart — é diagnóstico, não auditoria.
+
 ## Gestão de leitos (visitantes temporários)
 
 O visitante temporário representa um **acompanhante/paciente hospedado num quarto**. Como o QR é

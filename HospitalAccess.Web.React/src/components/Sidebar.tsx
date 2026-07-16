@@ -53,6 +53,9 @@ export function Sidebar() {
           <NavLink to="/settings" className={navClass}>
             Configurações
           </NavLink>
+          <NavLink to="/devlogs" className={navClass}>
+            Logs (Dev)
+          </NavLink>
         </>
       )}
 

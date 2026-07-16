@@ -22,6 +22,13 @@ using Npgsql;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Modo de desenvolvimento: espelha os logs importantes num buffer em memória para a tela
+// "Logs (Dev)". O provider é registrado sempre, mas só captura com o toggle ativo (persistido
+// em SystemSettings, carregado após o build do app) — custo zero desligado.
+var devLogBuffer = new HospitalAccess.Api.Services.DevLogBuffer();
+builder.Services.AddSingleton(devLogBuffer);
+builder.Logging.AddProvider(new HospitalAccess.Api.Services.DevLogLoggerProvider(devLogBuffer));
+
 // Enums como string no JSON (ex.: AccessMethod, AlarmKind, SyncState) — os tipos TS do
 // front-end React já assumem essa representação.
 builder.Services.AddControllers()
@@ -212,6 +219,13 @@ using (var scope = app.Services.CreateScope())
     var db = scope.ServiceProvider.GetRequiredService<AccessDbContext>();
     var logger = scope.ServiceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Startup");
     await StaffUserSeeder.SeedAsync(db, builder.Configuration, logger);
+
+    // Restaura o toggle do modo de desenvolvimento (persistido em SystemSettings).
+    var devMode = await db.SystemSettings
+        .Select(s => s.DevelopmentModeEnabled)
+        .FirstOrDefaultAsync();
+    devLogBuffer.SetEnabled(devMode);
+    if (devMode) logger.LogInformation("Modo de desenvolvimento ATIVO (persistido) — logs espelhados em /api/devlogs.");
 }
 
 if (app.Environment.IsDevelopment())

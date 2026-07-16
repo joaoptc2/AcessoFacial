@@ -59,6 +59,10 @@ mantém a sessão.
   - `VisitorsPage` (cadastro + QR + revogar)
   - `HolidaysPage`, `TimeGroupsPage` (grade de dias/horários por grupo)
   - `AccessLogPage`, `AlarmEventsPage` (paginação, filtros, exportação CSV)
+  - `SettingsPage` (retenção/LGPD, formato do QR — só Admin)
+  - `DevLogsPage` (só Admin): logs importantes do servidor capturados em memória com o
+    **modo de desenvolvimento** ativo — toggle persistido, busca incremental a cada 3s,
+    filtro por nível/texto e botão de limpar. Ver `/api/devlogs` e `DevLogBuffer` na API.
 
 ## Próximos passos
 

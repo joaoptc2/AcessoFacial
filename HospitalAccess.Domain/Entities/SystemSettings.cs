@@ -34,6 +34,13 @@ public class SystemSettings
     /// </summary>
     public string QrFormat { get; set; } = "PlainText";
 
+    /// <summary>
+    /// MODO DE DESENVOLVIMENTO: quando ativo, os logs importantes (Information+ do sistema,
+    /// Warning+ do framework) são espelhados num buffer em memória e exibidos na tela
+    /// "Logs (Dev)". Persistido para sobreviver a restart; o custo com o modo desligado é zero.
+    /// </summary>
+    public bool DevelopmentModeEnabled { get; set; }
+
     /// <summary>Última atualização das configurações.</summary>
     public DateTime UpdatedAtUtc { get; set; } = DateTime.UtcNow;
 
