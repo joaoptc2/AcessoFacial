@@ -44,9 +44,11 @@ mantém a sessão.
 
 ## Estrutura
 
-- `src/lib/api.ts` — cliente HTTP tipado para a API (mesma responsabilidade do
-  `ApiClient.cs` do lado Blazor) — cobre todos os endpoints usados pelas telas abaixo.
+- `src/lib/api.ts` — cliente HTTP tipado para a API — cobre todos os endpoints usados
+  pelas telas abaixo.
 - `src/lib/AuthContext.tsx` — estado de autenticação (token/role/username).
+- `src/lib/controllerStatusStore.ts` — polling compartilhado do `/api/controllers/status`
+  (um único intervalo de 30s por aba, consumido por `StatusBanner` e `HomePage`).
 - `src/components/` — `Sidebar` (navegação) e `Modal` (usado no controle de dispositivo).
 - `src/pages/`:
   - `LoginPage`, `HomePage`
@@ -57,6 +59,10 @@ mantém a sessão.
   - `VisitorsPage` (cadastro + QR + revogar)
   - `HolidaysPage`, `TimeGroupsPage` (grade de dias/horários por grupo)
   - `AccessLogPage`, `AlarmEventsPage` (paginação, filtros, exportação CSV)
+  - `SettingsPage` (retenção/LGPD, formato do QR — só Admin)
+  - `DevLogsPage` (só Admin): logs importantes do servidor capturados em memória com o
+    **modo de desenvolvimento** ativo — toggle persistido, busca incremental a cada 3s,
+    filtro por nível/texto e botão de limpar. Ver `/api/devlogs` e `DevLogBuffer` na API.
 
 ## Próximos passos
 

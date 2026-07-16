@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json.Serialization;
 using System.Threading.RateLimiting;
 using HospitalAccess.Api.Auth;
+using HospitalAccess.Api.Options;
 using HospitalAccess.Api.Services;
 using HospitalAccess.Application.Qr;
 using HospitalAccess.Application.Sync;
@@ -20,6 +21,13 @@ using Microsoft.IdentityModel.Tokens;
 using Npgsql;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Modo de desenvolvimento: espelha os logs importantes num buffer em memória para a tela
+// "Logs (Dev)". O provider é registrado sempre, mas só captura com o toggle ativo (persistido
+// em SystemSettings, carregado após o build do app) — custo zero desligado.
+var devLogBuffer = new HospitalAccess.Api.Services.DevLogBuffer();
+builder.Services.AddSingleton(devLogBuffer);
+builder.Logging.AddProvider(new HospitalAccess.Api.Services.DevLogLoggerProvider(devLogBuffer));
 
 // Enums como string no JSON (ex.: AccessMethod, AlarmKind, SyncState) — os tipos TS do
 // front-end React já assumem essa representação.
@@ -90,9 +98,22 @@ catch (Exception ex) when (ex is TimeZoneNotFoundException or InvalidTimeZoneExc
 }
 builder.Services.AddSingleton(deviceTimeZone);
 
+// Opções operacionais dos serviços de dispositivo (intervalos, backoff, sondas). Defaults
+// reproduzem o comportamento anterior; todas as chaves documentadas no appsettings.example.json.
+builder.Services.Configure<SyncRetryOptions>(builder.Configuration.GetSection(SyncRetryOptions.SectionName));
+builder.Services.Configure<SyncQueueOptions>(builder.Configuration.GetSection(SyncQueueOptions.SectionName));
+builder.Services.Configure<MonitoringOptions>(builder.Configuration.GetSection(MonitoringOptions.SectionName));
+builder.Services.Configure<OfflineCollectionOptions>(builder.Configuration.GetSection(OfflineCollectionOptions.SectionName));
+builder.Services.Configure<HealthCheckOptions>(builder.Configuration.GetSection(HealthCheckOptions.SectionName));
+
 // Gateway de dispositivos (SDK DoNetDrive). Singleton: o ConnectorAllocator é único.
 builder.Services.AddSingleton<ControllerConnectionFactory>();
-builder.Services.AddSingleton<IDeviceGateway, DoNetDriveGateway>();
+builder.Services.AddSingleton<IDeviceGateway>(sp => new DoNetDriveGateway(
+    sp.GetRequiredService<ControllerConnectionFactory>(),
+    sp.GetRequiredService<TimeZoneInfo>())
+{
+    FaceUploadWireRetries = sp.GetRequiredService<IOptions<SyncRetryOptions>>().Value.FaceUploadWireRetries,
+});
 
 // Integração HTTP com o painel web dos controladores (para LER o QRCode que o aparelho gera e,
 // opcionalmente, provisionar via /api/People/New). Senha padrão global em Device:DefaultApiPassword.
@@ -116,11 +137,16 @@ builder.Services.AddSingleton<UserSyncQueue>();
 builder.Services.AddSingleton<IUserSyncQueue>(sp => sp.GetRequiredService<UserSyncQueue>());
 builder.Services.AddHostedService<UserSyncQueueWorker>();
 
+// Guarda de reentrância das operações pesadas por endpoint (resync-all, sync-all de
+// feriados/grades): cliques repetidos não empilham execuções concorrentes no hardware.
+builder.Services.AddSingleton<SingleFlight>();
+
 // Reprocessa sincronizações pendentes/falhas: reenfileira na fila serial (não processa em paralelo).
 builder.Services.AddHostedService<SyncRetryBackgroundService>();
 
 // Ativa e mantém o monitoramento em tempo real (BeginWatch) em todos os controladores — sem isto
-// o 8190H não empurra eventos (default OFF, não persiste após reboot; protocolo §10).
+// o 8190H não empurra eventos (default OFF, não persiste após reboot; protocolo Classe I 0x01 0x0B,
+// push na Classe IX). Re-arme condicionado por push recente/ReadWatchState (ver o serviço).
 builder.Services.AddHostedService<DeviceMonitoringBackgroundService>();
 
 // Coleta de retaguarda dos registros offline (recupera eventos ocorridos com o servidor fora do ar).
@@ -193,6 +219,13 @@ using (var scope = app.Services.CreateScope())
     var db = scope.ServiceProvider.GetRequiredService<AccessDbContext>();
     var logger = scope.ServiceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Startup");
     await StaffUserSeeder.SeedAsync(db, builder.Configuration, logger);
+
+    // Restaura o toggle do modo de desenvolvimento (persistido em SystemSettings).
+    var devMode = await db.SystemSettings
+        .Select(s => s.DevelopmentModeEnabled)
+        .FirstOrDefaultAsync();
+    devLogBuffer.SetEnabled(devMode);
+    if (devMode) logger.LogInformation("Modo de desenvolvimento ATIVO (persistido) — logs espelhados em /api/devlogs.");
 }
 
 if (app.Environment.IsDevelopment())

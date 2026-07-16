@@ -1,3 +1,4 @@
+using HospitalAccess.Api.Options;
 using HospitalAccess.Domain.Entities;
 using HospitalAccess.Gateway;
 using HospitalAccess.Infrastructure.Persistence;
@@ -5,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace HospitalAccess.Api.Services;
 
@@ -13,26 +15,45 @@ namespace HospitalAccess.Api.Services;
 /// não chegaram pelo push em tempo real — recupera eventos ocorridos com o servidor offline.
 /// Deduplica contra o AccessLog por (SN do controlador + nº de série do registro). Defesa em
 /// profundidade sobre o monitoramento em tempo real. Não validado contra hardware real.
+///
+/// Intervalo em OfflineCollection:IntervalMinutes. Com OfflineCollection:SkipWhenPushHealthy
+/// (opt-in), controladores com push de EVENTO recente são pulados — só ligar depois de validar
+/// em hardware que o push avança o ponteiro de leitura do aparelho (senão a varredura re-baixa
+/// os mesmos registros a cada ciclo, e pulá-la deixaria de consumi-los). Cada controlador só
+/// passa a ser pulado depois de UMA coleta bem-sucedida desde o boot (backlog drenado).
 /// </summary>
 public sealed class OfflineRecordCollectorBackgroundService : BackgroundService
 {
-    private static readonly TimeSpan Interval = TimeSpan.FromMinutes(15);
-
     private readonly IDeviceGateway _gateway;
     private readonly IServiceScopeFactory _scopeFactory;
+    private readonly OfflineCollectionOptions _options;
+    private readonly TimeSpan _pushIdleThreshold;
     private readonly ILogger<OfflineRecordCollectorBackgroundService> _logger;
 
+    /// <summary>
+    /// Controladores (por Id) que já tiveram UMA coleta bem-sucedida desde o boot. Um flag
+    /// global de "primeira varredura feita" não serve: se a rede estava fora no boot e TODOS
+    /// falharam, o backlog nunca teria sido drenado e o SkipWhenPushHealthy pularia os
+    /// aparelhos assim que o push voltasse.
+    /// </summary>
+    private readonly HashSet<Guid> _collectedOnceSinceBoot = new();
+
     public OfflineRecordCollectorBackgroundService(
-        IDeviceGateway gateway, IServiceScopeFactory scopeFactory, ILogger<OfflineRecordCollectorBackgroundService> logger)
+        IDeviceGateway gateway, IServiceScopeFactory scopeFactory,
+        IOptions<OfflineCollectionOptions> options, IOptions<MonitoringOptions> monitoringOptions,
+        ILogger<OfflineRecordCollectorBackgroundService> logger)
     {
         _gateway = gateway;
         _scopeFactory = scopeFactory;
+        _options = options.Value;
+        _pushIdleThreshold = TimeSpan.FromMinutes(monitoringOptions.Value.PushIdleThresholdMinutes);
         _logger = logger;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        using var timer = new PeriodicTimer(Interval);
+        // Math.Max: config 0/negativa não pode derrubar o host (PeriodicTimer exige período > 0).
+        using var timer = new PeriodicTimer(TimeSpan.FromMinutes(Math.Max(1, _options.IntervalMinutes)));
         do
         {
             try
@@ -64,7 +85,10 @@ public sealed class OfflineRecordCollectorBackgroundService : BackgroundService
             if (ct.IsCancellationRequested) break;
             try
             {
+                if (ShouldSkip(controller)) continue;
+
                 var events = await _gateway.CollectAccessRecordsAsync(controller, ct);
+                _collectedOnceSinceBoot.Add(controller.Id); // backlog deste aparelho drenado 1× desde o boot
                 if (events.Count == 0) continue;
 
                 using var scope = _scopeFactory.CreateScope();
@@ -77,6 +101,15 @@ public sealed class OfflineRecordCollectorBackgroundService : BackgroundService
                     controller.Name, controller.IpAddress);
             }
         }
+    }
+
+    private bool ShouldSkip(Domain.Entities.Controller controller)
+    {
+        // Só pula quem já teve UMA coleta bem-sucedida desde o boot (backlog drenado) E está com
+        // push de EVENTO recente (keep-alive não conta: prova presença, não entrega de eventos).
+        if (!_options.SkipWhenPushHealthy || !_collectedOnceSinceBoot.Contains(controller.Id)) return false;
+        var lastEventPush = _gateway.GetLastEventPushUtc(controller.SerialNumber);
+        return lastEventPush is not null && DateTime.UtcNow - lastEventPush < _pushIdleThreshold;
     }
 
     private static async Task PersistAsync(

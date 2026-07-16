@@ -1,3 +1,4 @@
+using HospitalAccess.Api.Services;
 using HospitalAccess.Application.Sync;
 using HospitalAccess.Domain.Entities;
 using HospitalAccess.Domain.Enums;
@@ -13,7 +14,7 @@ namespace HospitalAccess.Api.Controllers;
 
 public record CreateControllerRequest(
     string Name, string IpAddress, int Port, string SerialNumber,
-    string CommunicationPassword, bool SupportsWaitRepeatMessage, int RelayIndex = 0,
+    string CommunicationPassword, bool SupportsWaitRepeatMessage,
     ControllerConnectionMode ConnectionMode = ControllerConnectionMode.TcpClient,
     // API HTTP do painel web (para ler o QRCode). ApiBaseUrl vazio = só SDK. ApiPassword vazio =
     // usar o padrão global (Device:DefaultApiPassword).
@@ -23,7 +24,7 @@ public record CreateControllerRequest(
 // devolvida pelo GET, então o formulário não a tem para reenviar). ApiPassword segue a mesma regra.
 public record UpdateControllerRequest(
     string Name, string IpAddress, int Port, string SerialNumber,
-    string? CommunicationPassword, bool SupportsWaitRepeatMessage, int RelayIndex,
+    string? CommunicationPassword, bool SupportsWaitRepeatMessage,
     int TimeoutMs, int RestartCount,
     ControllerConnectionMode ConnectionMode = ControllerConnectionMode.TcpClient,
     string? ApiBaseUrl = null, string? ApiPassword = null);
@@ -47,14 +48,17 @@ public class ControllersController : ControllerBase
     private readonly AccessDbContext _db;
     private readonly IDeviceGateway _gateway;
     private readonly IServiceScopeFactory _scopeFactory;
+    private readonly SingleFlight _singleFlight;
     private readonly ILogger<ControllersController> _logger;
 
     public ControllersController(
-        AccessDbContext db, IDeviceGateway gateway, IServiceScopeFactory scopeFactory, ILogger<ControllersController> logger)
+        AccessDbContext db, IDeviceGateway gateway, IServiceScopeFactory scopeFactory,
+        SingleFlight singleFlight, ILogger<ControllersController> logger)
     {
         _db = db;
         _gateway = gateway;
         _scopeFactory = scopeFactory;
+        _singleFlight = singleFlight;
         _logger = logger;
     }
 
@@ -66,7 +70,7 @@ public class ControllersController : ControllerBase
             .Select(c => new
             {
                 c.Id, c.Name, c.IpAddress, c.Port, c.SerialNumber, c.SupportsWaitRepeatMessage,
-                c.RelayIndex, c.TimeoutMs, c.RestartCount,
+                c.TimeoutMs, c.RestartCount,
                 UserCount = c.Permissions.Count,
             })
             .ToListAsync(ct);
@@ -84,21 +88,35 @@ public class ControllersController : ControllerBase
         var onlineThreshold = now.AddMinutes(-3); // heartbeat a cada 1 min; 3 min sem contato = offline
         var recentAlarmSince = now.AddHours(-24);
 
-        var controllers = await _db.Controllers.AsNoTracking()
+        // É o endpoint mais consultado (polling do dashboard): 3 queries agregadas no total,
+        // em vez de 2 subqueries COUNT correlacionadas POR controlador na projeção.
+        var pendingByController = await _db.SyncStatuses.AsNoTracking()
+            .Where(s => s.State == Domain.Enums.SyncState.Pending || s.State == Domain.Enums.SyncState.Failed)
+            .GroupBy(s => s.ControllerId)
+            .Select(g => new { ControllerId = g.Key, Count = g.Count() })
+            .ToDictionaryAsync(g => g.ControllerId, g => g.Count, ct);
+        var alarmsByController = await _db.AlarmEvents.AsNoTracking()
+            .Where(a => !a.Cleared && a.TimestampUtc >= recentAlarmSince)
+            .GroupBy(a => a.ControllerId)
+            .Select(g => new { ControllerId = g.Key, Count = g.Count() })
+            .ToDictionaryAsync(g => g.ControllerId, g => g.Count, ct);
+
+        var rows = await _db.Controllers.AsNoTracking()
             .OrderBy(c => c.Name)
-            .Select(c => new
-            {
-                c.Id,
-                c.Name,
-                c.IpAddress,
-                c.LastSeenUtc,
-                c.LastReachError,
-                Online = c.LastSeenUtc != null && c.LastSeenUtc >= onlineThreshold,
-                PendingSync = _db.SyncStatuses.Count(s => s.ControllerId == c.Id
-                    && (s.State == Domain.Enums.SyncState.Pending || s.State == Domain.Enums.SyncState.Failed)),
-                ActiveAlarms = _db.AlarmEvents.Count(a => a.ControllerId == c.Id && !a.Cleared && a.TimestampUtc >= recentAlarmSince),
-            })
+            .Select(c => new { c.Id, c.Name, c.IpAddress, c.LastSeenUtc, c.LastReachError })
             .ToListAsync(ct);
+
+        var controllers = rows.Select(c => new
+        {
+            c.Id,
+            c.Name,
+            c.IpAddress,
+            c.LastSeenUtc,
+            c.LastReachError,
+            Online = c.LastSeenUtc != null && c.LastSeenUtc >= onlineThreshold,
+            PendingSync = pendingByController.GetValueOrDefault(c.Id),
+            ActiveAlarms = alarmsByController.GetValueOrDefault(c.Id),
+        }).ToList();
 
         return Ok(new
         {
@@ -122,7 +140,7 @@ public class ControllersController : ControllerBase
         return Ok(new
         {
             controller.Id, controller.Name, controller.IpAddress, controller.Port, controller.SerialNumber,
-            controller.SupportsWaitRepeatMessage, controller.RelayIndex, controller.ConnectionMode,
+            controller.SupportsWaitRepeatMessage, controller.ConnectionMode,
             controller.TimeoutMs, controller.RestartCount, controller.LastClockSyncAtUtc,
             HasCommunicationPassword = !string.IsNullOrEmpty(controller.CommunicationPassword),
             controller.ApiBaseUrl,
@@ -161,7 +179,6 @@ public class ControllersController : ControllerBase
             SerialNumber = request.SerialNumber,
             CommunicationPassword = request.CommunicationPassword,
             SupportsWaitRepeatMessage = request.SupportsWaitRepeatMessage,
-            RelayIndex = request.RelayIndex,
             ConnectionMode = request.ConnectionMode,
             ApiBaseUrl = (request.ApiBaseUrl ?? string.Empty).TrimEnd('/'),
             ApiPassword = request.ApiPassword ?? string.Empty,
@@ -197,7 +214,6 @@ public class ControllersController : ControllerBase
         if (!string.IsNullOrEmpty(request.CommunicationPassword))
             controller.CommunicationPassword = request.CommunicationPassword;
         controller.SupportsWaitRepeatMessage = request.SupportsWaitRepeatMessage;
-        controller.RelayIndex = request.RelayIndex;
         controller.ConnectionMode = request.ConnectionMode;
         controller.TimeoutMs = request.TimeoutMs;
         controller.RestartCount = request.RestartCount;
@@ -244,6 +260,11 @@ public class ControllersController : ControllerBase
 
         _db.Controllers.Remove(controller);
         await _db.SaveChangesAsync(ct);
+
+        // Limpa o estado local do gateway (gate de serialização, monitoramento, conexão
+        // persistente) — sem isto, o singleton acumulava estado de aparelhos excluídos.
+        _gateway.ForgetController(controller);
+
         return NoContent();
     }
 
@@ -482,19 +503,38 @@ public class ControllersController : ControllerBase
         var controller = await _db.Controllers.FirstOrDefaultAsync(c => c.Id == id, ct);
         if (controller is null) return NotFound();
 
-        await AuditAsync(controller, "ResincronizarForçado", success: true, error: null, ct);
+        // Single-flight por controlador: cliques repetidos empilhavam ClearAllPersons +
+        // re-upload COMPLETO concorrentes no mesmo aparelho — a operação mais cara que existe.
+        var flightKey = $"resync:{id}";
+        if (!_singleFlight.TryBegin(flightKey))
+            return Conflict(new { error = "Já existe uma resincronização em andamento neste controlador." });
+
+        try
+        {
+            await AuditAsync(controller, "ResincronizarForçado", success: true, error: null, ct);
+        }
+        catch
+        {
+            // Falha ANTES de agendar o job: liberar a chave, senão o endpoint fica preso em 409.
+            _singleFlight.End(flightKey);
+            throw;
+        }
 
         _ = Task.Run(async () =>
         {
-            using var scope = _scopeFactory.CreateScope();
-            var sync = scope.ServiceProvider.GetRequiredService<IUserSyncService>();
             try
             {
+                using var scope = _scopeFactory.CreateScope();
+                var sync = scope.ServiceProvider.GetRequiredService<IUserSyncService>();
                 await sync.ForceResyncControllerAsync(id);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Falha no resync forçado do controlador {ControllerId}.", id);
+            }
+            finally
+            {
+                _singleFlight.End(flightKey);
             }
         });
 

@@ -3,6 +3,7 @@ using System;
 using HospitalAccess.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace HospitalAccess.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(AccessDbContext))]
-    partial class AccessDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260716120136_AddSyncStatusNextRetryAt")]
+    partial class AddSyncStatusNextRetryAt
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -182,6 +185,9 @@ namespace HospitalAccess.Infrastructure.Persistence.Migrations
                         .HasColumnType("text");
 
                     b.Property<int>("Port")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("RelayIndex")
                         .HasColumnType("integer");
 
                     b.Property<int>("RestartCount")
@@ -418,9 +424,6 @@ namespace HospitalAccess.Infrastructure.Persistence.Migrations
                     b.Property<int>("ControllerAuditRetentionDays")
                         .HasColumnType("integer");
 
-                    b.Property<bool>("DevelopmentModeEnabled")
-                        .HasColumnType("boolean");
-
                     b.Property<int>("EventPhotoRetentionDays")
                         .HasColumnType("integer");
 
@@ -445,7 +448,6 @@ namespace HospitalAccess.Infrastructure.Persistence.Migrations
                             AccessLogRetentionDays = 0,
                             AlarmLogRetentionDays = 0,
                             ControllerAuditRetentionDays = 0,
-                            DevelopmentModeEnabled = false,
                             EventPhotoRetentionDays = 90,
                             QrFormat = "PlainText",
                             UpdatedAtUtc = new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc)

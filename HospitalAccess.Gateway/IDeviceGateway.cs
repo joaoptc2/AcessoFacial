@@ -105,12 +105,42 @@ public interface IDeviceGateway
     /// Habilita o monitoramento em tempo real (BeginWatch / Online Transaction) neste controlador
     /// e mantém a conexão aberta para receber o push de eventos de acesso e alarme. Deve ser
     /// (re)chamado na subida do serviço e periodicamente, já que o dispositivo NÃO persiste o
-    /// estado de monitoramento após reboot (protocolo §10). Não validado contra hardware real.
+    /// estado de monitoramento após reboot (protocolo Classe I, 0x01 0x0B; o push é a Classe IX).
+    /// Não validado contra hardware real.
     /// </summary>
     Task StartMonitoringAsync(Controller controller, CancellationToken ct = default);
 
     /// <summary>Desativa o monitoramento em tempo real (CloseWatch) e libera a conexão persistente.</summary>
     Task StopMonitoringAsync(Controller controller, CancellationToken ct = default);
+
+    /// <summary>
+    /// Lê no aparelho se o monitoramento em tempo real está ligado (Classe I, 0x01 0x0B 0x02) —
+    /// permite ao ciclo de re-arme evitar um BeginWatch redundante.
+    /// </summary>
+    Task<bool> IsMonitoringActiveAsync(Controller controller, CancellationToken ct = default);
+
+    /// <summary>
+    /// Prepara localmente o canal de push (conexão persistente + handler) SEM comando ao
+    /// aparelho — para quando o monitoramento já está ativo no dispositivo.
+    /// </summary>
+    void EnsurePushChannel(Controller controller);
+
+    /// <summary>
+    /// Última atividade de push recebida deste SN (qualquer mensagem, inclusive keep-alive),
+    /// ou null se nada chegou desde a subida do serviço. Aparelho com push recente está
+    /// comprovadamente vivo — os ciclos periódicos usam isto para não gerar tráfego à toa.
+    /// </summary>
+    DateTime? GetLastPushActivityUtc(string serialNumber);
+
+    /// <summary>
+    /// Último push de EVENTO (CmdIndex 1–4) deste SN — prova que o monitoramento está de fato
+    /// entregando (o keep-alive 0x22 fica de fora: é do phone-home, independente do watch).
+    /// Usado pelo gate do re-arme de monitoramento.
+    /// </summary>
+    DateTime? GetLastEventPushUtc(string serialNumber);
+
+    /// <summary>Limpa o estado local (gate, monitoramento, push, conexão) de um controlador excluído do cadastro.</summary>
+    void ForgetController(Controller controller);
 
     /// <summary>
     /// Evento de acesso em tempo real empurrado por um controlador.

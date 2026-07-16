@@ -1,36 +1,41 @@
-using HospitalAccess.Domain.Enums;
+using HospitalAccess.Api.Options;
 using HospitalAccess.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace HospitalAccess.Api.Services;
 
 /// <summary>
-/// Reprocessa periodicamente as sincronizações pendentes/falhas: busca os usuários com
-/// DeviceSyncStatus Pending/Failed e os REENFILEIRA na fila serial (<see cref="UserSyncQueue"/>),
-/// que os processa um de cada vez. Sem isto, um usuário cadastrado/revogado enquanto um controlador
-/// estava offline ficaria para sempre em Pending/Failed. A dedup da fila evita empilhar repetidos.
+/// Reprocessa periodicamente as sincronizações ELEGÍVEIS: Pending sempre; Failed só quando o
+/// backoff exponencial venceu (<see cref="SyncRetryPolicy"/>) — falhas permanentes (foto sem
+/// rosto, duplicidade) ficam em quarentena até ação manual. Os elegíveis são REENFILEIRADOS na
+/// fila serial (<see cref="UserSyncQueue"/>), que os processa um de cada vez por usuário.
+/// Sem a elegibilidade, TODO Pending/Failed re-enviava a face completa a cada varredura,
+/// para sempre — a principal fonte de sobrecarga de rede nos controladores.
 /// </summary>
 public sealed class SyncRetryBackgroundService : BackgroundService
 {
-    private static readonly TimeSpan Interval = TimeSpan.FromMinutes(2);
-
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IUserSyncQueue _queue;
+    private readonly SyncRetryOptions _options;
     private readonly ILogger<SyncRetryBackgroundService> _logger;
 
-    public SyncRetryBackgroundService(IServiceScopeFactory scopeFactory, IUserSyncQueue queue, ILogger<SyncRetryBackgroundService> logger)
+    public SyncRetryBackgroundService(IServiceScopeFactory scopeFactory, IUserSyncQueue queue,
+        IOptions<SyncRetryOptions> options, ILogger<SyncRetryBackgroundService> logger)
     {
         _scopeFactory = scopeFactory;
         _queue = queue;
+        _options = options.Value;
         _logger = logger;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        using var timer = new PeriodicTimer(Interval);
+        // Math.Max: config 0/negativa não pode derrubar o host (PeriodicTimer exige período > 0).
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(Math.Max(1, _options.ScanIntervalSeconds)));
         do
         {
             try
@@ -38,7 +43,7 @@ public sealed class SyncRetryBackgroundService : BackgroundService
                 using var scope = _scopeFactory.CreateScope();
                 var db = scope.ServiceProvider.GetRequiredService<AccessDbContext>();
                 var pending = await db.SyncStatuses
-                    .Where(s => s.State == SyncState.Pending || s.State == SyncState.Failed)
+                    .Where(SyncRetryPolicy.EligibleForAutoRetry(DateTime.UtcNow))
                     .Select(s => s.UserId)
                     .Distinct()
                     .ToListAsync(stoppingToken);

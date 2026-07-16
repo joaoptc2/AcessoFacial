@@ -1,28 +1,14 @@
-import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, type DashboardDto } from "../lib/api";
+import { useControllerStatus } from "../lib/controllerStatusStore";
 
 /**
  * Alerta visual global: exibe uma faixa no topo quando há controlador OFFLINE ou
- * sincronização pendente/falha. Atualiza sozinho a cada 30s. Some quando tudo está ok.
+ * sincronização pendente/falha. Atualiza sozinho a cada 30s (polling compartilhado
+ * com a HomePage via controllerStatusStore — uma única requisição por ciclo).
+ * Some quando tudo está ok.
  */
 export function StatusBanner() {
-  const [dashboard, setDashboard] = useState<DashboardDto | null>(null);
-
-  useEffect(() => {
-    let active = true;
-    const load = () =>
-      api
-        .getControllerStatus()
-        .then((d) => active && setDashboard(d))
-        .catch(() => active && setDashboard(null));
-    load();
-    const timer = setInterval(load, 30000);
-    return () => {
-      active = false;
-      clearInterval(timer);
-    };
-  }, []);
+  const { dashboard } = useControllerStatus();
 
   if (!dashboard) return null;
 

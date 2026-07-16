@@ -3,6 +3,7 @@ using System;
 using HospitalAccess.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace HospitalAccess.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(AccessDbContext))]
-    partial class AccessDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260716123418_DropControllerRelayIndex")]
+    partial class DropControllerRelayIndex
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -418,9 +421,6 @@ namespace HospitalAccess.Infrastructure.Persistence.Migrations
                     b.Property<int>("ControllerAuditRetentionDays")
                         .HasColumnType("integer");
 
-                    b.Property<bool>("DevelopmentModeEnabled")
-                        .HasColumnType("boolean");
-
                     b.Property<int>("EventPhotoRetentionDays")
                         .HasColumnType("integer");
 
@@ -445,7 +445,6 @@ namespace HospitalAccess.Infrastructure.Persistence.Migrations
                             AccessLogRetentionDays = 0,
                             AlarmLogRetentionDays = 0,
                             ControllerAuditRetentionDays = 0,
-                            DevelopmentModeEnabled = false,
                             EventPhotoRetentionDays = 90,
                             QrFormat = "PlainText",
                             UpdatedAtUtc = new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc)

@@ -10,6 +10,14 @@ public sealed record RevokeUserWork(Guid UserId) : SyncWork;
 public sealed record RevokeDeletedUserWork(uint UserCode, IReadOnlyList<Guid> ControllerIds) : SyncWork;
 
 /// <summary>
+/// Troca de quarto de um visitante: limpa o QR do(s) quarto(s) antigo(s) via HTTP (best-effort)
+/// e então REENFILEIRA a sincronização pela dedup por usuário (a reconciliação revoga via SDK
+/// nos antigos e cadastra no novo). A limpeza do QR acontece antes do enqueue, então a ordem
+/// das duas fases é preservada.
+/// </summary>
+public sealed record ChangeVisitorRoomWork(Guid UserId, uint UserCode, IReadOnlyList<Guid> OldControllerIds) : SyncWork;
+
+/// <summary>
 /// Fila de sincronização com o hardware. Cada cadastro/edição/revogação era disparado num
 /// <c>Task.Run</c> imediato, então um lote de cadastros gerava vários <c>AddPersonAndImage</c>
 /// (upload de face) CONCORRENTES no mesmo controlador — que estourava com CommandStatus_Timeout.
@@ -27,6 +35,9 @@ public interface IUserSyncQueue
 
     /// <summary>Enfileira a revogação de um usuário já excluído (por código + controladores capturados antes do delete).</summary>
     void EnqueueRevokeDeleted(uint userCode, IReadOnlyList<Guid> controllerIds);
+
+    /// <summary>Enfileira a troca de quarto de um visitante (limpeza do QR antigo + re-sincronização).</summary>
+    void EnqueueChangeRoom(Guid userId, uint userCode, IReadOnlyList<Guid> oldControllerIds);
 
     /// <summary>Enfileira (com deduplicação) a sincronização de vários usuários. Devolve quantos foram efetivamente enfileirados.</summary>
     int EnqueueMany(IEnumerable<Guid> userIds);
@@ -66,6 +77,10 @@ public sealed class UserSyncQueue : IUserSyncQueue
         if (controllerIds.Count == 0) return;
         _channel.Writer.TryWrite(new RevokeDeletedUserWork(userCode, controllerIds));
     }
+
+    // Sem dedup (como as revogações): cada troca de quarto carrega o snapshot das portas antigas.
+    public void EnqueueChangeRoom(Guid userId, uint userCode, IReadOnlyList<Guid> oldControllerIds) =>
+        _channel.Writer.TryWrite(new ChangeVisitorRoomWork(userId, userCode, oldControllerIds));
 
     public int EnqueueMany(IEnumerable<Guid> userIds)
     {

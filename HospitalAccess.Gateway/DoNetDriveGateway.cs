@@ -56,6 +56,22 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
     private readonly ConcurrentDictionary<string, Controller> _monitored = new();
 
     /// <summary>
+    /// Última atividade de push (UTC) por SN — QUALQUER Door8800Transaction conta, inclusive
+    /// keep-alive (0x22) e teste de conexão (0xA0). Prova só PRESENÇA (o aparelho está vivo e
+    /// alcançável) — usada pela sonda do health-check.
+    /// </summary>
+    private readonly ConcurrentDictionary<string, DateTime> _lastPushUtc = new();
+
+    /// <summary>
+    /// Último push de EVENTO (UTC) por SN — apenas CmdIndex 1–4 (autenticação, sensor, log de
+    /// sistema, temperatura). Prova que o MONITORAMENTO (BeginWatch) está de fato entregando.
+    /// O keep-alive 0x22 fica de fora de propósito: ele é do phone-home (independente do estado
+    /// do watch — protocolo Classe I/IX), então contá-lo aqui suprimiria o re-arme para sempre
+    /// num aparelho com keepalive ativo e monitoramento desligado.
+    /// </summary>
+    private readonly ConcurrentDictionary<string, DateTime> _lastEventPushUtc = new();
+
+    /// <summary>
     /// Um lock por controlador (Id): serializa TODOS os comandos ao MESMO aparelho (sync, health,
     /// porta, leitura...). Sem isto, dois comandos concorrentes no mesmo controlador estouravam com
     /// CommandStatus_Timeout (ex.: um AddPersonAndImage de face colidindo com o heartbeat do
@@ -70,6 +86,15 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
         _allocator = ConnectorAllocator.GetAllocator();
         _allocator.TransactionMessage += OnTransactionMessage;
     }
+
+    /// <summary>
+    /// Reenvios NO FIO (SDK) do upload de face (AddPersonAndImage). O SDK re-emite cada comando
+    /// falho RestartCount vezes antes de reportar erro; com o default por controlador (3), cada
+    /// falha de upload custava o payload de ~120 KB em triplicata. O retry com backoff da
+    /// aplicação é quem governa as novas tentativas, então 1 é o default correto aqui.
+    /// Os demais comandos (leves) continuam usando o RestartCount do controlador.
+    /// </summary>
+    public int FaceUploadWireRetries { get; set; } = 1;
 
     /// <summary>
     /// Converte um horário UTC para o "relógio de parede" do fuso do aparelho. O campo de validade
@@ -176,7 +201,9 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
             WaitRepeatMessage = controller.SupportsWaitRepeatMessage,
         };
 
-        var cmd = new AddPeosonAndImage(_connections.CreateCommandDetail(controller), par); // grafia confirmada no SDK
+        var cmdDtl = _connections.CreateCommandDetail(controller);
+        cmdDtl.RestartCount = Math.Max(1, FaceUploadWireRetries);
+        var cmd = new AddPeosonAndImage(cmdDtl, par); // grafia confirmada no SDK
         await RunAsync(cmd, "AddPersonAndImage", controller);
 
         return MapAddFaceResult(cmd.getResult() as AddPersonAndImage_Result);
@@ -704,13 +731,27 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
 
     // ----------------------------------------------------------------------------------
     // Monitoramento em tempo real (BeginWatch). Sem isto o dispositivo NÃO empurra eventos:
-    // o push vem desligado de fábrica e não persiste após reboot (protocolo §10). Segue o
-    // padrão do demo oficial (FrmMain.buWatch_Click): abre a conexão forçada, adiciona o
-    // Door8800RequestHandle para decodificar o push e envia BeginWatch. Não validado contra
-    // hardware real (ver README seção 2).
+    // o push vem desligado de fábrica e não persiste após reboot (protocolo Classe I,
+    // "Online Transaction" 0x01 0x0B; o push é a Classe IX). Segue o padrão do demo oficial
+    // (FrmMain.buWatch_Click): abre a conexão forçada, adiciona o Door8800RequestHandle para
+    // decodificar o push e envia BeginWatch. Não validado contra hardware real (ver README
+    // seção 2).
     // ----------------------------------------------------------------------------------
 
     public async Task StartMonitoringAsync(Controller controller, CancellationToken ct = default)
+    {
+        var cmdDtl = EnsurePushChannelCore(controller);
+        await RunAsync(new BeginWatch(cmdDtl), "BeginWatch", controller);
+    }
+
+    /// <summary>
+    /// Prepara o canal de push LOCALMENTE (conexão forçada + handler de decodificação + registro
+    /// em _monitored) sem enviar BeginWatch — para quando o aparelho já está com o monitoramento
+    /// ativo (ReadWatchState) e só precisamos garantir que o canal do nosso lado está pronto.
+    /// </summary>
+    public void EnsurePushChannel(Controller controller) => EnsurePushChannelCore(controller);
+
+    private INCommandDetail EnsurePushChannelCore(Controller controller)
     {
         var cmdDtl = _connections.CreateCommandDetail(controller);
 
@@ -724,8 +765,28 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
         }
 
         _monitored[controller.SerialNumber] = controller;
-        await RunAsync(new BeginWatch(cmdDtl), "BeginWatch", controller);
+        return cmdDtl;
     }
+
+    /// <summary>
+    /// Lê o estado do monitoramento em tempo real no aparelho (protocolo Classe I, 0x01 0x0B 0x02:
+    /// 0 = desligado, 1 = ligado). Padrão de retorno confirmado no demo oficial
+    /// (frmSystem.BtnReadWatchState_Click: <c>cmd.WatchState == 1</c>).
+    /// </summary>
+    public async Task<bool> IsMonitoringActiveAsync(Controller controller, CancellationToken ct = default)
+    {
+        var cmd = new ReadWatchState(_connections.CreateCommandDetail(controller));
+        await RunAsync(cmd, "ReadWatchState", controller);
+        return cmd.WatchState == 1;
+    }
+
+    /// <summary>Última atividade de push (inclusive keep-alive) recebida deste SN, se houver.</summary>
+    public DateTime? GetLastPushActivityUtc(string serialNumber) =>
+        _lastPushUtc.TryGetValue(serialNumber, out var ts) ? ts : null;
+
+    /// <summary>Último push de EVENTO (CmdIndex 1–4) deste SN — prova de monitoramento entregando.</summary>
+    public DateTime? GetLastEventPushUtc(string serialNumber) =>
+        _lastEventPushUtc.TryGetValue(serialNumber, out var ts) ? ts : null;
 
     public async Task StopMonitoringAsync(Controller controller, CancellationToken ct = default)
     {
@@ -739,6 +800,34 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
         {
             var connector = _allocator.GetConnector(cmdDtl.Connector);
             connector?.CloseForciblyConnect();
+        }
+    }
+
+    /// <summary>
+    /// Esquece o estado local de um controlador EXCLUÍDO do cadastro: gate de serialização,
+    /// registro de monitoramento, última atividade de push e a conexão persistente. Sem isto,
+    /// gates/conexões de aparelhos removidos ficavam vivos no singleton para sempre.
+    /// (Não envia CloseWatch: o aparelho pode nem estar acessível — apenas limpeza local.)
+    /// </summary>
+    public void ForgetController(Controller controller)
+    {
+        // Remove SEM Dispose: um comando em voo ainda segura o gate e o Release() num semáforo
+        // disposado lançaria ObjectDisposedException. Sem AvailableWaitHandle o SemaphoreSlim não
+        // tem recurso não gerenciado — órfão, é coletado pelo GC quando o comando terminar.
+        _controllerGates.TryRemove(controller.Id, out _);
+        _monitored.TryRemove(controller.SerialNumber, out _);
+        _lastPushUtc.TryRemove(controller.SerialNumber, out _);
+        _lastEventPushUtc.TryRemove(controller.SerialNumber, out _);
+
+        try
+        {
+            var cmdDtl = _connections.CreateCommandDetail(controller);
+            var connector = _allocator.GetConnector(cmdDtl.Connector);
+            connector?.CloseForciblyConnect();
+        }
+        catch
+        {
+            // Senha indecifrável ou detalhe inválido não podem impedir a limpeza local.
         }
     }
 
@@ -768,6 +857,12 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
     private void OnTransactionMessage(INConnectorDetail connectorDetail, INData eventData)
     {
         if (eventData is not Door8800Transaction transaction) return;
+
+        // Qualquer push (evento, keep-alive 0x22, teste 0xA0) prova que o aparelho está vivo —
+        // alimenta a sonda de presença. Só push de EVENTO (1–4) prova monitoramento ativo.
+        _lastPushUtc[transaction.SN] = DateTime.UtcNow;
+        if (transaction.CmdIndex is >= 1 and <= 4)
+            _lastEventPushUtc[transaction.SN] = DateTime.UtcNow;
 
         // Mantém a conexão aberta ao receber push (padrão do demo).
         var connector = _allocator.GetConnector(connectorDetail);

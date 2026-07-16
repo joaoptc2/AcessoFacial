@@ -9,9 +9,9 @@
       O SDK DoNetDrive.* é fornecido pelo fabricante (não há feed NuGet público).
       As DLLs (versões confirmadas no packages.config do projeto de exemplo
       DoNetDrive.Protocol.Fingerprint.Test: Core 2.9.0, Protocol 2.4.0,
-      Protocol.Door 2.8.0, Protocol.Fingerprint 2.20.0) ficam em lib/ e são
-      referenciadas diretamente. Ver README (setup on-premise) para como obtê-las
-      do fabricante ao clonar este repositório em outro ambiente.
+      Protocol.Door 2.8.0, Protocol.Fingerprint 2.20.0) já estão VERSIONADAS em lib/
+      e são referenciadas diretamente — clonar o repositório basta para compilar.
+      Os arquivos originais do fabricante (SDK completo + protocolo) ficam em ../vendor/.
     -->
     <Reference Include="DoNetDrive.Common">
       <HintPath>lib\DoNetDrive.Common.dll</HintPath>

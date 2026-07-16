@@ -179,6 +179,12 @@ public class UsersController : ControllerBase
         if (request.GroupId is { } groupId && !await _db.UserGroups.AnyAsync(g => g.Id == groupId, ct))
             return BadRequest("Grupo não existe.");
 
+        // Antes de aplicar a edição: algum campo que vai AO DISPOSITIVO mudou? Editar só perfil
+        // administrativo (telefone, e-mail, cargo, notas...) não pode custar re-upload de face.
+        var hasNewPhoto = facePhoto is { Length: > 0 };
+        var deviceFieldsChanged = UserDeviceFields.Changed(
+            user, request.Name, request.TimeGroup, request.CardNumber, hasNewPhoto);
+
         user.Name = request.Name;
         user.TimeGroup = request.TimeGroup;
         user.GroupId = request.GroupId;
@@ -213,15 +219,33 @@ public class UsersController : ControllerBase
         var addedControllerIds = effectiveIds.Where(cId => !existingControllerIds.Contains(cId)).ToList();
         var removedControllerIds = existingControllerIds.Where(cId => !effectiveIds.Contains(cId)).ToList();
 
-        // Só as portas que PERMANECEM voltam a 'Pending' (força re-push de foto/nome/TimeGroup
-        // alterados). As portas REMOVIDAS ficam 'Synced' de propósito: assim SyncUserAsync as
-        // revoga no hardware — se fossem zeradas junto, a pessoa continuaria cadastrada na porta
-        // removida (a revogação só acontece a partir de um status 'Synced').
+        // Só quando um campo de DISPOSITIVO mudou, as portas que PERMANECEM voltam a 'Pending'
+        // (força re-push de foto/nome/TimeGroup/cartão alterados). As portas REMOVIDAS ficam
+        // 'Synced' de propósito: assim SyncUserAsync as revoga no hardware — se fossem zeradas
+        // junto, a pessoa continuaria cadastrada na porta removida (a revogação só acontece a
+        // partir de um status 'Synced').
         var syncStatuses = await _db.SyncStatuses.Where(s => s.UserId == id).ToListAsync(ct);
-        foreach (var status in syncStatuses.Where(s => s.State == SyncState.Synced && effectiveIds.Contains(s.ControllerId)))
+        if (deviceFieldsChanged)
         {
-            status.State = SyncState.Pending;
-            status.UpdatedAt = DateTime.UtcNow;
+            foreach (var status in syncStatuses.Where(s => s.State == SyncState.Synced && effectiveIds.Contains(s.ControllerId)))
+            {
+                status.State = SyncState.Pending;
+                status.UpdatedAt = DateTime.UtcNow;
+            }
+        }
+
+        // Foto nova destrava TODAS as falhas deste usuário, inclusive quarentena e conflito de
+        // duplicidade — uma foto diferente pode resolver "sem rosto" e "face duplicada".
+        if (hasNewPhoto)
+        {
+            foreach (var status in syncStatuses.Where(s => s.State == SyncState.Failed))
+            {
+                status.State = SyncState.Pending;
+                status.RetryCount = 0;
+                status.NextRetryAtUtc = null;
+                status.ConflictUserCode = null;
+                status.UpdatedAt = DateTime.UtcNow;
+            }
         }
 
         // Reconcilia as permissões (portas do grupo herdadas + extras manuais) marcando a origem.
@@ -231,7 +255,11 @@ public class UsersController : ControllerBase
             await BuildControllerChangeDetailsAsync(addedControllerIds, removedControllerIds, ct));
 
         await _db.SaveChangesAsync(ct);
-        SyncInBackground(user.Id);
+
+        // Enfileirar sync só quando há trabalho de hardware: campo de dispositivo alterado ou
+        // porta adicionada/removida. Edição puramente administrativa = zero tráfego.
+        if (deviceFieldsChanged || addedControllerIds.Count > 0 || removedControllerIds.Count > 0)
+            SyncInBackground(user.Id);
 
         return NoContent();
     }
@@ -317,6 +345,9 @@ public class UsersController : ControllerBase
         UserAuditLogger.Record(_db, user, "Reativado", CurrentUsername());
         await _db.SaveChangesAsync(ct);
 
+        // Reativar é ação manual: destrava backoff/quarentena (menos conflitos de duplicidade).
+        await ResetFailedForRetryAsync(
+            _db.SyncStatuses.Where(s => s.UserId == id && s.ConflictUserCode == null), ct);
         SyncInBackground(id);
 
         return NoContent();
@@ -327,8 +358,13 @@ public class UsersController : ControllerBase
     [Authorize(Roles = "Admin,Operator")]
     public async Task<IActionResult> SyncFailed(CancellationToken ct)
     {
+        // Ação manual destrava o backoff e a quarentena de falha permanente — exceto conflitos
+        // de duplicidade (ConflictUserCode), que têm fluxo próprio de resolução (substituir/manter):
+        // re-tentá-los sem resolver é upload garantido de ser rejeitado.
+        await ResetFailedForRetryAsync(_db.SyncStatuses.Where(s => s.ConflictUserCode == null), ct);
+
         var userIds = await _db.SyncStatuses
-            .Where(s => s.State == SyncState.Pending || s.State == SyncState.Failed)
+            .Where(s => s.State == SyncState.Pending)
             .Select(s => s.UserId)
             .Distinct()
             .ToListAsync(ct);
@@ -343,9 +379,23 @@ public class UsersController : ControllerBase
     public async Task<IActionResult> Resync(Guid id, CancellationToken ct)
     {
         if (!await _db.Users.AnyAsync(u => u.Id == id && u.Type == UserType.Permanent, ct)) return NotFound();
+        await ResetFailedForRetryAsync(
+            _db.SyncStatuses.Where(s => s.UserId == id && s.ConflictUserCode == null), ct);
         _syncQueue.EnqueueSync(id);
         return Accepted(new { message = "Sincronização reenfileirada." });
     }
+
+    /// <summary>
+    /// Volta status Failed para Pending zerando o backoff/quarentena (<see cref="SyncRetryPolicy"/>) —
+    /// usado pelas ações manuais de resync, que têm precedência sobre a espera automática.
+    /// </summary>
+    private static Task<int> ResetFailedForRetryAsync(IQueryable<DeviceSyncStatus> failedScope, CancellationToken ct) =>
+        failedScope.Where(s => s.State == SyncState.Failed)
+            .ExecuteUpdateAsync(u => u
+                .SetProperty(s => s.State, SyncState.Pending)
+                .SetProperty(s => s.RetryCount, 0)
+                .SetProperty(s => s.NextRetryAtUtc, (DateTime?)null)
+                .SetProperty(s => s.UpdatedAt, DateTime.UtcNow), ct);
 
     /// <summary>
     /// Resolve um conflito de face duplicada em um controlador SUBSTITUINDO: exclui o usuário

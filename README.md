@@ -40,7 +40,9 @@ fabricante (`ImageTool.ConvertImage`) usa `System.Drawing`/GDI+, que é **Window
 o .NET 7 — inviável para uma API ASP.NET Core multiplataforma. Reimplementado em
 `HospitalAccess.Gateway.Imaging.FaceImageConverter` com **ImageSharp** (mesma lógica: resize
 preservando aspect ratio, canvas branco 480×640, redução iterativa de qualidade JPEG até
-caber no limite). Só JPG é aceito. Retornos tratados: `2` (feature code não identificável),
+caber no limite). Qualquer formato que o ImageSharp decodifique é aceito na entrada (JPG,
+PNG, WebP...) — o conversor sempre re-encoda para **JPEG**, que é o que o aparelho exige.
+Retornos tratados: `2` (feature code não identificável),
 `3` (sem rosto), `4` (duplicada), `0`/outros (falha de CRC32), resultado nulo (handle 0 =
 usuário inexistente).
 
@@ -84,8 +86,8 @@ um QR já existente do painel e só re-renderizar o PNG (`POST /api/visitors/qrc
 ### 6. Controlador = porta (não existe entidade `Door` separada)
 O hardware 8190H tem **um único relé/porta por controlador** — não há como um controlador
 comandar mais de uma porta. Por isso não existe uma entidade `Door`: `Controller` já
-representa fisicamente a porta (campo `RelayIndex`, sempre `0`, mantido só por
-compatibilidade futura caso surja um modelo multi-relé). `AccessPermission` liga
+representa fisicamente a porta (o antigo campo `RelayIndex`, sempre `0` e ignorado pelo
+gateway, foi removido). `AccessPermission` liga
 `User`→`Controller` diretamente. Os comandos de porta expostos pelo SDK — `OpenDoor`,
 `CloseDoor`, `HoldDoor` (manter aberta), `LockDoor` (trancar mesmo para credencial válida)
 e `UnlockDoor` (reverter o trancamento) — ficam em `IDeviceGateway` e são expostos por
@@ -110,9 +112,16 @@ no gateway/sync:
   não os demais. Coordenação por usuário: no máximo 1 processamento por usuário ao mesmo tempo
   (dedup), com flag de **rerun** para não perder uma edição feita durante o processamento nem
   empilhar duplicatas do job de retry.
-- **Progresso e retry**: fica em `DeviceSyncStatus` (Pending/Synced/Failed). O
-  `SyncRetryBackgroundService` (a cada 2 min) **reenfileira** na fila os usuários pendentes/falhos.
-  Há ainda `POST /api/users/sync-failed` (botão "Sincronizar com erro") e `POST /api/users/{id}/resync`.
+- **Progresso e retry**: fica em `DeviceSyncStatus` (Pending/Synced/Failed +
+  `RetryCount`/`NextRetryAtUtc`). O `SyncRetryBackgroundService` (varredura `Sync:ScanIntervalSeconds`,
+  default 2 min) **reenfileira só os elegíveis** (`SyncRetryPolicy`): `Pending` sempre; `Failed`
+  quando o **backoff exponencial** venceu (2→4→8→16→32→60 min, teto 1 h — configurável). Falha
+  **permanente** (foto sem rosto, feature ilegível, duplicidade) entra em **quarentena**
+  (`NextRetryAtUtc = null`): nunca re-tenta sozinha — destrave com `POST /api/users/sync-failed`
+  (botão "Sincronizar com erro"), `POST /api/users/{id}/resync`, reativação ou upload de foto
+  nova (conflito de duplicidade tem fluxo próprio substituir/manter). Sem isso, todo usuário
+  falho re-enviava a face completa (~120 KB) a cada 2 min, para sempre — a principal fonte de
+  sobrecarga de rede nos controladores.
 - **Revogação ao editar/remover porta**: ao remover uma permissão, o `DeviceSyncStatus` daquela
   porta permanece `Synced` de propósito — assim o `SyncUserAsync` o **revoga** no hardware (a
   revogação só parte de um status `Synced`). Exclusão de usuário: a linha do `User` (e o
@@ -122,7 +131,10 @@ no gateway/sync:
   também é paralela entre controladores. Era em série, então um aparelho lento (~30 s de timeout)
   atrasava a checagem dos seguintes e o `LastSeenUtc` deles envelhecia além do limiar de 3 min —
   fazendo controladores **saudáveis aparecerem "offline"** (test-connection passava, mas o painel
-  mostrava offline). Regra geral: **paralelizar entre controladores, serializar dentro de cada um.**
+  mostrava offline). Ordem da sonda, da mais barata à mais cara: **push recente** (aparelho
+  falou conosco → online sem sonda alguma) → ICMP ping → TCP na porta do painel HTTP
+  (`ApiBaseUrl`) → TCP na porta do SDK só como último recurso (`HealthCheck:AllowSdkPortFallback`).
+  Regra geral: **paralelizar entre controladores, serializar dentro de cada um.**
 
 ### 8. Segurança física (fora do software)
 A política **fail-safe vs fail-secure** das portas em queda de energia/rede (isto é: se a
@@ -163,10 +175,11 @@ não implementadas" mais abaixo — a maioria virou item desta lista):
   `POST /api/controllers/{id}/alarm-clear` para silenciar. O alarme de sensor de porta
   (magnético) não tem tela de configuração (a escrita exige uma grade horária completa no
   protocolo — desproporcional para esta função), mas o **evento** ainda é capturado em
-  tempo real. Eventos de alarme chegam pelo mesmo `TransactionMessage` do SDK, discriminados
-  pelo tipo concreto `AlarmTransaction` (`DoNetDriveGateway.OnTransactionMessage`), gravados
-  em `AlarmEvent` (`AlarmEventRecorder`, mesmo padrão do `AccessEventRecorder`) e consultáveis
-  em `/api/alarmevents` (com CSV).
+  tempo real. Eventos de alarme chegam pelo mesmo `TransactionMessage` do SDK como **log de
+  sistema** (`SystemTransaction`, envelope com `CmdIndex == 3` — protocolo Classe IX §9.4;
+  códigos 14–20 disparam e 21–27 limpam), classificados por `TransactionCodeClassifier.TryMapSystemAlarm`
+  em `DoNetDriveGateway.OnTransactionMessage`, gravados em `AlarmEvent` (`AlarmEventRecorder`,
+  mesmo padrão do `AccessEventRecorder`) e consultáveis em `/api/alarmevents` (com CSV).
 - **Ajustes locais do quiosque** (`Fingerprint.SystemParameter.*`: idioma, volume, luz de
   preenchimento, detecção de máscara, temperatura — detecção/alarme/exibição —, distância de
   reconhecimento facial, detecção de vida/liveness): `GET/PUT /api/controllers/{id}/kiosk-settings`,
@@ -188,7 +201,7 @@ não implementadas" mais abaixo — a maioria virou item desta lista):
   setor, código de rolagem) exigiria um leitor/gravador de cartão dedicado, fora do alcance
   deste sistema.
 
-⚠️ Estas 8 áreas foram implementadas contra as DLLs reais do SDK (compilação verificada,
+⚠️ Estas áreas foram implementadas contra as DLLs reais do SDK (compilação verificada,
 nomes de classe/propriedade confirmados via `monodis` quando o código de exemplo não deixava
 claro), mas **nenhuma delas foi testada contra um 8190H físico** — mesma limitação já
 registrada nas seções 1-2 para o restante do gateway.
@@ -232,6 +245,18 @@ e receber eventos. Todo esse código vive em **`HospitalAccess.Infrastructure/De
 - **Mapa de erros** — `DeviceErrorCodes` traduz os `errCode` do painel (ex.: `11` =
   `ExpirationDate` fora da faixa) para mensagens legíveis; as falhas viram `DeviceHttpException`
   e o endpoint devolve 502/422 com a causa.
+
+## Modo de desenvolvimento (tela "Logs (Dev)", só Admin)
+
+Ferramenta de diagnóstico em produção sem acesso ao servidor: com o **modo de desenvolvimento**
+ativo (toggle persistido em `SystemSettings`, sobrevive a restart), os logs importantes do
+processo — Information+ das categorias `HospitalAccess.*` (sincronização, monitoramento,
+health-check, comandos aos controladores) e Warning+ do framework — são espelhados num **ring
+buffer em memória** (últimas 2000 linhas, `DevLogBuffer`) e exibidos na tela **Logs (Dev)** com
+filtro por nível/texto, botão de ativar/desativar e botão de limpar. API: `GET /api/devlogs`
+(busca incremental por id), `POST /api/devlogs/mode`, `DELETE /api/devlogs`. Desligado o custo é
+zero; nada vai para disco (o log completo do serviço continua no journal/console) e o conteúdo se
+perde no restart — é diagnóstico, não auditoria.
 
 ## Gestão de leitos (visitantes temporários)
 
@@ -368,10 +393,19 @@ dotnet test HospitalAccess.Tests/HospitalAccess.Tests.csproj
 ```
 
 ## O que foi verificado de ponta a ponta neste ambiente de desenvolvimento
-- Build completo da solução (0 erros/warnings) e suíte de testes cobrindo QR, classificador de
-  eventos, conversor de imagem e o **cliente HTTP do painel** (`DeviceHttpClientTests`: o hash de
-  login MD5 contra o vetor do sistema de referência, o multipart byte-exato — `PeopleJson` sem
-  `Content-Type` e foto `image/jpg` — e a extração do `QRCode`).
+
+> Registro **cronológico** das rodadas de verificação. Os itens que citam telas Blazor
+> (`*.razor`, `ApiClient.cs`) são **históricos**: descrevem o front-end antigo, aposentado e
+> removido do repositório na migração para React (último item da lista).
+
+- Build completo da solução (0 erros/warnings) e suíte de testes (xunit; hoje 10 arquivos)
+  cobrindo QR, classificador de eventos, conversor de imagem, fila de sincronização
+  (dedup/rerun/troca de quarto), política de retry/backoff (`SyncRetryPolicyTests`), diff de
+  campos de dispositivo (`UserDeviceFieldsTests`), guarda de reentrância (`SingleFlightTests`),
+  acesso por grupo, número de cartão de visitante e o **cliente HTTP do painel**
+  (`DeviceHttpClientTests`: o hash de login MD5 contra o vetor do sistema de referência, o
+  multipart byte-exato — `PeopleJson` sem `Content-Type` e foto `image/jpg` — e a extração do
+  `QRCode`).
 - **QR do visitante lido do controlador — validado contra hardware real** (seção 5): com a URL e a
   senha do painel web configuradas, o QR baixado abre a porta (confirmação do cliente). A
   integração HTTP em si (login → `content.token` → `GetDetail` vazio → provisiona via multipart
@@ -382,7 +416,8 @@ dotnet test HospitalAccess.Tests/HospitalAccess.Tests.csproj
   usuários e visitantes, geração de QR (PNG real, byte-mode), feriados e grade horária
   (com sincronização em massa para todos os controladores), exportação CSV do log de
   acessos e do log de alarmes.
-- Front-end Blazor Server testado num Chromium real (Playwright): login → cadastro de
+- (Histórico — front-end Blazor, hoje aposentado) Front-end Blazor Server testado num Chromium
+  real (Playwright): login → cadastro de
   controlador → comandos de porta (abrir/fechar/manter aberta/trancar/destrancar) → editar
   controlador → descoberta de controladores na rede → tela de detalhes do controlador (abas
   Rede/Relógio/Alarmes/Ajustes Locais/Auditoria/Fotos de Evento, todas navegáveis sem travar

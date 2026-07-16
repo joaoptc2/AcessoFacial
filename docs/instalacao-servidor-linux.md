@@ -237,7 +237,10 @@ sobre qual CA usar antes de gerar os certificados.
 Libere só o necessário:
 ```bash
 sudo ufw allow 80/tcp     # ou 443/tcp se já configurou HTTPS
-sudo ufw allow from <faixa-de-IP-da-VLAN-de-acesso> to any port 8101 proto tcp  # ida até os controladores, se houver firewall entre eles
+# Se houver firewall ENTRE o servidor e a VLAN dos controladores, libere a saída do servidor
+# para a porta TCP configurada em cada controlador (campo "Porta" do cadastro — não há um
+# padrão fixo; use a porta que os aparelhos foram configurados para escutar) e, se usar a
+# integração HTTP do painel (ApiBaseUrl/QR), também a porta do painel web (80/443 do aparelho).
 sudo ufw enable
 ```
 A porta 5080 (API) deve ficar **fechada** para fora do próprio servidor — só o Nginx

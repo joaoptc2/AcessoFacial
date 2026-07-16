@@ -16,7 +16,6 @@ export interface ControllerDto {
   port: number;
   serialNumber: string;
   supportsWaitRepeatMessage: boolean;
-  relayIndex: number;
   timeoutMs: number;
   restartCount: number;
   userCount: number;
@@ -29,7 +28,6 @@ export interface ControllerDetailDto {
   port: number;
   serialNumber: string;
   supportsWaitRepeatMessage: boolean;
-  relayIndex: number;
   timeoutMs: number;
   restartCount: number;
   connectionMode: ControllerConnectionMode;
@@ -62,7 +60,6 @@ export interface UpdateControllerRequest {
   communicationPassword?: string;
   supportsWaitRepeatMessage: boolean;
   connectionMode: ControllerConnectionMode;
-  relayIndex: number;
   timeoutMs: number;
   restartCount: number;
   apiBaseUrl?: string;
@@ -349,6 +346,24 @@ export interface SystemSettingsDto {
 }
 
 export type UpdateSettingsRequest = Omit<SystemSettingsDto, "updatedAtUtc" | "updatedByUsername">;
+
+// ---- Logs de desenvolvimento (Admin) ----
+
+export interface DevLogEntry {
+  id: number;
+  timestampUtc: string;
+  level: "Trace" | "Debug" | "Information" | "Warning" | "Error" | "Critical" | string;
+  category: string;
+  message: string;
+  exception: string | null;
+}
+
+export interface DevLogsResponse {
+  enabled: boolean;
+  capacity: number;
+  count: number;
+  entries: DevLogEntry[];
+}
 
 export interface AccessLogItem {
   id: string;
@@ -655,4 +670,11 @@ export const api = {
   // ---- Configurações do sistema (Admin) ----
   getSettings: () => request<SystemSettingsDto>("/settings"),
   updateSettings: (body: UpdateSettingsRequest) => request<void>("/settings", { method: "PUT", body: JSON.stringify(body) }),
+
+  // ---- Logs de desenvolvimento (Admin) ----
+  getDevLogs: (params: { sinceId?: number; take?: number } = {}) =>
+    request<DevLogsResponse>(`/devlogs${buildQuery(params)}`),
+  setDevMode: (enabled: boolean) =>
+    request<{ enabled: boolean }>("/devlogs/mode", { method: "POST", body: JSON.stringify({ enabled }) }),
+  clearDevLogs: () => request<void>("/devlogs", { method: "DELETE" }),
 };

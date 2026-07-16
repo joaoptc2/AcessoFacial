@@ -1,30 +1,17 @@
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import { useAuth } from "../lib/AuthContext";
-import { api, ApiError, type DashboardDto, type EmergencyResultDto } from "../lib/api";
+import { api, ApiError, type EmergencyResultDto } from "../lib/api";
+import { refreshControllerStatus, useControllerStatus } from "../lib/controllerStatusStore";
 
 export function HomePage() {
   const { username, role } = useAuth();
   const isAdmin = role === "Admin";
 
-  const [dashboard, setDashboard] = useState<DashboardDto | null>(null);
+  // Polling compartilhado com o StatusBanner (uma única requisição por ciclo de 30s).
+  const { dashboard, error: statusError } = useControllerStatus();
   const [error, setError] = useState<string | null>(null);
   const [emergencyBusy, setEmergencyBusy] = useState(false);
   const [emergencyResult, setEmergencyResult] = useState<EmergencyResultDto | null>(null);
-
-  const load = useCallback(async () => {
-    try {
-      setDashboard(await api.getControllerStatus());
-      setError(null);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Falha ao carregar o status.");
-    }
-  }, []);
-
-  useEffect(() => {
-    load();
-    const timer = setInterval(load, 30000); // atualiza a cada 30s
-    return () => clearInterval(timer);
-  }, [load]);
 
   async function runEmergency(kind: "activate" | "deactivate" | "fire" | "clear") {
     const messages: Record<typeof kind, string> = {
@@ -37,6 +24,7 @@ export function HomePage() {
 
     setEmergencyBusy(true);
     setEmergencyResult(null);
+    setError(null); // um erro de comando anterior não pode ficar preso na tela
     try {
       const result =
         kind === "activate"
@@ -47,7 +35,7 @@ export function HomePage() {
               ? await api.fireAlarmAll()
               : await api.clearAlarmsAll();
       setEmergencyResult(result);
-      await load();
+      await refreshControllerStatus();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Falha no comando de emergência.");
     } finally {
@@ -62,7 +50,7 @@ export function HomePage() {
         Bem-vindo(a), {username} ({role}).
       </p>
 
-      {error && <div className="alert alert-danger">{error}</div>}
+      {(error ?? statusError) && <div className="alert alert-danger">{error ?? statusError}</div>}
 
       {dashboard && (
         <div className="card" style={{ marginBottom: "1.25rem" }}>

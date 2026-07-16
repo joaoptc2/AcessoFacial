@@ -60,9 +60,6 @@ public class Controller
     /// <summary>Tentativas de retry por comando antes de marcar falha.</summary>
     public int RestartCount { get; set; } = 3;
 
-    /// <summary>Índice do relé de porta no controlador. Mantido por completude do protocolo; hoje sempre 0.</summary>
-    public int RelayIndex { get; set; }
-
     /// <summary>
     /// Como o servidor se comunica com este controlador. Default <see cref="ControllerConnectionMode.TcpClient"/>
     /// (servidor disca para o controlador). Se o hardware exigir modo "phone home", troque para
