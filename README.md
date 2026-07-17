@@ -258,7 +258,7 @@ filtro por nível/texto, botão de ativar/desativar e botão de limpar. API: `GE
 zero; nada vai para disco (o log completo do serviço continua no journal/console) e o conteúdo se
 perde no restart — é diagnóstico, não auditoria.
 
-## Gestão de leitos (visitantes temporários)
+## Visitantes temporários (1 visitante = 1 quarto)
 
 O visitante temporário representa um **acompanhante/paciente hospedado num quarto**. Como o QR é
 cunhado **por aparelho** (seção 5), a regra de negócio é: **cada visitante fica em exatamente uma
@@ -277,6 +277,47 @@ porta/quarto**.
 > Um comparativo detalhado com um produto comercial de mercado (ZKTeco ZKBio CVAccess 4.0) e o
 > backlog de melhorias priorizado estão em
 > [`docs/comparativo-zkbio-melhorias.md`](docs/comparativo-zkbio-melhorias.md).
+
+## Gestão de Leitos + Home Assistant
+
+Módulo de internações na tela **Gestão de Leitos** (`/beds`, perfis Admin/Operator/Reception).
+O modelo é **1 leito = 1 controlador/porta**: todo controlador cadastrado é um leito. A entidade
+`BedStay` registra cada internação (índice único filtrado garante no máximo **uma internação
+ativa por leito**); as internações encerradas formam o **histórico de mudanças de leito**.
+
+Fluxos (`BedsController`, rota `api/beds`):
+
+- **Internar** (`POST /api/beds/{controllerId}/admit`, `{patientName, validUntil?}`): cria
+  automaticamente um **usuário visitante** com o nome do paciente (validade padrão =
+  `BedManagement:DefaultStayDurationHours`) com permissão só naquele leito e o envia à fila de
+  sincronização — QR de acesso, expiração e revogação reusam todo o fluxo de visitantes já
+  validado em hardware. O QR é obtido pelo botão "Ver QR" (endpoint existente
+  `POST /api/visitors/{id}/qrcode`). O nome do paciente é digitado manualmente por enquanto
+  (integração com o sistema hospitalar fica para o futuro).
+- **Transferir** (`POST .../transfer`, `{toControllerId}`): encerra a internação de origem
+  (motivo Transfer), abre a nova e move o acesso com a mesma mecânica da troca de quarto de
+  visitante (remove do aparelho antigo via HTTP + sincroniza o novo; o QR seguinte já vem
+  cunhado pelo novo aparelho).
+- **Alta** (`POST .../discharge`): encerra a internação (motivo Discharge) e revoga o acesso.
+- **Reexibir boas-vindas** (`POST .../replay-welcome`): regenera o JPG e re-chama o HA (para a
+  TV que perdeu o evento).
+
+**Tela de boas-vindas (JPG)**: o `WelcomeImageService` parte da **imagem base** do hospital
+(`BedManagement:WelcomeBaseImagePath`), desenha o nome do paciente na posição configurada
+(centralizado na horizontal por padrão) e salva `leito-<id>.jpg` em
+`BedManagement:WelcomeOutputDirectory` — servido publicamente em **`/welcome/*`** (fora do
+`wwwroot`, que o build do front pode limpar). A URL enviada ao HA é
+`{PublicBaseUrl}/welcome/leito-<id>.jpg?v=<ticks>` (cache-bust). ⚠️ **Privacidade**: a imagem
+pública contém o nome do paciente — mantenha o servidor restrito à rede interna.
+
+**Home Assistant** (`HomeAssistantClient`, seção `HomeAssistant` do `appsettings` — desabilitada
+por padrão): REST API do HA na mesma rede com long-lived access token (env
+`HomeAssistant__Token`). Na internação/transferência chama `WelcomeService` (ex.:
+`script.boas_vindas_leito`) com `{room, patient_name, welcome_image_url}`; na alta/transferência
+chama `ClearService` (opcional) com `{room}`. O `room` vem do campo **"Quarto no Home
+Assistant"** do cadastro do controlador (ex.: `quarto_101`). Toda chamada é **best-effort**:
+falha loga Warning (visível em Logs (Dev)) e nunca bloqueia o fluxo de internação. Exemplo de
+script no HA e instruções do token estão comentados no `appsettings.example.json`.
 
 ---
 

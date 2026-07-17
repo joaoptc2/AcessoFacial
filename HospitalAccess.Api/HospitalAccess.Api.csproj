@@ -1,4 +1,13 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk.Web">
+  <!--
+    ImageSharp.Drawing/Fonts 1.x: desenho do NOME do paciente na tela de boas-vindas (módulo de
+    leitos). Pareados com o ImageSharp 2.1 fixado no Gateway (Apache-2.0) — NÃO subir para as
+    versões pareadas com ImageSharp 3.x sem revisar a "Six Labors Split License".
+  -->
+  <ItemGroup>
+    <PackageReference Include="SixLabors.ImageSharp.Drawing" Version="1.0.0" />
+    <PackageReference Include="SixLabors.Fonts" Version="1.0.0" />
+  </ItemGroup>
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>

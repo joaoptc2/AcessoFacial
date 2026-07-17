@@ -18,7 +18,9 @@ public record CreateControllerRequest(
     ControllerConnectionMode ConnectionMode = ControllerConnectionMode.TcpClient,
     // API HTTP do painel web (para ler o QRCode). ApiBaseUrl vazio = só SDK. ApiPassword vazio =
     // usar o padrão global (Device:DefaultApiPassword).
-    string? ApiBaseUrl = null, string? ApiPassword = null);
+    string? ApiBaseUrl = null, string? ApiPassword = null,
+    // Slug do quarto no Home Assistant (gestão de leitos). Vazio = sem integração HA.
+    string? HomeAssistantRoomId = null);
 
 // CommunicationPassword é opcional na edição: em branco/nulo mantém a senha atual (não é
 // devolvida pelo GET, então o formulário não a tem para reenviar). ApiPassword segue a mesma regra.
@@ -27,7 +29,8 @@ public record UpdateControllerRequest(
     string? CommunicationPassword, bool SupportsWaitRepeatMessage,
     int TimeoutMs, int RestartCount,
     ControllerConnectionMode ConnectionMode = ControllerConnectionMode.TcpClient,
-    string? ApiBaseUrl = null, string? ApiPassword = null);
+    string? ApiBaseUrl = null, string? ApiPassword = null,
+    string? HomeAssistantRoomId = null);
 
 /// <summary>
 /// Cadastro dos 30 controladores 8190H, status de sincronização por dispositivo e
@@ -156,6 +159,7 @@ public class ControllersController : ControllerBase
             controller.Id, controller.Name, controller.IpAddress, controller.Port, controller.SerialNumber,
             controller.SupportsWaitRepeatMessage, controller.ConnectionMode,
             controller.TimeoutMs, controller.RestartCount, controller.LastClockSyncAtUtc,
+            controller.HomeAssistantRoomId,
             HasCommunicationPassword = !string.IsNullOrEmpty(controller.CommunicationPassword),
             controller.ApiBaseUrl,
             HasApiPassword = !string.IsNullOrEmpty(controller.ApiPassword),
@@ -196,6 +200,7 @@ public class ControllersController : ControllerBase
             ConnectionMode = request.ConnectionMode,
             ApiBaseUrl = (request.ApiBaseUrl ?? string.Empty).TrimEnd('/'),
             ApiPassword = request.ApiPassword ?? string.Empty,
+            HomeAssistantRoomId = (request.HomeAssistantRoomId ?? string.Empty).Trim(),
         };
 
         _db.Controllers.Add(controller);
@@ -231,6 +236,7 @@ public class ControllersController : ControllerBase
         controller.ConnectionMode = request.ConnectionMode;
         controller.TimeoutMs = request.TimeoutMs;
         controller.RestartCount = request.RestartCount;
+        controller.HomeAssistantRoomId = (request.HomeAssistantRoomId ?? string.Empty).Trim();
         // API HTTP do painel web. Mudança de URL ou senha invalida o token cacheado (re-loga na
         // próxima chamada). ApiPassword em branco = manter a atual (não é devolvida pelo GET).
         var newApiBaseUrl = (request.ApiBaseUrl ?? string.Empty).TrimEnd('/');

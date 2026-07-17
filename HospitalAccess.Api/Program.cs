@@ -142,6 +142,12 @@ builder.Services.AddHostedService<UserSyncQueueWorker>();
 // feriados/grades): cliques repetidos não empilham execuções concorrentes no hardware.
 builder.Services.AddSingleton<SingleFlight>();
 
+// Gestão de leitos + integração Home Assistant (REST + token, mesma rede; best-effort).
+builder.Services.Configure<HomeAssistantOptions>(builder.Configuration.GetSection(HomeAssistantOptions.SectionName));
+builder.Services.Configure<BedManagementOptions>(builder.Configuration.GetSection(BedManagementOptions.SectionName));
+builder.Services.AddSingleton<HomeAssistantClient>();
+builder.Services.AddSingleton<WelcomeImageService>();
+
 // Reprocessa sincronizações pendentes/falhas: reenfileira na fila serial (não processa em paralelo).
 builder.Services.AddHostedService<SyncRetryBackgroundService>();
 
@@ -272,6 +278,26 @@ else
 // bateu, para que o React Router funcione em refresh de uma rota tipo /controllers.
 app.UseDefaultFiles();
 app.UseStaticFiles();
+
+// Telas de boas-vindas dos leitos: diretório PÚBLICO (sem auth, por design — o Home Assistant
+// busca o JPG daqui) servido em /welcome/*, FORA do wwwroot (que o build do React pode limpar).
+// Contém apenas a arte com o nome do paciente; mantenha o servidor na rede interna.
+var welcomeDir = app.Services.GetRequiredService<IOptions<BedManagementOptions>>().Value.WelcomeOutputDirectory;
+try
+{
+    Directory.CreateDirectory(welcomeDir);
+    app.UseStaticFiles(new StaticFileOptions
+    {
+        FileProvider = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(welcomeDir),
+        RequestPath = "/welcome",
+    });
+}
+catch (Exception ex)
+{
+    app.Logger.LogWarning(ex,
+        "Não foi possível preparar o diretório público das telas de boas-vindas ({Dir}) — o módulo de leitos funciona, mas sem servir os JPGs.",
+        welcomeDir);
+}
 
 app.UseRateLimiter();
 app.UseAuthentication();

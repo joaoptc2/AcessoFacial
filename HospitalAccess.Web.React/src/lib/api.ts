@@ -37,6 +37,8 @@ export interface ControllerDetailDto {
   // API HTTP do painel web (para ler o QRCode do aparelho). Vazio = só SDK.
   apiBaseUrl: string;
   hasApiPassword: boolean;
+  // Slug do quarto no Home Assistant (ex.: "quarto_101"). Vazio = sem integração HA.
+  homeAssistantRoomId: string;
 }
 
 export interface CreateControllerRequest {
@@ -49,6 +51,7 @@ export interface CreateControllerRequest {
   connectionMode: ControllerConnectionMode;
   apiBaseUrl?: string;
   apiPassword?: string;
+  homeAssistantRoomId?: string;
 }
 
 export interface UpdateControllerRequest {
@@ -65,6 +68,7 @@ export interface UpdateControllerRequest {
   apiBaseUrl?: string;
   // Em branco/omitido mantém a senha atual do painel web.
   apiPassword?: string;
+  homeAssistantRoomId?: string;
 }
 
 export interface SyncStatusDto {
@@ -350,6 +354,49 @@ export interface SystemSettingsDto {
 }
 
 export type UpdateSettingsRequest = Omit<SystemSettingsDto, "updatedAtUtc" | "updatedByUsername">;
+
+// ---- Gestão de leitos ----
+
+export interface BedDto {
+  controllerId: string;
+  name: string;
+  ipAddress: string;
+  homeAssistantRoomId: string;
+  occupied: boolean;
+  stayId: string | null;
+  patientName: string | null;
+  startedAtUtc: string | null;
+  visitorUserId: string | null;
+  /** Estado da sincronização do acesso do paciente NA porta do leito (Pending/Synced/Failed/Revoked). */
+  accessSyncState: string | null;
+}
+
+export interface BedHistoryItem {
+  id: string;
+  controllerId: string;
+  controllerName: string;
+  patientName: string;
+  startedAtUtc: string;
+  endedAtUtc: string;
+  endReason: "Transfer" | "Discharge" | string;
+  createdByUsername: string | null;
+  endedByUsername: string | null;
+}
+
+export interface BedHistoryPage {
+  total: number;
+  page: number;
+  pageSize: number;
+  items: BedHistoryItem[];
+}
+
+export interface BedActionResult {
+  stayId?: string;
+  visitorUserId?: string;
+  userCode?: number;
+  welcomeImageUrl: string | null;
+  homeAssistantCalled: boolean;
+}
 
 // ---- Logs de desenvolvimento (Admin) ----
 
@@ -676,6 +723,19 @@ export const api = {
   // ---- Configurações do sistema (Admin) ----
   getSettings: () => request<SystemSettingsDto>("/settings"),
   updateSettings: (body: UpdateSettingsRequest) => request<void>("/settings", { method: "PUT", body: JSON.stringify(body) }),
+
+  // ---- Gestão de leitos ----
+  getBeds: () => request<BedDto[]>("/beds"),
+  getBedHistory: (params: { controllerId?: string; page: number; pageSize: number }) =>
+    request<BedHistoryPage>(`/beds/history${buildQuery(params)}`),
+  admitPatient: (controllerId: string, body: { patientName: string; validUntil?: string }) =>
+    request<BedActionResult>(`/beds/${controllerId}/admit`, { method: "POST", body: JSON.stringify(body) }),
+  transferPatient: (controllerId: string, toControllerId: string) =>
+    request<BedActionResult>(`/beds/${controllerId}/transfer`, { method: "POST", body: JSON.stringify({ toControllerId }) }),
+  dischargePatient: (controllerId: string) =>
+    request<void>(`/beds/${controllerId}/discharge`, { method: "POST" }),
+  replayWelcome: (controllerId: string) =>
+    request<BedActionResult>(`/beds/${controllerId}/replay-welcome`, { method: "POST" }),
 
   // ---- Logs de desenvolvimento (Admin) ----
   getDevLogs: (params: { sinceId?: number; take?: number } = {}) =>

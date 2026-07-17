@@ -42,6 +42,7 @@ public class AccessDbContext : DbContext
     public DbSet<TimeGroupSchedule> TimeGroupSchedules => Set<TimeGroupSchedule>();
     public DbSet<TimeGroupSegment> TimeGroupSegments => Set<TimeGroupSegment>();
     public DbSet<SystemSettings> SystemSettings => Set<SystemSettings>();
+    public DbSet<BedStay> BedStays => Set<BedStay>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -112,6 +113,26 @@ public class AccessDbContext : DbContext
             EventPhotoRetentionDays = 90,
             UpdatedAtUtc = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc),
         });
+
+        // Gestão de leitos: no máximo 1 internação ATIVA (EndedAtUtc null) por leito; as
+        // encerradas formam o histórico de mudanças. O User visitante de acesso pode ser
+        // excluído sem perder o histórico (SetNull — PatientName é o snapshot).
+        b.Entity<BedStay>()
+            .HasIndex(s => s.ControllerId)
+            .IsUnique()
+            .HasFilter("\"EndedAtUtc\" IS NULL");
+        b.Entity<BedStay>().HasIndex(s => s.StartedAtUtc);
+        b.Entity<BedStay>()
+            .HasOne(s => s.Controller)
+            .WithMany()
+            .HasForeignKey(s => s.ControllerId)
+            .OnDelete(DeleteBehavior.Cascade);
+        b.Entity<BedStay>()
+            .HasOne(s => s.VisitorUser)
+            .WithMany()
+            .HasForeignKey(s => s.VisitorUserId)
+            .OnDelete(DeleteBehavior.SetNull);
+        b.Entity<BedStay>().Property(s => s.PatientName).HasMaxLength(200);
 
         b.Entity<UserAuditLog>().HasIndex(a => a.UserId);
         b.Entity<UserAuditLog>().HasIndex(a => a.TimestampUtc);

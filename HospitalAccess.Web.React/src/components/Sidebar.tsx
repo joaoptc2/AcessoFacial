@@ -32,6 +32,9 @@ export function Sidebar() {
       <NavLink to="/visitors" className={navClass}>
         Visitantes / Temporários
       </NavLink>
+      <NavLink to="/beds" className={navClass}>
+        Gestão de Leitos
+      </NavLink>
       <NavLink to="/timegroups" className={navClass}>
         Grade Horária
       </NavLink>

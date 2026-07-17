@@ -16,6 +16,7 @@ interface FormModel {
   restartCount: number;
   apiBaseUrl: string;
   apiPassword: string;
+  homeAssistantRoomId: string;
 }
 
 const emptyForm: FormModel = {
@@ -30,6 +31,7 @@ const emptyForm: FormModel = {
   restartCount: 3,
   apiBaseUrl: "",
   apiPassword: "",
+  homeAssistantRoomId: "",
 };
 
 export function ControllersPage() {
@@ -82,6 +84,7 @@ export function ControllersPage() {
           connectionMode: form.connectionMode,
           apiBaseUrl: form.apiBaseUrl || undefined,
           apiPassword: form.apiPassword || undefined,
+          homeAssistantRoomId: form.homeAssistantRoomId || undefined,
         });
       } else {
         // Preserva timeoutMs/restartCount/connectionMode do próprio formulário (antes eram
@@ -98,6 +101,7 @@ export function ControllersPage() {
           restartCount: form.restartCount,
           apiBaseUrl: form.apiBaseUrl || undefined,
           apiPassword: form.apiPassword ? form.apiPassword : undefined,
+          homeAssistantRoomId: form.homeAssistantRoomId || undefined,
         });
       }
       cancelEdit();
@@ -122,6 +126,7 @@ export function ControllersPage() {
       restartCount: detail.restartCount,
       apiBaseUrl: detail.apiBaseUrl ?? "",
       apiPassword: "", // não retornada pela API; em branco = manter a atual
+      homeAssistantRoomId: detail.homeAssistantRoomId ?? "",
     });
   }
 
@@ -321,6 +326,14 @@ export function ControllersPage() {
                 placeholder={editingId !== null ? "(manter atual)" : "(padrão global)"}
                 value={form.apiPassword}
                 onChange={(e) => setForm({ ...form, apiPassword: e.target.value })}
+              />
+            </div>
+            <div className="form-field" style={{ minWidth: 160 }}>
+              <label>Quarto no Home Assistant</label>
+              <input
+                placeholder="quarto_101"
+                value={form.homeAssistantRoomId}
+                onChange={(e) => setForm({ ...form, homeAssistantRoomId: e.target.value })}
               />
             </div>
             <div className="form-field">
