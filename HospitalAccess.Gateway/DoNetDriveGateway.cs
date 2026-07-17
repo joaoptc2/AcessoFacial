@@ -347,7 +347,9 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
             person.CardData = cardNumber;
 
         var par = new AddPerson_Parameter(new List<PersonData> { person });
-        var cmd = new AddPerson(_connections.CreateCommandDetail(controller), par);
+        var addCmdDtl = _connections.CreateCommandDetail(controller);
+        addCmdDtl.Timeout = Math.Max(controller.TimeoutMs, 15000); // demo oficial usa 15 s para escrita de pessoa
+        var cmd = new AddPerson(addCmdDtl, par);
         await RunAsync(cmd, "AddPerson", controller);
 
         if (cmd.getResult() is WritePerson_Result { FailTotal: > 0 })
@@ -359,8 +361,18 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
     {
         var person = new PersonData { UserCode = userCode };
         var par = new DeletePerson_Parameter(new List<PersonData> { person });
-        var cmd = new DeletePerson(_connections.CreateCommandDetail(controller), par);
+        var cmdDtl = _connections.CreateCommandDetail(controller);
+        cmdDtl.Timeout = Math.Max(controller.TimeoutMs, 15000); // demo oficial usa 15 s para delete de pessoa
+        var cmd = new DeletePerson(cmdDtl, par);
         await RunAsync(cmd, "DeletePerson", controller);
+
+        // O aparelho pode responder OK ao comando e ainda assim reportar falha por pessoa
+        // (FailTotal) — sem esta checagem, marcávamos 'Revoked' com a pessoa AINDA cadastrada
+        // no aparelho (visto em produção: contagem de usuários não diminuía após revogar).
+        if (cmd.getResult() is WritePerson_Result { FailTotal: > 0 })
+            throw new DeviceCommandException(
+                $"DeletePerson não removeu a pessoa {userCode} do controlador '{controller.Name}' " +
+                "(o aparelho reportou falha para este cadastro).");
     }
 
     /// <summary>

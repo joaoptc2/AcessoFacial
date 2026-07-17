@@ -464,8 +464,16 @@ public class ControllersController : ControllerBase
         try
         {
             var onDevice = (await _gateway.ReadRegisteredUserCodesAsync(controller, ct)).ToHashSet();
+            // "Esperado" = usuários ATIVOS. Revogado/expirado NÃO deve estar no aparelho: a
+            // permissão dele permanece no banco (para reativação), e contá-la aqui fazia um
+            // visitante revogado com sucesso aparecer como "Faltando no dispositivo" para
+            // sempre — e um revogado que FICOU no aparelho passava despercebido (agora ele
+            // aparece como "Extra", que é o estado verdadeiro, com o botão de excluir).
+            var now = DateTime.UtcNow;
             var expected = (await _db.Permissions
-                .Where(p => p.ControllerId == id)
+                .Where(p => p.ControllerId == id
+                            && p.User!.RevokedAtUtc == null
+                            && (p.User.ValidUntil == null || p.User.ValidUntil > now))
                 .Select(p => p.User!.UserCode)
                 .ToListAsync(ct)).ToHashSet();
 

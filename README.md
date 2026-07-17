@@ -517,6 +517,15 @@ erro — vira timeout do nosso lado). Cheque nesta ordem:
    protocolo a cada ciclo. Saída: liberar ICMP até o aparelho **ou** preencher o `ApiBaseUrl`
    dele (ex.: `http://192.168.19.197`); depois, desligue `HealthCheck:AllowSdkPortFallback`
    no appsettings. O aviso sai uma vez por controlador a cada subida do serviço.
+8. **Visitante revogado/excluído e a contagem do aparelho**: a remoção usa DOIS canais — o
+   painel HTTP (`People/Delete`, validado em hardware: remove pessoa+QR; só onde há
+   `ApiBaseUrl`) e o SDK (`DeletePerson`, **verificado**: falha reportada pelo aparelho vira
+   `Failed` + backoff em vez de "Revogado" de mentira). A auditoria considera "esperados"
+   apenas usuários ATIVOS — revogado que ainda apareça na enumeração do aparelho é listado em
+   **"Extra no dispositivo"** (com botão de excluir). Se a contagem do aparelho não cair
+   mesmo com o delete confirmado e sem "Extra" na auditoria, o contador é interno do
+   firmware (não reflete a enumeração real) — confira a lista de pessoas no painel web do
+   próprio aparelho e considere um reboot.
 
 ## Limitações conhecidas / próximos passos
 - **Exportação em PDF** do log de acessos: não implementada (só CSV). Toda biblioteca PDF

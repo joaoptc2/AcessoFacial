@@ -23,14 +23,16 @@ public sealed class UserSyncService : IUserSyncService
 {
     private readonly AccessDbContext _db;
     private readonly IDeviceGateway _gateway;
+    private readonly DeviceQrService _deviceQr;
     private readonly SyncRetryOptions _retryOptions;
     private readonly ILogger<UserSyncService> _logger;
 
-    public UserSyncService(AccessDbContext db, IDeviceGateway gateway,
+    public UserSyncService(AccessDbContext db, IDeviceGateway gateway, DeviceQrService deviceQr,
         IOptions<SyncRetryOptions> retryOptions, ILogger<UserSyncService> logger)
     {
         _db = db;
         _gateway = gateway;
+        _deviceQr = deviceQr;
         _retryOptions = retryOptions.Value;
         _logger = logger;
     }
@@ -131,6 +133,23 @@ public sealed class UserSyncService : IUserSyncService
         var statuses = await _db.SyncStatuses
             .Where(s => s.UserId == userId && s.State != SyncState.Revoked)
             .ToListAsync(ct);
+
+        // Visitante: remove TAMBÉM pelo painel HTTP (People/Delete) — é o caminho VALIDADO em
+        // hardware real que comprovadamente remove a pessoa e o QR do aparelho (a troca de
+        // quarto já o usa). Best-effort: só age nos controladores com ApiBaseUrl configurado;
+        // o delete via SDK (verificado) roda em seguida de qualquer forma.
+        if (user.Type == UserType.Visitor && statuses.Count > 0)
+        {
+            try
+            {
+                await _deviceQr.RemoveFromControllersAsync(
+                    user.UserCode, statuses.Select(s => s.ControllerId).Distinct().ToList(), ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Falha ao remover visitante {UserCode} via painel HTTP (seguindo com o SDK).", user.UserCode);
+            }
+        }
 
         // Respeita a janela de backoff das falhas de revogação anteriores (a varredura de retry
         // reenfileira o usuário quando qualquer porta fica elegível — sem este filtro, TODAS as

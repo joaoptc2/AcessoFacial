@@ -112,6 +112,19 @@ public sealed class UserSyncQueueWorker : BackgroundService
         var db = provider.GetRequiredService<AccessDbContext>();
         var gateway = provider.GetRequiredService<IDeviceGateway>();
 
+        // Remove TAMBÉM pelo painel HTTP (People/Delete) — caminho validado em hardware que
+        // remove pessoa+QR. Best-effort (só age onde há ApiBaseUrl); o SDK delete verificado
+        // roda em seguida de qualquer forma.
+        try
+        {
+            var deviceQr = provider.GetRequiredService<DeviceQrService>();
+            await deviceQr.RemoveFromControllersAsync(work.UserCode, work.ControllerIds, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Falha ao remover usuário excluído {UserCode} via painel HTTP (seguindo com o SDK).", work.UserCode);
+        }
+
         foreach (var controllerId in work.ControllerIds)
         {
             try
