@@ -258,6 +258,20 @@ filtro por nível/texto, botão de ativar/desativar e botão de limpar. API: `GE
 zero; nada vai para disco (o log completo do serviço continua no journal/console) e o conteúdo se
 perde no restart — é diagnóstico, não auditoria.
 
+## Tela "Sincronizações" (`/sync`)
+
+Visão global de TODAS as pendências de sincronização usuário×porta (`GET /api/sync/pending`,
+leitura para Admin/Operator/Reception): situação real de cada linha — Pendente, Elegível agora,
+Aguardando backoff (com o horário), Quarentena (erro permanente, só ação manual) ou Conflito de
+face duplicada — mais a ação pendente (enviar cadastro vs remover da porta), o último erro e o
+estado da porta (offline/disjuntor). A tela também responde **"o sistema está de fato
+tentando?"**: mostra o que está **na fila** e **sincronizando agora** (estado vivo da
+`UserSyncQueue`) e o **heartbeat da varredura automática** (`SyncScanHeartbeat` — última
+varredura, quantos reenfileirou, próxima). Botões (Admin/Operator): **Forçar agora** por usuário
+(reusa `POST /api/users/{id}/resync` — zera backoff/quarentena e enfileira na hora; funciona
+também para visitantes) e **Forçar todas agora** (`POST /api/users/sync-failed`); conflitos
+oferecem Substituir/Manter (fluxo próprio). O banner de atenção linka direto para a tela.
+
 ## Visitantes temporários (1 visitante = 1 quarto)
 
 O visitante temporário representa um **acompanhante/paciente hospedado num quarto**. Como o QR é

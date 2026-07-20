@@ -21,14 +21,16 @@ public sealed class SyncRetryBackgroundService : BackgroundService
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IUserSyncQueue _queue;
     private readonly SyncRetryOptions _options;
+    private readonly SyncScanHeartbeat _heartbeat;
     private readonly ILogger<SyncRetryBackgroundService> _logger;
 
     public SyncRetryBackgroundService(IServiceScopeFactory scopeFactory, IUserSyncQueue queue,
-        IOptions<SyncRetryOptions> options, ILogger<SyncRetryBackgroundService> logger)
+        IOptions<SyncRetryOptions> options, SyncScanHeartbeat heartbeat, ILogger<SyncRetryBackgroundService> logger)
     {
         _scopeFactory = scopeFactory;
         _queue = queue;
         _options = options.Value;
+        _heartbeat = heartbeat;
         _logger = logger;
     }
 
@@ -64,14 +66,19 @@ public sealed class SyncRetryBackgroundService : BackgroundService
                 var quarantined = await db.SyncStatuses
                     .CountAsync(s => s.State == Domain.Enums.SyncState.Failed && s.NextRetryAtUtc == null, stoppingToken);
 
+                var nextRetryAt = waitingBackoff == 0
+                    ? null
+                    : await db.SyncStatuses
+                        .Where(s => s.State == Domain.Enums.SyncState.Failed && s.NextRetryAtUtc != null && s.NextRetryAtUtc > now)
+                        .MinAsync(s => s.NextRetryAtUtc, stoppingToken);
+
+                // Sempre grava (mesmo com zero pendências): a tela de Sincronizações usa o
+                // heartbeat como prova de que a varredura roda e quando será a próxima.
+                _heartbeat.Record(new SyncScanHeartbeat.Scan(
+                    now, enqueued, pendingCount, dueNow, waitingBackoff, quarantined, nextRetryAt));
+
                 if (pendingCount + dueNow + waitingBackoff + quarantined > 0)
                 {
-                    var nextRetryAt = waitingBackoff == 0
-                        ? null
-                        : await db.SyncStatuses
-                            .Where(s => s.State == Domain.Enums.SyncState.Failed && s.NextRetryAtUtc != null && s.NextRetryAtUtc > now)
-                            .MinAsync(s => s.NextRetryAtUtc, stoppingToken);
-
                     _logger.LogInformation(
                         "Sincronização: {Pending} pendente(s), {Due} falha(s) elegível(is) agora, {Waiting} aguardando backoff{Next}, {Quarantined} em quarentena (erro permanente — resolver pela tela de usuários); {Enqueued} usuário(s) reenfileirado(s) nesta varredura.",
                         pendingCount, dueNow, waitingBackoff,

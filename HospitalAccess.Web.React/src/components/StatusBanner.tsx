@@ -23,7 +23,7 @@ export function StatusBanner() {
   const parts: string[] = [];
   if (offline > 0) parts.push(`${offline} controlador(es) offline`);
   if (pendingSync > 0) parts.push(`${pendingSync} sincronização(ões) pendente(s)`);
-  if (manualSync > 0) parts.push(`${manualSync} sincronização(ões) com erro permanente — resolver na tela de usuários`);
+  if (manualSync > 0) parts.push(`${manualSync} sincronização(ões) com erro permanente — resolver na tela de sincronizações`);
   if (activeAlarms > 0) parts.push(`${activeAlarms} alarme(s) ativo(s)`);
 
   const critical = offline > 0 || activeAlarms > 0;
@@ -44,9 +44,16 @@ export function StatusBanner() {
     >
       <span style={{ fontWeight: 600 }}>⚠ Atenção:</span>
       <span>{parts.join(" · ")}</span>
-      <Link to="/" style={{ marginLeft: "auto", color: "inherit", fontWeight: 600 }}>
-        Ver painel
-      </Link>
+      <span style={{ marginLeft: "auto", display: "flex", gap: "0.75rem" }}>
+        {pendingSync + manualSync > 0 && (
+          <Link to="/sync" style={{ color: "inherit", fontWeight: 600 }}>
+            Ver sincronizações
+          </Link>
+        )}
+        <Link to="/" style={{ color: "inherit", fontWeight: 600 }}>
+          Ver painel
+        </Link>
+      </span>
     </div>
   );
 }

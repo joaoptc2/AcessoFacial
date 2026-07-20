@@ -21,6 +21,9 @@ export function Sidebar() {
       <NavLink to="/controllers" className={navClass}>
         Controladores / Portas
       </NavLink>
+      <NavLink to="/sync" className={navClass}>
+        Sincronizações
+      </NavLink>
 
       <div className="sidebar-section">Acesso</div>
       <NavLink to="/users" className={navClass}>

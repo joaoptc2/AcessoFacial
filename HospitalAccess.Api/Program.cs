@@ -149,6 +149,8 @@ builder.Services.AddSingleton<HomeAssistantClient>();
 builder.Services.AddSingleton<WelcomeImageService>();
 
 // Reprocessa sincronizações pendentes/falhas: reenfileira na fila serial (não processa em paralelo).
+// O heartbeat guarda a última varredura — a tela de Sincronizações usa como prova de vida.
+builder.Services.AddSingleton<SyncScanHeartbeat>();
 builder.Services.AddHostedService<SyncRetryBackgroundService>();
 
 // Ativa e mantém o monitoramento em tempo real (BeginWatch) em todos os controladores — sem isto

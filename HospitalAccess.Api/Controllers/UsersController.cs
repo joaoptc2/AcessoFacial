@@ -378,7 +378,9 @@ public class UsersController : ControllerBase
     [Authorize(Roles = "Admin,Operator")]
     public async Task<IActionResult> Resync(Guid id, CancellationToken ct)
     {
-        if (!await _db.Users.AnyAsync(u => u.Id == id && u.Type == UserType.Permanent, ct)) return NotFound();
+        // Sem filtro de tipo: a tela de Sincronizações força visitantes também (portas de leito) —
+        // o corpo (reset de backoff/quarentena + enqueue) é idêntico para os dois tipos.
+        if (!await _db.Users.AnyAsync(u => u.Id == id, ct)) return NotFound();
         await ResetFailedForRetryAsync(
             _db.SyncStatuses.Where(s => s.UserId == id && s.ConflictUserCode == null), ct);
         _syncQueue.EnqueueSync(id);

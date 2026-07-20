@@ -41,6 +41,12 @@ public interface IUserSyncQueue
 
     /// <summary>Enfileira (com deduplicação) a sincronização de vários usuários. Devolve quantos foram efetivamente enfileirados.</summary>
     int EnqueueMany(IEnumerable<Guid> userIds);
+
+    /// <summary>Usuários com sync em voo (na fila OU sendo processados) — snapshot para a tela de sincronizações.</summary>
+    IReadOnlyCollection<Guid> ActiveUserIds { get; }
+
+    /// <summary>Usuários sendo processados AGORA por um worker, com o início (UTC) — snapshot.</summary>
+    IReadOnlyDictionary<Guid, DateTime> ProcessingUsers { get; }
 }
 
 public sealed class UserSyncQueue : IUserSyncQueue
@@ -57,7 +63,20 @@ public sealed class UserSyncQueue : IUserSyncQueue
     // job de retry (a cada 2 min) não empilha duplicatas. Revogações são pontuais (sem dedup).
     private readonly ConcurrentDictionary<Guid, bool> _active = new();
 
+    // Usuários cujo SyncUserWork está EM PROCESSAMENTO neste instante (worker pegou o item),
+    // com o início em UTC — alimenta o "Sincronizando…" da tela de sincronizações. Revogações e
+    // troca de quarto não passam por aqui (são pontuais, sem dedup por usuário).
+    private readonly ConcurrentDictionary<Guid, DateTime> _processing = new();
+
     internal ChannelReader<SyncWork> Reader => _channel.Reader;
+
+    public IReadOnlyCollection<Guid> ActiveUserIds => _active.Keys.ToArray();
+
+    // A enumeração de ConcurrentDictionary é thread-safe; o leitor copia se precisar de snapshot.
+    public IReadOnlyDictionary<Guid, DateTime> ProcessingUsers => _processing;
+
+    /// <summary>Chamado pelo worker ao PEGAR um <see cref="SyncUserWork"/> (para a UI mostrar "sincronizando agora").</summary>
+    internal void BeginProcessing(Guid userId) => _processing[userId] = DateTime.UtcNow;
 
     public void EnqueueSync(Guid userId) => EnqueueSyncCore(userId);
 
@@ -96,6 +115,9 @@ public sealed class UserSyncQueue : IUserSyncQueue
     /// </summary>
     internal void CompleteSync(Guid userId)
     {
+        // Antes do loop de rerun: o rerun reenfileirado volta para a FILA — não pode continuar
+        // aparecendo como "processando" até um worker pegá-lo de novo (BeginProcessing).
+        _processing.TryRemove(userId, out _);
         while (true)
         {
             if (!_active.TryGetValue(userId, out var rerun)) return;

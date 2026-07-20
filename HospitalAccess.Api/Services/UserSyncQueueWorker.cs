@@ -54,6 +54,7 @@ public sealed class UserSyncQueueWorker : BackgroundService
                     case SyncUserWork w:
                         // CompleteSync só no fim: garante exclusão por usuário (nenhum outro worker pega
                         // o mesmo usuário) e reenfileira se surgiu um pedido de re-sync durante o processo.
+                        _queue.BeginProcessing(w.UserId);
                         try { await scope.ServiceProvider.GetRequiredService<IUserSyncService>().SyncUserAsync(w.UserId, stoppingToken); }
                         finally { _queue.CompleteSync(w.UserId); }
                         break;
