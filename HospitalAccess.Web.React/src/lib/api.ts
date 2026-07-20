@@ -81,6 +81,68 @@ export interface SyncStatusDto {
   conflictUserCode: number | null;
 }
 
+// ---- Visão global de sincronizações (tela Sincronizações) ----
+// Enums serializados como string PascalCase (JsonStringEnumConverter global do servidor).
+export type SyncPendingCategory = "Pending" | "DueNow" | "WaitingBackoff" | "Quarantined" | "Conflict";
+export type SyncPendingAction = "Send" | "Remove";
+
+export interface SyncProcessingDto {
+  userId: string;
+  userName: string;
+  sinceUtc: string;
+}
+
+export interface SyncScanDto {
+  lastScanAtUtc: string;
+  nextScanAtUtc: string;
+  scanIntervalSeconds: number;
+  lastEnqueued: number;
+  pending: number;
+  dueNow: number;
+  waitingBackoff: number;
+  quarantined: number;
+  nextRetryAtUtc: string | null;
+}
+
+export interface SyncTotalsDto {
+  pending: number;
+  dueNow: number;
+  waitingBackoff: number;
+  quarantined: number;
+  conflicts: number;
+}
+
+export interface SyncPendingItemDto {
+  userId: string;
+  userName: string;
+  userType: "Permanent" | "Visitor";
+  userRevoked: boolean;
+  controllerId: string;
+  controllerName: string;
+  controllerOnline: boolean;
+  state: string;
+  category: SyncPendingCategory;
+  action: SyncPendingAction;
+  retryCount: number;
+  lastError: string | null;
+  updatedAtUtc: string;
+  nextRetryAtUtc: string | null;
+  conflictUserCode: number | null;
+  inQueue: boolean;
+  processingSinceUtc: string | null;
+  circuitOpenUntilUtc: string | null;
+}
+
+export interface SyncOverviewDto {
+  generatedAtUtc: string;
+  scan: SyncScanDto | null;
+  queuedUsers: number;
+  processing: SyncProcessingDto[];
+  totals: SyncTotalsDto;
+  totalItems: number;
+  items: SyncPendingItemDto[];
+}
+
 export interface DiscoveredController {
   serialNumber: string;
   ipAddress: string;
@@ -597,6 +659,9 @@ export const api = {
     request<{ message: string }>(`/users/${userId}/sync/${controllerId}/replace`, { method: "POST" }),
   resolveConflictKeepExisting: (userId: string, controllerId: string) =>
     request<void>(`/users/${userId}/sync/${controllerId}/keep-existing`, { method: "POST" }),
+
+  // ---- Sincronizações (visão global) ----
+  getSyncOverview: () => request<SyncOverviewDto>("/sync/pending"),
 
   // ---- Rede ----
   getNetwork: (id: string) => request<ControllerNetworkInfo>(`/controllers/${id}/network`),

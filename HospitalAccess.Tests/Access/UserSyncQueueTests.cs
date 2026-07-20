@@ -110,4 +110,49 @@ public class UserSyncQueueTests
         Assert.True(TryDequeue(q, out var w2));
         Assert.IsType<SyncUserWork>(w2);
     }
+
+    [Fact]
+    public void ActiveUserIds_TracksQueuedUsers_ProcessingStartsEmpty()
+    {
+        var q = new UserSyncQueue();
+        q.EnqueueSync(A);
+
+        Assert.Contains(A, q.ActiveUserIds);
+        Assert.Empty(q.ProcessingUsers); // nenhum worker pegou o item ainda
+    }
+
+    [Fact]
+    public void BeginProcessing_ExposesUserWithTimestamp_CompleteSyncClearsBoth()
+    {
+        var q = new UserSyncQueue();
+        q.EnqueueSync(A);
+        Assert.True(TryDequeue(q, out _)); // worker "pega" A
+        var before = DateTime.UtcNow;
+        q.BeginProcessing(A);
+
+        Assert.True(q.ProcessingUsers.TryGetValue(A, out var since));
+        Assert.InRange(since, before, DateTime.UtcNow);
+
+        q.CompleteSync(A); // sem rerun → sai de ambos
+        Assert.Empty(q.ProcessingUsers);
+        Assert.DoesNotContain(A, q.ActiveUserIds);
+    }
+
+    [Fact]
+    public void CompleteSync_WithRerun_LeavesActiveButNotProcessing()
+    {
+        var q = new UserSyncQueue();
+        q.EnqueueSync(A);
+        Assert.True(TryDequeue(q, out _));
+        q.BeginProcessing(A);
+        q.EnqueueSync(A); // rerun pedido durante o processamento
+
+        q.CompleteSync(A);
+
+        // O rerun voltou para a FILA: continua ativo, mas ninguém o processa neste instante.
+        Assert.DoesNotContain(A, q.ProcessingUsers.Keys);
+        Assert.Contains(A, q.ActiveUserIds);
+        Assert.True(TryDequeue(q, out var w));
+        Assert.Equal(A, Assert.IsType<SyncUserWork>(w).UserId);
+    }
 }

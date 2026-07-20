@@ -52,6 +52,8 @@ mantém a sessão.
 - `src/components/` — `Sidebar` (navegação) e `Modal` (usado no controle de dispositivo).
 - `src/pages/`:
   - `LoginPage`, `HomePage`
+  - `SyncPage` (pendências de sincronização usuário×porta com fila/heartbeat ao vivo e
+    botões de forçar sync imediato)
   - `ControllersPage` + `ControllerDetailPage` (abas: Rede, Relógio, Alarmes, Ajustes
     Locais, Auditoria, Fotos de Evento)
   - `UsersPage` (histórico, revogar/reativar, RBAC — Recepção só lê)

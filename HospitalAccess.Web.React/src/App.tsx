@@ -7,6 +7,7 @@ import { LoginPage } from "./pages/LoginPage";
 import { HomePage } from "./pages/HomePage";
 import { ControllersPage } from "./pages/ControllersPage";
 import { ControllerDetailPage } from "./pages/ControllerDetailPage";
+import { SyncPage } from "./pages/SyncPage";
 import { UsersPage } from "./pages/UsersPage";
 import { UserProfilePage } from "./pages/UserProfilePage";
 import { UserGroupsPage } from "./pages/UserGroupsPage";
@@ -52,6 +53,7 @@ function App() {
       <Route path="/" element={protect(<HomePage />)} />
       <Route path="/controllers" element={protect(<ControllersPage />)} />
       <Route path="/controllers/:id" element={protect(<ControllerDetailPage />)} />
+      <Route path="/sync" element={protect(<SyncPage />)} />
       <Route path="/users" element={protect(<UsersPage />)} />
       <Route path="/users/:id" element={protect(<UserProfilePage />)} />
       <Route path="/usergroups" element={protect(<UserGroupsPage />)} />
