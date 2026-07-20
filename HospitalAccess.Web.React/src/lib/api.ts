@@ -385,6 +385,8 @@ export interface DashboardDto {
   total: number;
   online: number;
   offline: number;
+  // Não-vazio = o binário subiu na frente do banco (migration não aplicada — docs §13).
+  pendingMigrations: string[];
   controllers: ControllerStatusItem[];
 }
 

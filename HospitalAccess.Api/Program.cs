@@ -142,6 +142,10 @@ builder.Services.AddHostedService<UserSyncQueueWorker>();
 // feriados/grades): cliques repetidos não empilham execuções concorrentes no hardware.
 builder.Services.AddSingleton<SingleFlight>();
 
+// Snapshot das migrations pendentes (verificado no boot): quando o binário sobe na frente do
+// banco, o startup loga erro destacado e o painel mostra a faixa "banco desatualizado".
+builder.Services.AddSingleton<DatabaseSchemaState>();
+
 // Gestão de leitos + integração Home Assistant (REST + token, mesma rede; best-effort).
 builder.Services.Configure<HomeAssistantOptions>(builder.Configuration.GetSection(HomeAssistantOptions.SectionName));
 builder.Services.Configure<BedManagementOptions>(builder.Configuration.GetSection(BedManagementOptions.SectionName));
@@ -227,6 +231,30 @@ using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AccessDbContext>();
     var logger = scope.ServiceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Startup");
+
+    // ANTES de qualquer query: se o deploy esqueceu a migration (docs §13), este é o único
+    // lugar que explica o porquê dos 42703 que virão. O serviço continua subindo — as telas
+    // não afetadas seguem operando — mas o log e o painel (StatusBanner) acusam na hora.
+    try
+    {
+        var pendingMigrations = (await db.Database.GetPendingMigrationsAsync()).ToList();
+        if (pendingMigrations.Count > 0)
+        {
+            app.Services.GetRequiredService<DatabaseSchemaState>().SetPending(pendingMigrations);
+            logger.LogError(
+                "BANCO DESATUALIZADO: {Count} migration(s) pendente(s): {Migrations}. Aplique o script " +
+                "idempotente (docs/instalacao-servidor-linux.md, seção 13) e reinicie o serviço — até lá, " +
+                "consultas às tabelas/colunas dessas migrations VÃO falhar (ex.: 42703 column does not exist).",
+                pendingMigrations.Count, string.Join(", ", pendingMigrations));
+        }
+    }
+    catch (Exception ex)
+    {
+        // Banco inacessível no boot não pode derrubar nem mascarar a subida — o health-check
+        // e as próprias queries vão acusar em seguida.
+        logger.LogWarning(ex, "Não foi possível verificar migrations pendentes no boot.");
+    }
+
     await StaffUserSeeder.SeedAsync(db, builder.Configuration, logger);
 
     // Restaura o toggle do modo de desenvolvimento (persistido em SystemSettings; leitura por

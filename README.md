@@ -376,6 +376,10 @@ TCP, seções 1-9) e o **cliente HTTP** do painel web (`Infrastructure/Devices/`
 > Para um passo a passo completo de instalação em servidor Linux de produção
 > (systemd, Nginx com WebSocket, usuário dedicado, backups), veja
 > [`docs/instalacao-servidor-linux.md`](docs/instalacao-servidor-linux.md).
+>
+> As migrations NÃO são aplicadas automaticamente no boot (§13 do guia). Se o binário subir na
+> frente do banco, o startup loga "BANCO DESATUALIZADO" com o nome das migrations pendentes e o
+> painel mostra uma faixa vermelha com a instrução — aplique o script idempotente e reinicie.
 > A seção abaixo é o setup rápido para desenvolvimento local.
 
 ### Pré-requisitos

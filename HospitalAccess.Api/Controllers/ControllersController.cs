@@ -53,17 +53,20 @@ public class ControllersController : ControllerBase
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly SingleFlight _singleFlight;
     private readonly IUserSyncQueue _syncQueue;
+    private readonly DatabaseSchemaState _schemaState;
     private readonly ILogger<ControllersController> _logger;
 
     public ControllersController(
         AccessDbContext db, IDeviceGateway gateway, IServiceScopeFactory scopeFactory,
-        SingleFlight singleFlight, IUserSyncQueue syncQueue, ILogger<ControllersController> logger)
+        SingleFlight singleFlight, IUserSyncQueue syncQueue, DatabaseSchemaState schemaState,
+        ILogger<ControllersController> logger)
     {
         _db = db;
         _gateway = gateway;
         _scopeFactory = scopeFactory;
         _singleFlight = singleFlight;
         _syncQueue = syncQueue;
+        _schemaState = schemaState;
         _logger = logger;
     }
 
@@ -141,6 +144,9 @@ public class ControllersController : ControllerBase
             total = controllers.Count,
             online = controllers.Count(c => c.Online),
             offline = controllers.Count(c => !c.Online),
+            // Snapshot do boot (custo zero por request): não-vazio = o deploy esqueceu de
+            // aplicar migration — o StatusBanner mostra a faixa vermelha com a instrução.
+            pendingMigrations = _schemaState.PendingMigrations,
             controllers,
         });
     }
