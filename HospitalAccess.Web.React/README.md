@@ -57,6 +57,8 @@ mantém a sessão.
   - `UsersPage` (histórico, revogar/reativar, RBAC — Recepção só lê)
   - `UserGroupsPage` (portas padrão do grupo)
   - `VisitorsPage` (cadastro + QR + revogar)
+  - `BedsPage` (gestão de leitos: internar/transferir/alta, QR do paciente, boas-vindas
+    via Home Assistant, histórico de mudanças de leito)
   - `HolidaysPage`, `TimeGroupsPage` (grade de dias/horários por grupo)
   - `AccessLogPage`, `AlarmEventsPage` (paginação, filtros, exportação CSV)
   - `SettingsPage` (retenção/LGPD, formato do QR — só Admin)

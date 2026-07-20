@@ -258,7 +258,7 @@ filtro por nível/texto, botão de ativar/desativar e botão de limpar. API: `GE
 zero; nada vai para disco (o log completo do serviço continua no journal/console) e o conteúdo se
 perde no restart — é diagnóstico, não auditoria.
 
-## Gestão de leitos (visitantes temporários)
+## Visitantes temporários (1 visitante = 1 quarto)
 
 O visitante temporário representa um **acompanhante/paciente hospedado num quarto**. Como o QR é
 cunhado **por aparelho** (seção 5), a regra de negócio é: **cada visitante fica em exatamente uma
@@ -277,6 +277,47 @@ porta/quarto**.
 > Um comparativo detalhado com um produto comercial de mercado (ZKTeco ZKBio CVAccess 4.0) e o
 > backlog de melhorias priorizado estão em
 > [`docs/comparativo-zkbio-melhorias.md`](docs/comparativo-zkbio-melhorias.md).
+
+## Gestão de Leitos + Home Assistant
+
+Módulo de internações na tela **Gestão de Leitos** (`/beds`, perfis Admin/Operator/Reception).
+O modelo é **1 leito = 1 controlador/porta**: todo controlador cadastrado é um leito. A entidade
+`BedStay` registra cada internação (índice único filtrado garante no máximo **uma internação
+ativa por leito**); as internações encerradas formam o **histórico de mudanças de leito**.
+
+Fluxos (`BedsController`, rota `api/beds`):
+
+- **Internar** (`POST /api/beds/{controllerId}/admit`, `{patientName, validUntil?}`): cria
+  automaticamente um **usuário visitante** com o nome do paciente (validade padrão =
+  `BedManagement:DefaultStayDurationHours`) com permissão só naquele leito e o envia à fila de
+  sincronização — QR de acesso, expiração e revogação reusam todo o fluxo de visitantes já
+  validado em hardware. O QR é obtido pelo botão "Ver QR" (endpoint existente
+  `POST /api/visitors/{id}/qrcode`). O nome do paciente é digitado manualmente por enquanto
+  (integração com o sistema hospitalar fica para o futuro).
+- **Transferir** (`POST .../transfer`, `{toControllerId}`): encerra a internação de origem
+  (motivo Transfer), abre a nova e move o acesso com a mesma mecânica da troca de quarto de
+  visitante (remove do aparelho antigo via HTTP + sincroniza o novo; o QR seguinte já vem
+  cunhado pelo novo aparelho).
+- **Alta** (`POST .../discharge`): encerra a internação (motivo Discharge) e revoga o acesso.
+- **Reexibir boas-vindas** (`POST .../replay-welcome`): regenera o JPG e re-chama o HA (para a
+  TV que perdeu o evento).
+
+**Tela de boas-vindas (JPG)**: o `WelcomeImageService` parte da **imagem base** do hospital
+(`BedManagement:WelcomeBaseImagePath`), desenha o nome do paciente na posição configurada
+(centralizado na horizontal por padrão) e salva `leito-<id>.jpg` em
+`BedManagement:WelcomeOutputDirectory` — servido publicamente em **`/welcome/*`** (fora do
+`wwwroot`, que o build do front pode limpar). A URL enviada ao HA é
+`{PublicBaseUrl}/welcome/leito-<id>.jpg?v=<ticks>` (cache-bust). ⚠️ **Privacidade**: a imagem
+pública contém o nome do paciente — mantenha o servidor restrito à rede interna.
+
+**Home Assistant** (`HomeAssistantClient`, seção `HomeAssistant` do `appsettings` — desabilitada
+por padrão): REST API do HA na mesma rede com long-lived access token (env
+`HomeAssistant__Token`). Na internação/transferência chama `WelcomeService` (ex.:
+`script.boas_vindas_leito`) com `{room, patient_name, welcome_image_url}`; na alta/transferência
+chama `ClearService` (opcional) com `{room}`. O `room` vem do campo **"Quarto no Home
+Assistant"** do cadastro do controlador (ex.: `quarto_101`). Toda chamada é **best-effort**:
+falha loga Warning (visível em Logs (Dev)) e nunca bloqueia o fluxo de internação. Exemplo de
+script no HA e instruções do token estão comentados no `appsettings.example.json`.
 
 ---
 
@@ -489,6 +530,43 @@ dotnet test HospitalAccess.Tests/HospitalAccess.Tests.csproj
   de Alarmes (paginação/filtros/CSV), além do painel de status, emergência e configurações.
   A sessão (JWT em `localStorage`) sobrevive a um F5. **O front-end Blazor (`HospitalAccess.Web`)
   foi aposentado e removido do repositório** — o React é o único front-end.
+
+## Troubleshooting: `CommandStatus_Timeout` com o aparelho "online"
+
+O ping/painel responder **não** garante que o protocolo binário responda. O 8190H **descarta em
+silêncio** qualquer quadro cujo SN ou senha de comunicação não batam com os dele (não devolve
+erro — vira timeout do nosso lado). Cheque nesta ordem:
+
+1. **IP certo?** Aparelho em DHCP pode ter trocado de IP (fixe IP/reserva no roteador). O ping
+   "online" pode estar vindo de OUTRA máquina que herdou o IP antigo.
+2. **Porta** do cadastro = porta do protocolo configurada no aparelho (tela de rede dele).
+3. **SN (16 dígitos) e senha de comunicação** exatamente iguais aos do aparelho — errados =
+   timeout silencioso, não mensagem de erro.
+4. **"Testar conexão"** na tela do controlador faz um `ReadSN` real (e ignora o disjuntor).
+5. **Aparelho degradado** (lento a ponto de nem o painel web local abrir): reboot/firmware — é
+   problema do dispositivo. Enquanto isso, o **disjuntor por controlador** abre após 3 falhas
+   consecutivas (cooldown exponencial 1→15 min; badge "protocolo em espera" no painel) para não
+   martelar o aparelho doente; um "Testar conexão" bem-sucedido fecha o circuito na hora. Para
+   aparelhos cronicamente lentos, suba o `TimeoutMs` do cadastro (o upload de face já usa piso
+   de 15 s).
+6. **Divergência de cadastro** (auditoria acusa usuários faltando apesar de "Synced"): use o
+   botão **"Reparar divergências"** na aba Auditoria — os faltantes voltam a Pending e são
+   re-enviados pela fila.
+7. **Aviso "Health-check caiu no TCP connect da porta do SDK"**: a sonda de presença esgotou os
+   caminhos neutros (ping ICMP falhou e não há painel HTTP para testar) e está usando a porta
+   do protocolo como último recurso — funciona, mas abre/derruba uma conexão no canal do
+   protocolo a cada ciclo. Saída: liberar ICMP até o aparelho **ou** preencher o `ApiBaseUrl`
+   dele (ex.: `http://192.168.19.197`); depois, desligue `HealthCheck:AllowSdkPortFallback`
+   no appsettings. O aviso sai uma vez por controlador a cada subida do serviço.
+8. **Visitante revogado/excluído e a contagem do aparelho**: a remoção usa DOIS canais — o
+   painel HTTP (`People/Delete`, validado em hardware: remove pessoa+QR; só onde há
+   `ApiBaseUrl`) e o SDK (`DeletePerson`, **verificado**: falha reportada pelo aparelho vira
+   `Failed` + backoff em vez de "Revogado" de mentira). A auditoria considera "esperados"
+   apenas usuários ATIVOS — revogado que ainda apareça na enumeração do aparelho é listado em
+   **"Extra no dispositivo"** (com botão de excluir). Se a contagem do aparelho não cair
+   mesmo com o delete confirmado e sem "Extra" na auditoria, o contador é interno do
+   firmware (não reflete a enumeração real) — confira a lista de pessoas no painel web do
+   próprio aparelho e considere um reboot.
 
 ## Limitações conhecidas / próximos passos
 - **Exportação em PDF** do log de acessos: não implementada (só CSV). Toda biblioteca PDF

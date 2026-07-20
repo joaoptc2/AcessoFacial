@@ -61,6 +61,13 @@ public class Controller
     public int RestartCount { get; set; } = 3;
 
     /// <summary>
+    /// Slug do quarto no Home Assistant (ex.: "quarto_101") — usado pelo módulo de gestão de
+    /// leitos para disparar as automações (boas-vindas na TV etc.). Vazio = sem integração HA
+    /// para este quarto.
+    /// </summary>
+    public string HomeAssistantRoomId { get; set; } = string.Empty;
+
+    /// <summary>
     /// Como o servidor se comunica com este controlador. Default <see cref="ControllerConnectionMode.TcpClient"/>
     /// (servidor disca para o controlador). Se o hardware exigir modo "phone home", troque para
     /// <see cref="ControllerConnectionMode.TcpServerClient"/>. Ver README seção 2.

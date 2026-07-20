@@ -11,6 +11,7 @@ import { UsersPage } from "./pages/UsersPage";
 import { UserProfilePage } from "./pages/UserProfilePage";
 import { UserGroupsPage } from "./pages/UserGroupsPage";
 import { VisitorsPage } from "./pages/VisitorsPage";
+import { BedsPage } from "./pages/BedsPage";
 import { HolidaysPage } from "./pages/HolidaysPage";
 import { TimeGroupsPage } from "./pages/TimeGroupsPage";
 import { AccessLogPage } from "./pages/AccessLogPage";
@@ -55,6 +56,7 @@ function App() {
       <Route path="/users/:id" element={protect(<UserProfilePage />)} />
       <Route path="/usergroups" element={protect(<UserGroupsPage />)} />
       <Route path="/visitors" element={protect(<VisitorsPage />)} />
+      <Route path="/beds" element={protect(<BedsPage />)} />
       <Route path="/holidays" element={protect(<HolidaysPage />)} />
       <Route path="/timegroups" element={protect(<TimeGroupsPage />)} />
       <Route path="/accesslog" element={protect(<AccessLogPage />)} />

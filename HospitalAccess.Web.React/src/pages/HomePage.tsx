@@ -115,9 +115,34 @@ export function HomePage() {
                   <span className={c.online ? "pill pill-success" : "pill pill-danger"}>
                     {c.online ? "Online" : "Offline"}
                   </span>
+                  {c.circuitOpenUntilUtc && (
+                    <span
+                      className="pill pill-warning"
+                      style={{ marginLeft: "0.35rem" }}
+                      title="O aparelho responde à rede mas não ao protocolo; os comandos estão em espera para protegê-lo. Use 'Testar conexão' na tela do controlador para sondar agora."
+                    >
+                      protocolo em espera até {new Date(c.circuitOpenUntilUtc).toLocaleTimeString()}
+                    </span>
+                  )}
                 </td>
                 <td>{c.lastSeenUtc ? new Date(c.lastSeenUtc).toLocaleString() : "nunca"}</td>
-                <td>{c.pendingSync > 0 ? <span className="pill pill-warning">{c.pendingSync}</span> : "0"}</td>
+                <td>
+                  {c.pendingSync > 0 ? (
+                    <span
+                      className="pill pill-warning"
+                      title={
+                        (c.awaitingManualSync ?? 0) > 0
+                          ? `${c.awaitingManualSync} com erro permanente (ação manual na tela de usuários)`
+                          : "aguardando sincronização automática"
+                      }
+                    >
+                      {c.pendingSync}
+                      {(c.awaitingManualSync ?? 0) > 0 ? ` (${c.awaitingManualSync} manual)` : ""}
+                    </span>
+                  ) : (
+                    "0"
+                  )}
+                </td>
                 <td>{c.activeAlarms > 0 ? <span className="pill pill-danger">{c.activeAlarms}</span> : "0"}</td>
               </tr>
             ))}

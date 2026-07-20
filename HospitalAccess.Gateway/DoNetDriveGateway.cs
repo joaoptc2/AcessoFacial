@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Text;
+using Microsoft.Extensions.Logging;
 using DoNetDrive.Core;
 using DoNetDrive.Core.Command;
 using DoNetDrive.Core.Connector;
@@ -79,10 +80,21 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
     /// </summary>
     private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _controllerGates = new();
 
-    public DoNetDriveGateway(ControllerConnectionFactory connections, TimeZoneInfo deviceTimeZone)
+    /// <summary>
+    /// Disjuntor por controlador: falhas consecutivas de protocolo abrem o circuito (cooldown
+    /// exponencial) e os comandos passam a falhar rápido, sem tocar a rede — protege um aparelho
+    /// degradado de continuar sendo martelado. Ver <see cref="ControllerCircuitBreaker"/>.
+    /// </summary>
+    private readonly ConcurrentDictionary<Guid, ControllerCircuitBreaker> _circuitBreakers = new();
+
+    private readonly ILogger<DoNetDriveGateway> _logger;
+
+    public DoNetDriveGateway(ControllerConnectionFactory connections, TimeZoneInfo deviceTimeZone,
+        ILogger<DoNetDriveGateway> logger)
     {
         _connections = connections;
         _deviceTimeZone = deviceTimeZone;
+        _logger = logger;
         _allocator = ConnectorAllocator.GetAllocator();
         _allocator.TransactionMessage += OnTransactionMessage;
     }
@@ -117,18 +129,61 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
     // falha/cancelamento/timeout.
     // ----------------------------------------------------------------------------------
 
-    private async Task RunAsync(INCommand cmd, string operation, Controller controller)
+    /// <summary>
+    /// Tetos de segurança contra travamento SILENCIOSO do pipeline: maiores que qualquer comando
+    /// legítimo (o mais longo é a foto de evento: 30s × RestartCount 3 = 90s), mas finitos.
+    /// Sem eles, um comando que o SDK nunca completa (visto em produção: usuário 'Pending'
+    /// eternamente, sem linha de status nas demais portas e sem NENHUM log) segurava o gate do
+    /// controlador e um worker da fila PARA SEMPRE.
+    /// </summary>
+    private static readonly TimeSpan GateWaitCap = TimeSpan.FromMinutes(3);
+    private static readonly TimeSpan CommandHardCap = TimeSpan.FromMinutes(3);
+
+    private async Task RunAsync(INCommand cmd, string operation, Controller controller, bool bypassCircuit = false)
     {
+        // Disjuntor: aparelho em cooldown (falhas consecutivas de protocolo) → falha rápida SEM
+        // tocar a rede. O test-connection passa bypassCircuit=true (sonda manual de verdade).
+        var breaker = _circuitBreakers.GetOrAdd(controller.Id, static _ => new ControllerCircuitBreaker());
+        if (!bypassCircuit && breaker.OpenUntil(DateTime.UtcNow) is { } openUntil)
+        {
+            throw new DeviceCommandException(
+                $"{operation} não enviado: circuito aberto para o controlador '{controller.Name}' " +
+                $"({controller.IpAddress}:{controller.Port}) até {openUntil:HH:mm:ss} UTC — o aparelho não está " +
+                "respondendo ao protocolo e a espera o protege de mais tráfego. Use 'Testar conexão' para sondar agora.");
+        }
+
         // Serializa por controlador: nunca dois comandos ao mesmo aparelho ao mesmo tempo. O lock é
         // mantido só durante o comando (que tem timeout próprio = cmdDtl.Timeout), então não trava
         // indefinidamente. Controladores diferentes rodam em paralelo (locks distintos).
         var gate = _controllerGates.GetOrAdd(controller.Id, static _ => new SemaphoreSlim(1, 1));
-        await gate.WaitAsync();
+        if (!await gate.WaitAsync(GateWaitCap))
+        {
+            // Condição LOCAL (fila ocupada) — não conta como falha do aparelho no disjuntor.
+            // Vira Failed + backoff no chamador em vez de pendurar o worker junto.
+            throw new DeviceCommandException(
+                $"{operation} não iniciou: o controlador '{controller.Name}' ({controller.IpAddress}:{controller.Port}) " +
+                $"está ocupado há mais de {GateWaitCap.TotalSeconds:F0}s com um comando anterior (possível comando pendurado no SDK).");
+        }
         try
         {
             try
             {
-                await _allocator.AddCommandAsync(cmd);
+                var commandTask = _allocator.AddCommandAsync(cmd);
+                // Teto DURO independente do timeout interno do SDK: se a promessa nunca completar,
+                // abandona o comando (órfão inofensivo — o aparelho já não está respondendo) e
+                // libera o gate/worker. Sem isto o await podia ficar pendurado para sempre.
+                var finished = await Task.WhenAny(commandTask, Task.Delay(CommandHardCap));
+                if (finished != commandTask)
+                {
+                    throw new DeviceCommandException(
+                        $"{operation} excedeu o teto de {CommandHardCap.TotalSeconds:F0}s sem resposta do SDK no controlador " +
+                        $"'{controller.Name}' ({controller.IpAddress}:{controller.Port}) — comando abandonado.");
+                }
+                await commandTask; // propaga a exceção do SDK, se houver
+            }
+            catch (DeviceCommandException)
+            {
+                throw;
             }
             catch (Exception ex)
             {
@@ -145,6 +200,17 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
                 throw new DeviceCommandException(
                     $"{operation} não confirmado pelo controlador '{controller.Name}' ({controller.IpAddress}:{controller.Port}): {reason}.");
             }
+
+            breaker.RecordSuccess();
+        }
+        catch (DeviceCommandException)
+        {
+            // Falha DE PROTOCOLO (timeout/erro/abandono) conta no disjuntor.
+            if (breaker.RecordFailure(DateTime.UtcNow) is { } until)
+                _logger.LogWarning(
+                    "Disjuntor ABERTO para o controlador {Controller} ({Ip}) até {Until:HH:mm:ss} UTC após falhas consecutivas de protocolo — comandos em espera para proteger o aparelho.",
+                    controller.Name, controller.IpAddress, until);
+            throw;
         }
         finally
         {
@@ -152,9 +218,9 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
         }
     }
 
-    private async Task<TResult> RunAsync<TResult>(INCommand cmd, string operation, Controller controller) where TResult : class
+    private async Task<TResult> RunAsync<TResult>(INCommand cmd, string operation, Controller controller, bool bypassCircuit = false) where TResult : class
     {
-        await RunAsync(cmd, operation, controller);
+        await RunAsync(cmd, operation, controller, bypassCircuit);
         return cmd.getResult() as TResult
             ?? throw new DeviceCommandException(
                 $"{operation} não retornou resultado do controlador '{controller.Name}' ({controller.IpAddress}:{controller.Port}).");
@@ -162,10 +228,16 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
 
     public async Task<string> ReadSerialNumberAsync(Controller controller, CancellationToken ct = default)
     {
+        // bypassCircuit: o "Testar conexão" é a sonda MANUAL — precisa alcançar o aparelho mesmo
+        // com o disjuntor aberto; um sucesso aqui fecha o circuito (RecordSuccess no RunAsync).
         var cmd = new ReadSN(_connections.CreateCommandDetail(controller));
-        var result = await RunAsync<SN_Result>(cmd, "ReadSN", controller);
+        var result = await RunAsync<SN_Result>(cmd, "ReadSN", controller, bypassCircuit: true);
         return Encoding.ASCII.GetString(result.SNBuf).TrimEnd('\0');
     }
+
+    /// <summary>Se o disjuntor deste controlador está aberto, devolve até quando (UTC); senão null.</summary>
+    public DateTime? GetCircuitOpenUntilUtc(Guid controllerId) =>
+        _circuitBreakers.TryGetValue(controllerId, out var breaker) ? breaker.OpenUntil(DateTime.UtcNow) : null;
 
     public async Task<AddFaceResult> AddPersonWithFaceAsync(Controller controller, User user, byte[] faceJpg, CancellationToken ct = default)
     {
@@ -203,6 +275,11 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
 
         var cmdDtl = _connections.CreateCommandDetail(controller);
         cmdDtl.RestartCount = Math.Max(1, FaceUploadWireRetries);
+        // Payload pesado (~120 KB): o TimeoutMs do cadastro (default 3 s) é apertado para a
+        // transferência + gravação num aparelho lento — mesmo piso dos outros comandos pesados
+        // (ClearAllPersons usa 15 s; fotos de evento, 30 s). Visto em produção como
+        // CommandStatus_Timeout num aparelho degradado.
+        cmdDtl.Timeout = Math.Max(controller.TimeoutMs, 15000);
         var cmd = new AddPeosonAndImage(cmdDtl, par); // grafia confirmada no SDK
         await RunAsync(cmd, "AddPersonAndImage", controller);
 
@@ -270,7 +347,9 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
             person.CardData = cardNumber;
 
         var par = new AddPerson_Parameter(new List<PersonData> { person });
-        var cmd = new AddPerson(_connections.CreateCommandDetail(controller), par);
+        var addCmdDtl = _connections.CreateCommandDetail(controller);
+        addCmdDtl.Timeout = Math.Max(controller.TimeoutMs, 15000); // demo oficial usa 15 s para escrita de pessoa
+        var cmd = new AddPerson(addCmdDtl, par);
         await RunAsync(cmd, "AddPerson", controller);
 
         if (cmd.getResult() is WritePerson_Result { FailTotal: > 0 })
@@ -282,8 +361,18 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
     {
         var person = new PersonData { UserCode = userCode };
         var par = new DeletePerson_Parameter(new List<PersonData> { person });
-        var cmd = new DeletePerson(_connections.CreateCommandDetail(controller), par);
+        var cmdDtl = _connections.CreateCommandDetail(controller);
+        cmdDtl.Timeout = Math.Max(controller.TimeoutMs, 15000); // demo oficial usa 15 s para delete de pessoa
+        var cmd = new DeletePerson(cmdDtl, par);
         await RunAsync(cmd, "DeletePerson", controller);
+
+        // O aparelho pode responder OK ao comando e ainda assim reportar falha por pessoa
+        // (FailTotal) — sem esta checagem, marcávamos 'Revoked' com a pessoa AINDA cadastrada
+        // no aparelho (visto em produção: contagem de usuários não diminuía após revogar).
+        if (cmd.getResult() is WritePerson_Result { FailTotal: > 0 })
+            throw new DeviceCommandException(
+                $"DeletePerson não removeu a pessoa {userCode} do controlador '{controller.Name}' " +
+                "(o aparelho reportou falha para este cadastro).");
     }
 
     /// <summary>
@@ -815,6 +904,7 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
         // disposado lançaria ObjectDisposedException. Sem AvailableWaitHandle o SemaphoreSlim não
         // tem recurso não gerenciado — órfão, é coletado pelo GC quando o comando terminar.
         _controllerGates.TryRemove(controller.Id, out _);
+        _circuitBreakers.TryRemove(controller.Id, out _);
         _monitored.TryRemove(controller.SerialNumber, out _);
         _lastPushUtc.TryRemove(controller.SerialNumber, out _);
         _lastEventPushUtc.TryRemove(controller.SerialNumber, out _);

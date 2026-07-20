@@ -42,15 +42,42 @@ public sealed class SyncRetryBackgroundService : BackgroundService
             {
                 using var scope = _scopeFactory.CreateScope();
                 var db = scope.ServiceProvider.GetRequiredService<AccessDbContext>();
+                var now = DateTime.UtcNow;
                 var pending = await db.SyncStatuses
-                    .Where(SyncRetryPolicy.EligibleForAutoRetry(DateTime.UtcNow))
+                    .Where(SyncRetryPolicy.EligibleForAutoRetry(now))
                     .Select(s => s.UserId)
                     .Distinct()
                     .ToListAsync(stoppingToken);
 
                 var enqueued = _queue.EnqueueMany(pending);
-                if (enqueued > 0)
-                    _logger.LogInformation("Retry de sincronização: {Count} usuário(s) reenfileirado(s).", enqueued);
+
+                // Raio-X da varredura: sem isto, pendências em backoff/quarentena eram invisíveis —
+                // o painel mostrava "N sincronizações pendentes" e NADA aparecia no log, parecendo
+                // que o sistema simplesmente não sincronizava. Contagens separadas (não um GroupBy
+                // com FirstOrDefault, que dispara o warning de EF "First without OrderBy").
+                var pendingCount = await db.SyncStatuses
+                    .CountAsync(s => s.State == Domain.Enums.SyncState.Pending, stoppingToken);
+                var dueNow = await db.SyncStatuses
+                    .CountAsync(s => s.State == Domain.Enums.SyncState.Failed && s.NextRetryAtUtc != null && s.NextRetryAtUtc <= now, stoppingToken);
+                var waitingBackoff = await db.SyncStatuses
+                    .CountAsync(s => s.State == Domain.Enums.SyncState.Failed && s.NextRetryAtUtc != null && s.NextRetryAtUtc > now, stoppingToken);
+                var quarantined = await db.SyncStatuses
+                    .CountAsync(s => s.State == Domain.Enums.SyncState.Failed && s.NextRetryAtUtc == null, stoppingToken);
+
+                if (pendingCount + dueNow + waitingBackoff + quarantined > 0)
+                {
+                    var nextRetryAt = waitingBackoff == 0
+                        ? null
+                        : await db.SyncStatuses
+                            .Where(s => s.State == Domain.Enums.SyncState.Failed && s.NextRetryAtUtc != null && s.NextRetryAtUtc > now)
+                            .MinAsync(s => s.NextRetryAtUtc, stoppingToken);
+
+                    _logger.LogInformation(
+                        "Sincronização: {Pending} pendente(s), {Due} falha(s) elegível(is) agora, {Waiting} aguardando backoff{Next}, {Quarantined} em quarentena (erro permanente — resolver pela tela de usuários); {Enqueued} usuário(s) reenfileirado(s) nesta varredura.",
+                        pendingCount, dueNow, waitingBackoff,
+                        nextRetryAt is { } next ? $" (próxima às {next:HH:mm:ss} UTC)" : "",
+                        quarantined, enqueued);
+                }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {

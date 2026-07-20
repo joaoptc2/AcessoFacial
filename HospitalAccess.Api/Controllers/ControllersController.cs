@@ -18,7 +18,9 @@ public record CreateControllerRequest(
     ControllerConnectionMode ConnectionMode = ControllerConnectionMode.TcpClient,
     // API HTTP do painel web (para ler o QRCode). ApiBaseUrl vazio = só SDK. ApiPassword vazio =
     // usar o padrão global (Device:DefaultApiPassword).
-    string? ApiBaseUrl = null, string? ApiPassword = null);
+    string? ApiBaseUrl = null, string? ApiPassword = null,
+    // Slug do quarto no Home Assistant (gestão de leitos). Vazio = sem integração HA.
+    string? HomeAssistantRoomId = null);
 
 // CommunicationPassword é opcional na edição: em branco/nulo mantém a senha atual (não é
 // devolvida pelo GET, então o formulário não a tem para reenviar). ApiPassword segue a mesma regra.
@@ -27,7 +29,8 @@ public record UpdateControllerRequest(
     string? CommunicationPassword, bool SupportsWaitRepeatMessage,
     int TimeoutMs, int RestartCount,
     ControllerConnectionMode ConnectionMode = ControllerConnectionMode.TcpClient,
-    string? ApiBaseUrl = null, string? ApiPassword = null);
+    string? ApiBaseUrl = null, string? ApiPassword = null,
+    string? HomeAssistantRoomId = null);
 
 /// <summary>
 /// Cadastro dos 30 controladores 8190H, status de sincronização por dispositivo e
@@ -49,16 +52,18 @@ public class ControllersController : ControllerBase
     private readonly IDeviceGateway _gateway;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly SingleFlight _singleFlight;
+    private readonly IUserSyncQueue _syncQueue;
     private readonly ILogger<ControllersController> _logger;
 
     public ControllersController(
         AccessDbContext db, IDeviceGateway gateway, IServiceScopeFactory scopeFactory,
-        SingleFlight singleFlight, ILogger<ControllersController> logger)
+        SingleFlight singleFlight, IUserSyncQueue syncQueue, ILogger<ControllersController> logger)
     {
         _db = db;
         _gateway = gateway;
         _scopeFactory = scopeFactory;
         _singleFlight = singleFlight;
+        _syncQueue = syncQueue;
         _logger = logger;
     }
 
@@ -90,11 +95,19 @@ public class ControllersController : ControllerBase
 
         // É o endpoint mais consultado (polling do dashboard): 3 queries agregadas no total,
         // em vez de 2 subqueries COUNT correlacionadas POR controlador na projeção.
+        // PendingSync inclui as falhas; AwaitingManual destaca as em QUARENTENA (erro permanente,
+        // NextRetryAtUtc null) — o retry automático não vai resolvê-las, e o banner precisa
+        // dizer isso em vez de parecer que o sistema "não sincroniza".
         var pendingByController = await _db.SyncStatuses.AsNoTracking()
             .Where(s => s.State == Domain.Enums.SyncState.Pending || s.State == Domain.Enums.SyncState.Failed)
             .GroupBy(s => s.ControllerId)
-            .Select(g => new { ControllerId = g.Key, Count = g.Count() })
-            .ToDictionaryAsync(g => g.ControllerId, g => g.Count, ct);
+            .Select(g => new
+            {
+                ControllerId = g.Key,
+                Count = g.Count(),
+                AwaitingManual = g.Count(s => s.State == Domain.Enums.SyncState.Failed && s.NextRetryAtUtc == null),
+            })
+            .ToDictionaryAsync(g => g.ControllerId, g => new { g.Count, g.AwaitingManual }, ct);
         var alarmsByController = await _db.AlarmEvents.AsNoTracking()
             .Where(a => !a.Cleared && a.TimestampUtc >= recentAlarmSince)
             .GroupBy(a => a.ControllerId)
@@ -114,8 +127,12 @@ public class ControllersController : ControllerBase
             c.LastSeenUtc,
             c.LastReachError,
             Online = c.LastSeenUtc != null && c.LastSeenUtc >= onlineThreshold,
-            PendingSync = pendingByController.GetValueOrDefault(c.Id),
+            PendingSync = pendingByController.TryGetValue(c.Id, out var p) ? p.Count : 0,
+            AwaitingManualSync = pendingByController.TryGetValue(c.Id, out var m) ? m.AwaitingManual : 0,
             ActiveAlarms = alarmsByController.GetValueOrDefault(c.Id),
+            // Disjuntor aberto = "rede OK, mas o protocolo não responde — comandos em espera
+            // até HH:mm para proteger o aparelho". null = circuito fechado (normal).
+            CircuitOpenUntilUtc = _gateway.GetCircuitOpenUntilUtc(c.Id),
         }).ToList();
 
         return Ok(new
@@ -142,6 +159,7 @@ public class ControllersController : ControllerBase
             controller.Id, controller.Name, controller.IpAddress, controller.Port, controller.SerialNumber,
             controller.SupportsWaitRepeatMessage, controller.ConnectionMode,
             controller.TimeoutMs, controller.RestartCount, controller.LastClockSyncAtUtc,
+            controller.HomeAssistantRoomId,
             HasCommunicationPassword = !string.IsNullOrEmpty(controller.CommunicationPassword),
             controller.ApiBaseUrl,
             HasApiPassword = !string.IsNullOrEmpty(controller.ApiPassword),
@@ -182,6 +200,7 @@ public class ControllersController : ControllerBase
             ConnectionMode = request.ConnectionMode,
             ApiBaseUrl = (request.ApiBaseUrl ?? string.Empty).TrimEnd('/'),
             ApiPassword = request.ApiPassword ?? string.Empty,
+            HomeAssistantRoomId = (request.HomeAssistantRoomId ?? string.Empty).Trim(),
         };
 
         _db.Controllers.Add(controller);
@@ -217,6 +236,7 @@ public class ControllersController : ControllerBase
         controller.ConnectionMode = request.ConnectionMode;
         controller.TimeoutMs = request.TimeoutMs;
         controller.RestartCount = request.RestartCount;
+        controller.HomeAssistantRoomId = (request.HomeAssistantRoomId ?? string.Empty).Trim();
         // API HTTP do painel web. Mudança de URL ou senha invalida o token cacheado (re-loga na
         // próxima chamada). ApiPassword em branco = manter a atual (não é devolvida pelo GET).
         var newApiBaseUrl = (request.ApiBaseUrl ?? string.Empty).TrimEnd('/');
@@ -450,8 +470,16 @@ public class ControllersController : ControllerBase
         try
         {
             var onDevice = (await _gateway.ReadRegisteredUserCodesAsync(controller, ct)).ToHashSet();
+            // "Esperado" = usuários ATIVOS. Revogado/expirado NÃO deve estar no aparelho: a
+            // permissão dele permanece no banco (para reativação), e contá-la aqui fazia um
+            // visitante revogado com sucesso aparecer como "Faltando no dispositivo" para
+            // sempre — e um revogado que FICOU no aparelho passava despercebido (agora ele
+            // aparece como "Extra", que é o estado verdadeiro, com o botão de excluir).
+            var now = DateTime.UtcNow;
             var expected = (await _db.Permissions
-                .Where(p => p.ControllerId == id)
+                .Where(p => p.ControllerId == id
+                            && p.User!.RevokedAtUtc == null
+                            && (p.User.ValidUntil == null || p.User.ValidUntil > now))
                 .Select(p => p.User!.UserCode)
                 .ToListAsync(ct)).ToHashSet();
 
@@ -465,6 +493,65 @@ public class ControllersController : ControllerBase
         }
         catch (Exception ex)
         {
+            return StatusCode(502, new { error = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// REPARA a divergência detectada pela auditoria: usuários ativos com permissão nesta porta
+    /// cujo status diz 'Synced' mas que estão AUSENTES no aparelho voltam a 'Pending' (com
+    /// retry/quarentena zerados) e são reenfileirados na fila de sincronização. Divergência
+    /// típica herdada da era do "sucesso silencioso" (escrita marcada Synced sem o aparelho ter
+    /// gravado). Usuários EXTRAS no aparelho são apenas reportados — a remoção segue manual.
+    /// </summary>
+    [HttpPost("{id:guid}/personnel-audit/repair")]
+    [Authorize(Roles = "Admin,Operator")]
+    public async Task<IActionResult> RepairPersonnelAudit(Guid id, CancellationToken ct)
+    {
+        var controller = await _db.Controllers.FirstOrDefaultAsync(c => c.Id == id, ct);
+        if (controller is null) return NotFound();
+
+        try
+        {
+            var onDevice = (await _gateway.ReadRegisteredUserCodesAsync(controller, ct)).ToHashSet();
+
+            // Candidatos: permissão nesta porta + usuário ativo + status Synced (o banco acha
+            // que está lá) + AUSENTE no aparelho. Visitante expirado fica de fora (não recadastrar).
+            var now = DateTime.UtcNow;
+            var candidates = await _db.SyncStatuses
+                .Where(s => s.ControllerId == id
+                            && s.State == SyncState.Synced
+                            && s.User!.RevokedAtUtc == null
+                            && (s.User.ValidUntil == null || s.User.ValidUntil > now)
+                            && _db.Permissions.Any(p => p.ControllerId == id && p.UserId == s.UserId))
+                .Include(s => s.User)
+                .ToListAsync(ct);
+
+            var repairedUserIds = new List<Guid>();
+            foreach (var status in candidates)
+            {
+                if (onDevice.Contains(status.User!.UserCode)) continue; // realmente está no aparelho
+
+                status.State = SyncState.Pending;
+                status.RetryCount = 0;
+                status.NextRetryAtUtc = null;
+                status.LastError = null;
+                status.UpdatedAt = DateTime.UtcNow;
+                repairedUserIds.Add(status.UserId);
+            }
+            await _db.SaveChangesAsync(ct);
+
+            var enqueued = _syncQueue.EnqueueMany(repairedUserIds.Distinct());
+            await AuditAsync(controller, $"RepararAuditoria#{repairedUserIds.Count}", success: true, error: null, ct);
+            _logger.LogInformation(
+                "Reparo de auditoria no controlador {Controller}: {Count} usuário(s) marcados para re-envio ({Enqueued} enfileirados).",
+                controller.Name, repairedUserIds.Count, enqueued);
+
+            return Ok(new { repaired = repairedUserIds.Count, enqueued });
+        }
+        catch (Exception ex)
+        {
+            await AuditAsync(controller, "RepararAuditoria", success: false, error: ex.Message, ct);
             return StatusCode(502, new { error = ex.Message });
         }
     }

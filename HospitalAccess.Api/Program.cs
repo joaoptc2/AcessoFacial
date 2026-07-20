@@ -110,7 +110,8 @@ builder.Services.Configure<HealthCheckOptions>(builder.Configuration.GetSection(
 builder.Services.AddSingleton<ControllerConnectionFactory>();
 builder.Services.AddSingleton<IDeviceGateway>(sp => new DoNetDriveGateway(
     sp.GetRequiredService<ControllerConnectionFactory>(),
-    sp.GetRequiredService<TimeZoneInfo>())
+    sp.GetRequiredService<TimeZoneInfo>(),
+    sp.GetRequiredService<ILogger<DoNetDriveGateway>>())
 {
     FaceUploadWireRetries = sp.GetRequiredService<IOptions<SyncRetryOptions>>().Value.FaceUploadWireRetries,
 });
@@ -140,6 +141,12 @@ builder.Services.AddHostedService<UserSyncQueueWorker>();
 // Guarda de reentrância das operações pesadas por endpoint (resync-all, sync-all de
 // feriados/grades): cliques repetidos não empilham execuções concorrentes no hardware.
 builder.Services.AddSingleton<SingleFlight>();
+
+// Gestão de leitos + integração Home Assistant (REST + token, mesma rede; best-effort).
+builder.Services.Configure<HomeAssistantOptions>(builder.Configuration.GetSection(HomeAssistantOptions.SectionName));
+builder.Services.Configure<BedManagementOptions>(builder.Configuration.GetSection(BedManagementOptions.SectionName));
+builder.Services.AddSingleton<HomeAssistantClient>();
+builder.Services.AddSingleton<WelcomeImageService>();
 
 // Reprocessa sincronizações pendentes/falhas: reenfileira na fila serial (não processa em paralelo).
 builder.Services.AddHostedService<SyncRetryBackgroundService>();
@@ -220,8 +227,10 @@ using (var scope = app.Services.CreateScope())
     var logger = scope.ServiceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Startup");
     await StaffUserSeeder.SeedAsync(db, builder.Configuration, logger);
 
-    // Restaura o toggle do modo de desenvolvimento (persistido em SystemSettings).
+    // Restaura o toggle do modo de desenvolvimento (persistido em SystemSettings; leitura por
+    // chave — FirstOrDefault sem filtro dispara o warning de EF "First without OrderBy").
     var devMode = await db.SystemSettings
+        .Where(s => s.Id == HospitalAccess.Domain.Entities.SystemSettings.SingletonId)
         .Select(s => s.DevelopmentModeEnabled)
         .FirstOrDefaultAsync();
     devLogBuffer.SetEnabled(devMode);
@@ -269,6 +278,26 @@ else
 // bateu, para que o React Router funcione em refresh de uma rota tipo /controllers.
 app.UseDefaultFiles();
 app.UseStaticFiles();
+
+// Telas de boas-vindas dos leitos: diretório PÚBLICO (sem auth, por design — o Home Assistant
+// busca o JPG daqui) servido em /welcome/*, FORA do wwwroot (que o build do React pode limpar).
+// Contém apenas a arte com o nome do paciente; mantenha o servidor na rede interna.
+var welcomeDir = app.Services.GetRequiredService<IOptions<BedManagementOptions>>().Value.WelcomeOutputDirectory;
+try
+{
+    Directory.CreateDirectory(welcomeDir);
+    app.UseStaticFiles(new StaticFileOptions
+    {
+        FileProvider = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(welcomeDir),
+        RequestPath = "/welcome",
+    });
+}
+catch (Exception ex)
+{
+    app.Logger.LogWarning(ex,
+        "Não foi possível preparar o diretório público das telas de boas-vindas ({Dir}) — o módulo de leitos funciona, mas sem servir os JPGs.",
+        welcomeDir);
+}
 
 app.UseRateLimiter();
 app.UseAuthentication();

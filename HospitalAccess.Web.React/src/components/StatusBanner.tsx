@@ -13,14 +13,17 @@ export function StatusBanner() {
   if (!dashboard) return null;
 
   const offline = dashboard.offline;
-  const pendingSync = dashboard.controllers.reduce((sum, c) => sum + c.pendingSync, 0);
+  const manualSync = dashboard.controllers.reduce((sum, c) => sum + (c.awaitingManualSync ?? 0), 0);
+  // "Pendente" de verdade = o que o retry automático ainda vai tentar; quarentena vai em separado.
+  const pendingSync = dashboard.controllers.reduce((sum, c) => sum + c.pendingSync, 0) - manualSync;
   const activeAlarms = dashboard.controllers.reduce((sum, c) => sum + c.activeAlarms, 0);
 
-  if (offline === 0 && pendingSync === 0 && activeAlarms === 0) return null;
+  if (offline === 0 && pendingSync === 0 && manualSync === 0 && activeAlarms === 0) return null;
 
   const parts: string[] = [];
   if (offline > 0) parts.push(`${offline} controlador(es) offline`);
   if (pendingSync > 0) parts.push(`${pendingSync} sincronização(ões) pendente(s)`);
+  if (manualSync > 0) parts.push(`${manualSync} sincronização(ões) com erro permanente — resolver na tela de usuários`);
   if (activeAlarms > 0) parts.push(`${activeAlarms} alarme(s) ativo(s)`);
 
   const critical = offline > 0 || activeAlarms > 0;

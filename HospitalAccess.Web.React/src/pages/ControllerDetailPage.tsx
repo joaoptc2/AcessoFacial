@@ -161,6 +161,26 @@ export function ControllerDetailPage() {
     }
   }
 
+  async function repairAudit() {
+    if (!id || !audit) return;
+    if (!window.confirm(
+      `Re-enviar ${audit.missingOnDevice.length} usuário(s) que constam como sincronizados mas estão ausentes neste controlador?`,
+    ))
+      return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await api.repairPersonnelAudit(id);
+      setNotice(`${result.repaired} usuário(s) marcados para re-envio (${result.enqueued} na fila). Compare de novo em alguns minutos.`);
+      setAudit(await api.getPersonnelAudit(id));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Falha ao reparar divergências.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function downloadPhotos() {
     if (!id) return;
     setBusy(true);
@@ -488,11 +508,16 @@ export function ControllerDetailPage() {
                   {audit.missingOnDevice.length === 0 ? (
                     <p className="text-muted">Nenhum.</p>
                   ) : (
-                    <ul>
-                      {audit.missingOnDevice.map((code) => (
-                        <li key={code}>{code}</li>
-                      ))}
-                    </ul>
+                    <>
+                      <ul>
+                        {audit.missingOnDevice.map((code) => (
+                          <li key={code}>{code}</li>
+                        ))}
+                      </ul>
+                      <button className="btn btn-primary btn-sm" disabled={busy} onClick={repairAudit}>
+                        Reparar divergências (re-enviar faltantes)
+                      </button>
+                    </>
                   )}
                 </div>
                 <div>

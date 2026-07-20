@@ -37,7 +37,9 @@ public sealed class DeviceHealthBackgroundService : BackgroundService
     private readonly TimeSpan _interval;
     private readonly TimeSpan _probeTimeout;
     private readonly ILogger<DeviceHealthBackgroundService> _logger;
-    private bool _sdkFallbackWarned;
+
+    /// <summary>Aviso de fallback na porta do SDK: 1× POR CONTROLADOR por processo (um flag global silenciaria os demais aparelhos que caíssem no fallback depois do primeiro).</summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, byte> _sdkFallbackWarnedByController = new();
 
     public DeviceHealthBackgroundService(IServiceScopeFactory scopeFactory, IDeviceGateway gateway,
         IOptions<HealthCheckOptions> options, ILogger<DeviceHealthBackgroundService> logger)
@@ -83,6 +85,7 @@ public sealed class DeviceHealthBackgroundService : BackgroundService
 
         var sw = Stopwatch.StartNew();
         var reachable = 0;
+        var unreachable = new System.Collections.Concurrent.ConcurrentBag<string>();
         using var gate = new SemaphoreSlim(Math.Max(1, _options.MaxParallelChecks));
         var tasks = controllers.Select(async controller =>
         {
@@ -90,6 +93,7 @@ public sealed class DeviceHealthBackgroundService : BackgroundService
             try
             {
                 if (await CheckOneAsync(controller, ct)) Interlocked.Increment(ref reachable);
+                else unreachable.Add($"{controller.Name} ({controller.IpAddress})");
             }
             finally
             {
@@ -100,14 +104,26 @@ public sealed class DeviceHealthBackgroundService : BackgroundService
         sw.Stop();
 
         var offline = controllers.Count - reachable;
-        // Muitos falhando de uma vez = sinal de gargalo LOCAL (não dos aparelhos). Loga o estado do
-        // thread pool para diagnóstico — essa é a instrumentação para "ver" o problema.
-        if (offline > 0 && offline >= controllers.Count / 2)
+        // Nomeia os inalcançáveis na própria linha (até 5) — sem isso o operador via a contagem
+        // mas precisava abrir o painel para descobrir QUAL aparelho olhar.
+        var offlineNames = string.Join(", ", unreachable.Take(5))
+            + (unreachable.Count > 5 ? $" (+{unreachable.Count - 5})" : "");
+
+        if (HealthProbeHeuristics.SuspectLocalBottleneck(offline, controllers.Count))
         {
+            // Muitos caindo DE UMA VEZ = sinal de gargalo LOCAL (não dos aparelhos). Loga o estado
+            // do thread pool para diagnóstico — essa é a instrumentação para "ver" o problema.
             ThreadPool.GetAvailableThreads(out var worker, out var io);
             _logger.LogWarning(
-                "Health-check: {Reach}/{Total} alcançáveis em {Ms}ms (⚠ {Off} inalcançáveis DE UMA VEZ — suspeita de gargalo local). ThreadPool: worker livres={W}, IO livres={IO}, threads={Count}.",
-                reachable, controllers.Count, sw.ElapsedMilliseconds, offline, worker, io, ThreadPool.ThreadCount);
+                "Health-check: {Reach}/{Total} alcançáveis em {Ms}ms (⚠ {Off} inalcançáveis DE UMA VEZ — suspeita de gargalo local). Inalcançáveis: {Names}. ThreadPool: worker livres={W}, IO livres={IO}, threads={Count}.",
+                reachable, controllers.Count, sw.ElapsedMilliseconds, offline, offlineNames, worker, io, ThreadPool.ThreadCount);
+        }
+        else if (offline > 0)
+        {
+            // Caso comum: um ou poucos aparelhos realmente fora (energia/cabo/IP) — sem alarde
+            // de gargalo, mas em Warning e dizendo quem é.
+            _logger.LogWarning("Health-check: {Reach}/{Total} alcançáveis em {Ms}ms. Inalcançáveis: {Names}.",
+                reachable, controllers.Count, sw.ElapsedMilliseconds, offlineNames);
         }
         else
         {
@@ -189,19 +205,22 @@ public sealed class DeviceHealthBackgroundService : BackgroundService
         }
 
         // Porta neutra preferida: o painel HTTP do aparelho (não interfere no canal do protocolo).
-        if (TryGetHttpPort(controller.ApiBaseUrl, out var httpPort)
-            && await TcpConnectAsync(controller.IpAddress, httpPort, ct))
+        var hasHttpPort = TryGetHttpPort(controller.ApiBaseUrl, out var httpPort);
+        if (hasHttpPort && await TcpConnectAsync(controller.IpAddress, httpPort, ct))
             return true;
 
         if (!_options.AllowSdkPortFallback) return false;
 
-        if (!_sdkFallbackWarned)
+        if (_sdkFallbackWarnedByController.TryAdd(controller.Id, 0))
         {
-            _sdkFallbackWarned = true;
+            // O motivo importa: cada um pede uma ação diferente do operador.
+            var reason = hasHttpPort
+                ? $"o painel HTTP (porta {httpPort}) também não respondeu"
+                : $"ApiBaseUrl não está configurado — preencha no cadastro (ex.: http://{controller.IpAddress}) para a sonda usar a porta neutra do painel web";
             _logger.LogWarning(
-                "Health-check caiu no TCP connect da porta do SDK ({Ip}:{Port}) — cada sonda abre/derruba uma conexão no canal de protocolo do aparelho. " +
-                "Prefira liberar ICMP na rede ou configurar ApiBaseUrl nos controladores; depois, desligue HealthCheck:AllowSdkPortFallback.",
-                controller.IpAddress, controller.Port);
+                "Health-check do controlador {Controller} caiu no TCP connect da porta do SDK ({Ip}:{Port}): o ping ICMP falhou e {Reason}. " +
+                "Cada sonda dessas abre/derruba uma conexão no canal de protocolo do aparelho — depois de liberar ICMP ou configurar o ApiBaseUrl, desligue HealthCheck:AllowSdkPortFallback.",
+                controller.Name, controller.IpAddress, controller.Port, reason);
         }
         return await TcpConnectAsync(controller.IpAddress, controller.Port, ct);
     }
