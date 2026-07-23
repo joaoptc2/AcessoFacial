@@ -114,11 +114,16 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
     /// Se enviarmos UTC, a validade fica adiantada (ex.: em UTC-3, o fim aparece 3h a mais no
     /// aparelho). Convertendo para o fuso do aparelho, a data enviada bate com o relógio dele.
     /// </summary>
-    private DateTime ToDeviceWallClock(DateTime utc)
-    {
-        var asUtc = DateTime.SpecifyKind(utc, DateTimeKind.Utc);
-        return TimeZoneInfo.ConvertTimeFromUtc(asUtc, _deviceTimeZone);
-    }
+    private DateTime ToDeviceWallClock(DateTime utc) => DeviceClock.ToWallClock(utc, _deviceTimeZone);
+
+    /// <summary>
+    /// Inversa de <see cref="ToDeviceWallClock"/>: os REGISTROS do aparelho (push, coleta offline,
+    /// fotos) vêm com o relógio LOCAL do dispositivo. Antes usávamos <c>.ToUniversalTime()</c>, que
+    /// converte pelo fuso do SO DO SERVIDOR — com o serviço rodando em UTC, o horário local ia para
+    /// o banco como se já fosse UTC e os eventos apareciam atrasados (3h em UTC-3). Mesmo padrão do
+    /// caminho HTTP phone-home (DeviceCallbackController.ParseDeviceTime).
+    /// </summary>
+    private DateTime FromDeviceWallClock(DateTime deviceLocal) => DeviceClock.FromWallClock(deviceLocal, _deviceTimeZone);
 
     public event EventHandler<DeviceAccessEvent>? AccessEventReceived;
     public event EventHandler<DeviceAlarmEvent>? AlarmEventReceived;
@@ -148,7 +153,7 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
         {
             throw new DeviceCommandException(
                 $"{operation} não enviado: circuito aberto para o controlador '{controller.Name}' " +
-                $"({controller.IpAddress}:{controller.Port}) até {openUntil:HH:mm:ss} UTC — o aparelho não está " +
+                $"({controller.IpAddress}:{controller.Port}) até {ToDeviceWallClock(openUntil):HH:mm:ss} — o aparelho não está " +
                 "respondendo ao protocolo e a espera o protege de mais tráfego. Use 'Testar conexão' para sondar agora.");
         }
 
@@ -208,8 +213,8 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
             // Falha DE PROTOCOLO (timeout/erro/abandono) conta no disjuntor.
             if (breaker.RecordFailure(DateTime.UtcNow) is { } until)
                 _logger.LogWarning(
-                    "Disjuntor ABERTO para o controlador {Controller} ({Ip}) até {Until:HH:mm:ss} UTC após falhas consecutivas de protocolo — comandos em espera para proteger o aparelho.",
-                    controller.Name, controller.IpAddress, until);
+                    "Disjuntor ABERTO para o controlador {Controller} ({Ip}) até {Until:HH:mm:ss} após falhas consecutivas de protocolo — comandos em espera para proteger o aparelho.",
+                    controller.Name, controller.IpAddress, ToDeviceWallClock(until));
             throw;
         }
         finally
@@ -728,7 +733,7 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
 
                 photos.Add(new CapturedEventPhoto(
                     img.UserCode,
-                    img.TransactionDate.ToUniversalTime(),
+                    FromDeviceWallClock(img.TransactionDate),
                     img.TransactionCode,
                     bytes));
             }
@@ -985,10 +990,10 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
     private void EmitAccessEvent(string serialNumber, CardTransaction card) =>
         AccessEventReceived?.Invoke(this, BuildAccessEvent(serialNumber, card));
 
-    private static DeviceAccessEvent BuildAccessEvent(string serialNumber, CardTransaction card) => new()
+    private DeviceAccessEvent BuildAccessEvent(string serialNumber, CardTransaction card) => new()
     {
         ControllerSerialNumber = serialNumber,
-        TimestampUtc = card.TransactionDate.ToUniversalTime(),
+        TimestampUtc = FromDeviceWallClock(card.TransactionDate),
         UserCode = card.UserCode,
         RecordSerialNumber = card.RecordSerialNumber,
         Method = card.TransactionCode switch
@@ -1011,7 +1016,7 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
         AlarmEventReceived?.Invoke(this, new DeviceAlarmEvent
         {
             ControllerSerialNumber = serialNumber,
-            TimestampUtc = system.TransactionDate.ToUniversalTime(),
+            TimestampUtc = FromDeviceWallClock(system.TransactionDate),
             Kind = kind,
             RawEventCode = raw,
             Cleared = cleared,

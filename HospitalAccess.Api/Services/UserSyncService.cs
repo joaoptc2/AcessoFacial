@@ -25,15 +25,17 @@ public sealed class UserSyncService : IUserSyncService
     private readonly IDeviceGateway _gateway;
     private readonly DeviceQrService _deviceQr;
     private readonly SyncRetryOptions _retryOptions;
+    private readonly TimeZoneInfo _deviceTimeZone;
     private readonly ILogger<UserSyncService> _logger;
 
     public UserSyncService(AccessDbContext db, IDeviceGateway gateway, DeviceQrService deviceQr,
-        IOptions<SyncRetryOptions> retryOptions, ILogger<UserSyncService> logger)
+        IOptions<SyncRetryOptions> retryOptions, TimeZoneInfo deviceTimeZone, ILogger<UserSyncService> logger)
     {
         _db = db;
         _gateway = gateway;
         _deviceQr = deviceQr;
         _retryOptions = retryOptions.Value;
+        _deviceTimeZone = deviceTimeZone;
         _logger = logger;
     }
 
@@ -217,7 +219,7 @@ public sealed class UserSyncService : IUserSyncService
                         "Falha ao sincronizar {Name} (#{Code}) no controlador {Controller}: {Error} — {NextStep}.",
                         user.Name, user.UserCode, controller.Name, result.Message,
                         status.NextRetryAtUtc is { } next
-                            ? $"nova tentativa automática às {next:HH:mm:ss} UTC"
+                            ? $"nova tentativa automática às {TimeZoneInfo.ConvertTimeFromUtc(next, _deviceTimeZone):HH:mm:ss}"
                             : "erro PERMANENTE, em quarentena (resolva pelo botão de resync/conflito ou troque a foto)");
                 }
             }

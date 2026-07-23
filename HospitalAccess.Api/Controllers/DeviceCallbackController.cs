@@ -95,7 +95,11 @@ public sealed class DeviceCallbackController : ControllerBase
             var notePass = GetInt(root, "notePass") ?? 0;
             var noteTimeStr = GetString(root, "noteTime");
 
-            controller.LastSeenUtc = DateTime.UtcNow;
+            // ExecuteUpdate, não entidade rastreada: o Controller tem token de concorrência (xmin)
+            // e o push HTTP é frequente — um save rastreado colidiria com o health-check/QR token
+            // e derrubaria o callback com 409 por causa de um mero "visto agora".
+            await _db.Controllers.Where(c => c.Id == controller.Id)
+                .ExecuteUpdateAsync(u => u.SetProperty(c => c.LastSeenUtc, DateTime.UtcNow), ct);
 
             var log = new AccessLog
             {
