@@ -17,14 +17,16 @@ interface FormModel {
   apiBaseUrl: string;
   apiPassword: string;
   homeAssistantRoomId: string;
+  isRoom: boolean;
+  useDefaultPasswords: boolean;
 }
 
 const emptyForm: FormModel = {
   name: "",
   ipAddress: "",
-  port: 8101,
+  port: 8000,
   serialNumber: "",
-  communicationPassword: "FFFFFFFF",
+  communicationPassword: "", // vazio = usa a senha padrão dos aparelhos (Configurações)
   supportsWaitRepeatMessage: false,
   connectionMode: "TcpClient",
   timeoutMs: 3000,
@@ -32,7 +34,20 @@ const emptyForm: FormModel = {
   apiBaseUrl: "",
   apiPassword: "",
   homeAssistantRoomId: "",
+  isRoom: false,
+  useDefaultPasswords: false,
 };
+
+/** Aceita "192.168.19.20", "http://192.168.19.20/" ou a URL completa do painel — extrai só o host. */
+function normalizeIp(input: string): string {
+  let value = input.trim();
+  value = value.replace(/^https?:\/\//i, "");
+  const slash = value.indexOf("/");
+  if (slash >= 0) value = value.slice(0, slash);
+  const colon = value.indexOf(":");
+  if (colon >= 0) value = value.slice(0, colon);
+  return value;
+}
 
 export function ControllersPage() {
   const { role } = useAuth();
@@ -43,6 +58,8 @@ export function ControllersPage() {
   const [form, setForm] = useState<FormModel>(emptyForm);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [detectingSn, setDetectingSn] = useState(false);
   const [discovering, setDiscovering] = useState(false);
   const [discovered, setDiscovered] = useState<{ serialNumber: string; ipAddress: string }[] | null>(null);
 
@@ -72,26 +89,29 @@ export function ControllersPage() {
   async function handleSave(e: FormEvent) {
     e.preventDefault();
     setFormError(null);
+    const ip = normalizeIp(form.ipAddress);
     try {
       if (editingId === null) {
+        // Cadastro enxuto: porta/painel/senhas/modo têm defaults no servidor — o avançado só
+        // vai junto se foi mexido (senha vazia = usar a padrão global das Configurações).
         await api.createController({
           name: form.name,
-          ipAddress: form.ipAddress,
-          port: form.port,
+          ipAddress: ip,
           serialNumber: form.serialNumber,
-          communicationPassword: form.communicationPassword,
+          port: form.port,
+          communicationPassword: form.communicationPassword || undefined,
           supportsWaitRepeatMessage: form.supportsWaitRepeatMessage,
           connectionMode: form.connectionMode,
           apiBaseUrl: form.apiBaseUrl || undefined,
           apiPassword: form.apiPassword || undefined,
           homeAssistantRoomId: form.homeAssistantRoomId || undefined,
+          isRoom: form.isRoom,
         });
       } else {
-        // Preserva timeoutMs/restartCount/connectionMode do próprio formulário (antes eram
-        // zerados com literais). Senha em branco = mantém a atual (a API não a devolve).
+        // Senha em branco = mantém a atual (a API não a devolve).
         await api.updateController(editingId, {
           name: form.name,
-          ipAddress: form.ipAddress,
+          ipAddress: ip,
           port: form.port,
           serialNumber: form.serialNumber,
           communicationPassword: form.communicationPassword ? form.communicationPassword : undefined,
@@ -102,6 +122,8 @@ export function ControllersPage() {
           apiBaseUrl: form.apiBaseUrl || undefined,
           apiPassword: form.apiPassword ? form.apiPassword : undefined,
           homeAssistantRoomId: form.homeAssistantRoomId || undefined,
+          isRoom: form.isRoom,
+          useDefaultPasswords: form.useDefaultPasswords,
         });
       }
       cancelEdit();
@@ -111,9 +133,36 @@ export function ControllersPage() {
     }
   }
 
+  /** Preenche o SN via varredura UDP, casando pelo IP digitado. */
+  async function detectSerialNumber() {
+    const ip = normalizeIp(form.ipAddress);
+    if (!ip) {
+      setFormError("Informe o IP antes de detectar o SN.");
+      return;
+    }
+    setDetectingSn(true);
+    setFormError(null);
+    try {
+      const found = await api.discoverControllers();
+      const match = found.find((d) => d.ipAddress === ip);
+      if (match) setForm((f) => ({ ...f, serialNumber: match.serialNumber }));
+      else
+        setFormError(
+          found.length === 0
+            ? "Nenhum controlador respondeu à varredura — digite o SN manualmente (está na etiqueta/painel do aparelho)."
+            : `Nenhum aparelho com IP ${ip} respondeu (${found.length} outro(s) encontrado(s)) — confira o IP ou digite o SN manualmente.`,
+        );
+    } catch (err) {
+      setFormError(err instanceof ApiError ? err.message : "Falha na varredura de rede.");
+    } finally {
+      setDetectingSn(false);
+    }
+  }
+
   async function startEdit(id: string) {
     const detail = await api.getController(id);
     setEditingId(id);
+    setShowAdvanced(false);
     setForm({
       name: detail.name,
       ipAddress: detail.ipAddress,
@@ -127,18 +176,22 @@ export function ControllersPage() {
       apiBaseUrl: detail.apiBaseUrl ?? "",
       apiPassword: "", // não retornada pela API; em branco = manter a atual
       homeAssistantRoomId: detail.homeAssistantRoomId ?? "",
+      isRoom: detail.isRoom,
+      useDefaultPasswords: false,
     });
   }
 
   function cancelEdit() {
     setEditingId(null);
+    setShowAdvanced(false);
     setForm(emptyForm);
   }
 
-  async function handleDelete(id: string) {
+  async function handleDelete(c: ControllerDto) {
+    if (!window.confirm(`Excluir o controlador "${c.name}" (${c.ipAddress})? Esta ação não pode ser desfeita.`)) return;
     setFormError(null);
     try {
-      await api.deleteController(id);
+      await api.deleteController(c.id);
       await load();
     } catch (err) {
       setFormError(err instanceof ApiError ? err.message : "Falha inesperada ao excluir.");
@@ -235,8 +288,7 @@ export function ControllersPage() {
 
   return (
     <div>
-      <h2>Controladores (8190H / A33_Face)</h2>
-      <p className="text-muted">Cada controlador representa fisicamente uma única porta — não há cadastro de porta separado.</p>
+      <h2>Controladores / Portas</h2>
 
       {isAdminOrOperator && (
         <>
@@ -258,84 +310,52 @@ export function ControllersPage() {
           <div className="form-row">
             <div className="form-field">
               <label>Nome</label>
-              <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Ex.: Portaria Principal" required />
+              <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Ex.: Quarto 101" required />
             </div>
-            <div className="form-field">
-              <label>IP</label>
-              <input value={form.ipAddress} onChange={(e) => setForm({ ...form, ipAddress: e.target.value })} required />
-            </div>
-            <div className="form-field" style={{ minWidth: 80 }}>
-              <label>Porta</label>
-              <input type="number" value={form.port} onChange={(e) => setForm({ ...form, port: Number(e.target.value) })} required />
-            </div>
-            <div className="form-field">
-              <label>SN (16 dígitos)</label>
-              <input value={form.serialNumber} onChange={(e) => setForm({ ...form, serialNumber: e.target.value })} required />
-            </div>
-            <div className="form-field">
-              <label>Senha (8 hex)</label>
+            <div className="form-field" style={{ minWidth: 180 }}>
+              <label>IP (o mesmo do painel web)</label>
               <input
-                value={form.communicationPassword}
-                onChange={(e) => setForm({ ...form, communicationPassword: e.target.value })}
-                placeholder={editingId !== null ? "(manter atual)" : undefined}
-                required={editingId === null}
+                value={form.ipAddress}
+                onChange={(e) => setForm({ ...form, ipAddress: e.target.value })}
+                placeholder="192.168.19.20"
+                required
               />
             </div>
-            <div className="form-field" style={{ minWidth: 150 }}>
-              <label>Modo de conexão</label>
-              <select
-                value={form.connectionMode}
-                onChange={(e) => setForm({ ...form, connectionMode: e.target.value as ControllerConnectionMode })}
-              >
-                <option value="TcpClient">TCP (servidor disca)</option>
-                <option value="TcpServerClient">TCP phone-home</option>
-                <option value="Udp">UDP</option>
-              </select>
-            </div>
-            <div className="form-field" style={{ minWidth: 100 }}>
-              <label>Timeout (ms)</label>
-              <input type="number" value={form.timeoutMs} onChange={(e) => setForm({ ...form, timeoutMs: Number(e.target.value) })} required />
-            </div>
-            <div className="form-field" style={{ minWidth: 80 }}>
-              <label>Retries</label>
-              <input type="number" value={form.restartCount} onChange={(e) => setForm({ ...form, restartCount: Number(e.target.value) })} required />
+            <div className="form-field" style={{ minWidth: 220 }}>
+              <label>SN (16 dígitos)</label>
+              <div style={{ display: "flex", gap: "0.4rem" }}>
+                <input
+                  value={form.serialNumber}
+                  onChange={(e) => setForm({ ...form, serialNumber: e.target.value })}
+                  required
+                  style={{ flex: 1 }}
+                />
+                <button type="button" className="btn btn-outline btn-sm" onClick={detectSerialNumber} disabled={detectingSn}>
+                  {detectingSn ? "Procurando…" : "Detectar"}
+                </button>
+              </div>
             </div>
             <div className="form-field" style={{ flexDirection: "row", alignItems: "center", gap: "0.4rem" }}>
               <input
                 type="checkbox"
-                id="waitRepeat"
-                checked={form.supportsWaitRepeatMessage}
-                onChange={(e) => setForm({ ...form, supportsWaitRepeatMessage: e.target.checked })}
+                id="isRoom"
+                checked={form.isRoom}
+                onChange={(e) => setForm({ ...form, isRoom: e.target.checked })}
               />
-              <label htmlFor="waitRepeat" style={{ margin: 0 }}>
-                Firmware &gt;= v4.28
+              <label htmlFor="isRoom" style={{ margin: 0 }}>
+                É quarto/leito
               </label>
             </div>
-            <div className="form-field" style={{ minWidth: 200 }}>
-              <label>URL do painel web (QR)</label>
-              <input
-                placeholder="http://192.168.19.20"
-                value={form.apiBaseUrl}
-                onChange={(e) => setForm({ ...form, apiBaseUrl: e.target.value })}
-              />
-            </div>
-            <div className="form-field" style={{ minWidth: 150 }}>
-              <label>Senha do painel web</label>
-              <input
-                type="password"
-                placeholder={editingId !== null ? "(manter atual)" : "(padrão global)"}
-                value={form.apiPassword}
-                onChange={(e) => setForm({ ...form, apiPassword: e.target.value })}
-              />
-            </div>
-            <div className="form-field" style={{ minWidth: 160 }}>
-              <label>Quarto no Home Assistant</label>
-              <input
-                placeholder="quarto_101"
-                value={form.homeAssistantRoomId}
-                onChange={(e) => setForm({ ...form, homeAssistantRoomId: e.target.value })}
-              />
-            </div>
+            {form.isRoom && (
+              <div className="form-field" style={{ minWidth: 160 }}>
+                <label>Quarto no Home Assistant</label>
+                <input
+                  placeholder="quarto_101"
+                  value={form.homeAssistantRoomId}
+                  onChange={(e) => setForm({ ...form, homeAssistantRoomId: e.target.value })}
+                />
+              </div>
+            )}
             <div className="form-field">
               <button type="submit" className="btn btn-primary">
                 {editingId === null ? "Adicionar" : "Salvar"}
@@ -348,7 +368,98 @@ export function ControllersPage() {
                 </button>
               </div>
             )}
+            <div className="form-field">
+              <button type="button" className="btn btn-outline btn-sm" onClick={() => setShowAdvanced(!showAdvanced)}>
+                {showAdvanced ? "Ocultar avançado" : "Avançado…"}
+              </button>
+            </div>
           </div>
+          {editingId === null && !showAdvanced && (
+            <p className="text-muted" style={{ margin: "0.5rem 0 0" }}>
+              Porta 8000, painel web em http://IP e a senha padrão dos aparelhos (Configurações) são
+              assumidos automaticamente — use "Avançado…" só para exceções.
+            </p>
+          )}
+          {showAdvanced && (
+            <div className="form-row" style={{ marginTop: "0.75rem", paddingTop: "0.75rem", borderTop: "1px solid var(--border, #e2e8f0)" }}>
+              <div className="form-field" style={{ minWidth: 80 }}>
+                <label>Porta</label>
+                <input type="number" value={form.port} onChange={(e) => setForm({ ...form, port: Number(e.target.value) })} required />
+              </div>
+              <div className="form-field">
+                <label>Senha própria (8 hex)</label>
+                <input
+                  value={form.communicationPassword}
+                  onChange={(e) => setForm({ ...form, communicationPassword: e.target.value })}
+                  placeholder={editingId !== null ? "(manter atual)" : "(usar a padrão global)"}
+                />
+              </div>
+              <div className="form-field" style={{ minWidth: 150 }}>
+                <label>Modo de conexão</label>
+                <select
+                  value={form.connectionMode}
+                  onChange={(e) => setForm({ ...form, connectionMode: e.target.value as ControllerConnectionMode })}
+                >
+                  <option value="TcpClient">TCP (servidor disca)</option>
+                  <option value="TcpServerClient">TCP phone-home</option>
+                  <option value="Udp">UDP</option>
+                </select>
+              </div>
+              {editingId !== null && (
+                <>
+                  <div className="form-field" style={{ minWidth: 100 }}>
+                    <label>Timeout (ms)</label>
+                    <input type="number" value={form.timeoutMs} onChange={(e) => setForm({ ...form, timeoutMs: Number(e.target.value) })} required />
+                  </div>
+                  <div className="form-field" style={{ minWidth: 80 }}>
+                    <label>Retries</label>
+                    <input type="number" value={form.restartCount} onChange={(e) => setForm({ ...form, restartCount: Number(e.target.value) })} required />
+                  </div>
+                </>
+              )}
+              <div className="form-field" style={{ flexDirection: "row", alignItems: "center", gap: "0.4rem" }}>
+                <input
+                  type="checkbox"
+                  id="waitRepeat"
+                  checked={form.supportsWaitRepeatMessage}
+                  onChange={(e) => setForm({ ...form, supportsWaitRepeatMessage: e.target.checked })}
+                />
+                <label htmlFor="waitRepeat" style={{ margin: 0 }}>
+                  Firmware &gt;= v4.28
+                </label>
+              </div>
+              <div className="form-field" style={{ minWidth: 200 }}>
+                <label>URL do painel web (QR)</label>
+                <input
+                  placeholder="(automático: http://IP)"
+                  value={form.apiBaseUrl}
+                  onChange={(e) => setForm({ ...form, apiBaseUrl: e.target.value })}
+                />
+              </div>
+              <div className="form-field" style={{ minWidth: 150 }}>
+                <label>Senha própria do painel</label>
+                <input
+                  type="password"
+                  placeholder={editingId !== null ? "(manter atual)" : "(usar a padrão global)"}
+                  value={form.apiPassword}
+                  onChange={(e) => setForm({ ...form, apiPassword: e.target.value })}
+                />
+              </div>
+              {editingId !== null && (
+                <div className="form-field" style={{ flexDirection: "row", alignItems: "center", gap: "0.4rem" }}>
+                  <input
+                    type="checkbox"
+                    id="useDefaultPw"
+                    checked={form.useDefaultPasswords}
+                    onChange={(e) => setForm({ ...form, useDefaultPasswords: e.target.checked })}
+                  />
+                  <label htmlFor="useDefaultPw" style={{ margin: 0 }} title="Limpa as senhas próprias deste aparelho — ele volta a usar a senha padrão das Configurações.">
+                    Voltar à senha padrão global
+                  </label>
+                </div>
+              )}
+            </div>
+          )}
         </form>
       )}
 
@@ -374,7 +485,9 @@ export function ControllersPage() {
         <tbody>
           {filtered.map((c) => (
             <tr key={c.id}>
-              <td>{c.name}</td>
+              <td>
+                {c.name} {c.isRoom && <span className="pill">Quarto</span>}
+              </td>
               <td>
                 {c.ipAddress}:{c.port}
               </td>
@@ -397,7 +510,7 @@ export function ControllersPage() {
                       <button className="btn btn-outline btn-sm" onClick={() => startEdit(c.id)}>
                         Editar
                       </button>
-                      <button className="btn btn-danger-outline btn-sm" onClick={() => handleDelete(c.id)}>
+                      <button className="btn btn-danger-outline btn-sm" onClick={() => handleDelete(c)}>
                         Excluir
                       </button>
                     </>

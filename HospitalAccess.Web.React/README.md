@@ -3,9 +3,11 @@
 **Único front-end** do sistema (o Blazor `HospitalAccess.Web` foi aposentado). Cobre todas
 as telas: Controladores (+ detalhe com abas de Rede/Relógio/Alarmes/Ajustes Locais/
 Auditoria/Fotos de Evento), Usuários (histórico/revogar/reativar/RBAC), Grupos de Usuários
-(portas padrão), Visitantes (portas da visita + QR), Feriados, Grade Horária, Log de
-Acessos e Log de Alarmes, além do **painel de status**, **emergência/evacuação** e
-**configurações** (retenção de dados).
+(portas padrão), Visitantes (quarto da visita + QR), Gestão de Leitos, Grade Horária, Log
+de Acessos e Log de Alarmes, além do **painel de status**, **emergência/evacuação**,
+**Usuários do Sistema** (logins/cargos) e **configurações** (retenção, senha padrão dos
+aparelhos, Home Assistant, boas-vindas). A aba de Feriados foi removida da UI (o backend
+de feriados continua existindo).
 
 ## Por que React "no mesmo servidor"
 
@@ -61,9 +63,11 @@ mantém a sessão.
   - `VisitorsPage` (cadastro + QR + revogar)
   - `BedsPage` (gestão de leitos: internar/transferir/alta, QR do paciente, boas-vindas
     via Home Assistant, histórico de mudanças de leito)
-  - `HolidaysPage`, `TimeGroupsPage` (grade de dias/horários por grupo)
+  - `TimeGroupsPage` (grade de dias/horários por grupo)
   - `AccessLogPage`, `AlarmEventsPage` (paginação, filtros, exportação CSV)
-  - `SettingsPage` (retenção/LGPD, formato do QR — só Admin)
+  - `SystemUsersPage` (só Admin): logins da aplicação e cargos (Admin/Operador/Recepção)
+  - `SettingsPage` (só Admin): retenção/LGPD, senha padrão dos aparelhos, Home Assistant
+    (com teste de conexão) e tela de boas-vindas — tudo sem linha de comando
   - `DevLogsPage` (só Admin): logs importantes do servidor capturados em memória com o
     **modo de desenvolvimento** ativo — toggle persistido, busca incremental a cada 3s,
     filtro por nível/texto e botão de limpar. Ver `/api/devlogs` e `DevLogBuffer` na API.

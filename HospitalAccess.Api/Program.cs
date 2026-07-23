@@ -146,6 +146,13 @@ builder.Services.AddSingleton<SingleFlight>();
 // banco, o startup loga erro destacado e o painel mostra a faixa "banco desatualizado".
 builder.Services.AddSingleton<DatabaseSchemaState>();
 
+// Configurações efetivas em runtime: o que a tela de Configurações salvar no banco tem
+// precedência; vazio herda o appsettings. Também é a fonte da senha padrão dos aparelhos
+// (comunicação + painel web) via as interfaces de defaults do Gateway/Infrastructure.
+builder.Services.AddSingleton<RuntimeSettingsProvider>();
+builder.Services.AddSingleton<HospitalAccess.Gateway.IDeviceSecretDefaults>(sp => sp.GetRequiredService<RuntimeSettingsProvider>());
+builder.Services.AddSingleton<HospitalAccess.Infrastructure.Devices.IDeviceHttpSecretDefaults>(sp => sp.GetRequiredService<RuntimeSettingsProvider>());
+
 // Gestão de leitos + integração Home Assistant (REST + token, mesma rede; best-effort).
 builder.Services.Configure<HomeAssistantOptions>(builder.Configuration.GetSection(HomeAssistantOptions.SectionName));
 builder.Services.Configure<BedManagementOptions>(builder.Configuration.GetSection(BedManagementOptions.SectionName));

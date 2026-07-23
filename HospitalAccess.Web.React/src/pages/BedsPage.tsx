@@ -172,6 +172,14 @@ export function BedsPage() {
       {error && <div className="alert alert-danger">{error}</div>}
       {notice && <div className="alert alert-success">{notice}</div>}
 
+      {beds.length === 0 && (
+        <div className="card text-muted" style={{ marginBottom: "1rem" }}>
+          Nenhum controlador está marcado como quarto/leito. Na tela{" "}
+          <strong>Controladores / Portas</strong>, edite os controladores dos quartos e marque{" "}
+          <strong>"É quarto/leito"</strong> — eles passam a aparecer aqui.
+        </div>
+      )}
+
       <table>
         <thead>
           <tr>

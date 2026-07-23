@@ -29,19 +29,19 @@ public class BedsController : ControllerBase
     private readonly IUserSyncQueue _syncQueue;
     private readonly WelcomeImageService _welcome;
     private readonly HomeAssistantClient _ha;
-    private readonly HomeAssistantOptions _haOptions;
+    private readonly RuntimeSettingsProvider _settings;
     private readonly BedManagementOptions _options;
     private readonly ILogger<BedsController> _logger;
 
     public BedsController(AccessDbContext db, IUserSyncQueue syncQueue, WelcomeImageService welcome,
-        HomeAssistantClient ha, IOptions<HomeAssistantOptions> haOptions,
+        HomeAssistantClient ha, RuntimeSettingsProvider settings,
         IOptions<BedManagementOptions> options, ILogger<BedsController> logger)
     {
         _db = db;
         _syncQueue = syncQueue;
         _welcome = welcome;
         _ha = ha;
-        _haOptions = haOptions.Value;
+        _settings = settings;
         _options = options.Value;
         _logger = logger;
     }
@@ -64,7 +64,11 @@ public class BedsController : ControllerBase
             .Select(st => new { st.UserId, st.ControllerId, st.State })
             .ToListAsync(ct);
 
-        var controllers = await _db.Controllers.AsNoTracking().OrderBy(c => c.Name).ToListAsync(ct);
+        // Só controladores marcados como quarto/leito — nem toda porta é um leito (vestiários etc.).
+        var controllers = await _db.Controllers.AsNoTracking()
+            .Where(c => c.IsRoom)
+            .OrderBy(c => c.Name)
+            .ToListAsync(ct);
         var beds = controllers.Select(c =>
         {
             stayByController.TryGetValue(c.Id, out var stay);
@@ -133,6 +137,8 @@ public class BedsController : ControllerBase
 
         var controller = await _db.Controllers.AsNoTracking().FirstOrDefaultAsync(c => c.Id == controllerId, ct);
         if (controller is null) return NotFound("Leito (controlador) não existe.");
+        if (!controller.IsRoom)
+            return BadRequest("Este controlador não está marcado como quarto/leito (edite-o na tela de controladores).");
 
         if (await _db.BedStays.AnyAsync(s => s.ControllerId == controllerId && s.EndedAtUtc == null, ct))
             return Conflict("Este leito já está ocupado. Transfira ou dê alta ao paciente atual antes.");
@@ -201,6 +207,8 @@ public class BedsController : ControllerBase
         // token do painel), então ela não pode participar da unidade de trabalho.
         var target = await _db.Controllers.AsNoTracking().FirstOrDefaultAsync(c => c.Id == request.ToControllerId, ct);
         if (target is null) return BadRequest("Leito de destino não existe.");
+        if (!target.IsRoom)
+            return BadRequest("O controlador de destino não está marcado como quarto/leito.");
         var source = await _db.Controllers.AsNoTracking().FirstOrDefaultAsync(c => c.Id == controllerId, ct);
 
         var patientName = string.Empty;
@@ -406,7 +414,7 @@ public class BedsController : ControllerBase
         if (url is not null && !string.IsNullOrWhiteSpace(controller.HomeAssistantRoomId))
         {
             haCalled = await _ha.CallServiceAsync(
-                _haOptions.WelcomeService,
+                _settings.HomeAssistant.WelcomeService,
                 HomeAssistantPayload.Welcome(controller.HomeAssistantRoomId, patientName, url), ct);
         }
         return (url, haCalled);
@@ -414,10 +422,11 @@ public class BedsController : ControllerBase
 
     private async Task TriggerClearAsync(Domain.Entities.Controller controller, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(_haOptions.ClearService) ||
+        var clearService = _settings.HomeAssistant.ClearService;
+        if (string.IsNullOrWhiteSpace(clearService) ||
             string.IsNullOrWhiteSpace(controller.HomeAssistantRoomId))
             return;
-        await _ha.CallServiceAsync(_haOptions.ClearService,
+        await _ha.CallServiceAsync(clearService,
             HomeAssistantPayload.Clear(controller.HomeAssistantRoomId), ct);
     }
 

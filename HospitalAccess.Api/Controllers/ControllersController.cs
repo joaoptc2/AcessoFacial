@@ -12,25 +12,33 @@ using Npgsql;
 
 namespace HospitalAccess.Api.Controllers;
 
+// Cadastro SIMPLIFICADO: só Nome + IP + SN são obrigatórios. Senhas vazias = usar a senha
+// padrão dos aparelhos (Configurações); ApiBaseUrl vazio = derivada do IP (http://IP);
+// porta/timeout/modo têm defaults. Tudo ajustável depois na edição (bloco avançado).
 public record CreateControllerRequest(
-    string Name, string IpAddress, int Port, string SerialNumber,
-    string CommunicationPassword, bool SupportsWaitRepeatMessage,
+    string Name, string IpAddress, string SerialNumber,
+    int Port = 8000,
+    string? CommunicationPassword = null, bool SupportsWaitRepeatMessage = false,
     ControllerConnectionMode ConnectionMode = ControllerConnectionMode.TcpClient,
-    // API HTTP do painel web (para ler o QRCode). ApiBaseUrl vazio = só SDK. ApiPassword vazio =
-    // usar o padrão global (Device:DefaultApiPassword).
     string? ApiBaseUrl = null, string? ApiPassword = null,
     // Slug do quarto no Home Assistant (gestão de leitos). Vazio = sem integração HA.
-    string? HomeAssistantRoomId = null);
+    string? HomeAssistantRoomId = null,
+    // Este controlador é um quarto/leito? Só os marcados aparecem na Gestão de Leitos.
+    bool IsRoom = false);
 
 // CommunicationPassword é opcional na edição: em branco/nulo mantém a senha atual (não é
-// devolvida pelo GET, então o formulário não a tem para reenviar). ApiPassword segue a mesma regra.
+// devolvida pelo GET, então o formulário não a tem para reenviar). ApiPassword segue a mesma
+// regra. UseDefaultPasswords=true LIMPA as duas senhas próprias → o aparelho volta a usar a
+// senha padrão global das Configurações.
 public record UpdateControllerRequest(
     string Name, string IpAddress, int Port, string SerialNumber,
     string? CommunicationPassword, bool SupportsWaitRepeatMessage,
     int TimeoutMs, int RestartCount,
     ControllerConnectionMode ConnectionMode = ControllerConnectionMode.TcpClient,
     string? ApiBaseUrl = null, string? ApiPassword = null,
-    string? HomeAssistantRoomId = null);
+    string? HomeAssistantRoomId = null,
+    bool IsRoom = false,
+    bool UseDefaultPasswords = false);
 
 /// <summary>
 /// Cadastro dos 30 controladores 8190H, status de sincronização por dispositivo e
@@ -78,7 +86,7 @@ public class ControllersController : ControllerBase
             .Select(c => new
             {
                 c.Id, c.Name, c.IpAddress, c.Port, c.SerialNumber, c.SupportsWaitRepeatMessage,
-                c.TimeoutMs, c.RestartCount,
+                c.TimeoutMs, c.RestartCount, c.IsRoom,
                 UserCount = c.Permissions.Count,
             })
             .ToListAsync(ct);
@@ -166,6 +174,7 @@ public class ControllersController : ControllerBase
             controller.SupportsWaitRepeatMessage, controller.ConnectionMode,
             controller.TimeoutMs, controller.RestartCount, controller.LastClockSyncAtUtc,
             controller.HomeAssistantRoomId,
+            controller.IsRoom,
             HasCommunicationPassword = !string.IsNullOrEmpty(controller.CommunicationPassword),
             controller.ApiBaseUrl,
             HasApiPassword = !string.IsNullOrEmpty(controller.ApiPassword),
@@ -192,21 +201,29 @@ public class ControllersController : ControllerBase
     [Authorize(Roles = "Admin,Operator")]
     public async Task<IActionResult> Create([FromBody] CreateControllerRequest request, CancellationToken ct)
     {
+        if (string.IsNullOrWhiteSpace(request.Name))
+            return BadRequest("Informe o nome do controlador.");
+        if (string.IsNullOrWhiteSpace(request.IpAddress))
+            return BadRequest("Informe o IP do controlador.");
         if (request.SerialNumber.Length != 16)
             return BadRequest("SerialNumber deve ter exatamente 16 dígitos.");
 
+        var ip = request.IpAddress.Trim();
         var controller = new Domain.Entities.Controller
         {
-            Name = request.Name,
-            IpAddress = request.IpAddress,
+            Name = request.Name.Trim(),
+            IpAddress = ip,
             Port = request.Port,
             SerialNumber = request.SerialNumber,
-            CommunicationPassword = request.CommunicationPassword,
+            // Vazio = usar a senha padrão dos aparelhos (Configurações).
+            CommunicationPassword = request.CommunicationPassword ?? string.Empty,
             SupportsWaitRepeatMessage = request.SupportsWaitRepeatMessage,
             ConnectionMode = request.ConnectionMode,
-            ApiBaseUrl = (request.ApiBaseUrl ?? string.Empty).TrimEnd('/'),
+            // O painel web mora no MESMO IP do protocolo — deriva quando não informado.
+            ApiBaseUrl = string.IsNullOrWhiteSpace(request.ApiBaseUrl) ? $"http://{ip}" : request.ApiBaseUrl.TrimEnd('/'),
             ApiPassword = request.ApiPassword ?? string.Empty,
             HomeAssistantRoomId = (request.HomeAssistantRoomId ?? string.Empty).Trim(),
+            IsRoom = request.IsRoom,
         };
 
         _db.Controllers.Add(controller);
@@ -243,6 +260,7 @@ public class ControllersController : ControllerBase
         controller.TimeoutMs = request.TimeoutMs;
         controller.RestartCount = request.RestartCount;
         controller.HomeAssistantRoomId = (request.HomeAssistantRoomId ?? string.Empty).Trim();
+        controller.IsRoom = request.IsRoom;
         // API HTTP do painel web. Mudança de URL ou senha invalida o token cacheado (re-loga na
         // próxima chamada). ApiPassword em branco = manter a atual (não é devolvida pelo GET).
         var newApiBaseUrl = (request.ApiBaseUrl ?? string.Empty).TrimEnd('/');
@@ -254,6 +272,13 @@ public class ControllersController : ControllerBase
         if (!string.IsNullOrEmpty(request.ApiPassword))
         {
             controller.ApiPassword = request.ApiPassword;
+            controller.ApiToken = null;
+        }
+        // Voltar para a senha padrão global: limpa as senhas próprias deste aparelho.
+        if (request.UseDefaultPasswords)
+        {
+            controller.CommunicationPassword = string.Empty;
+            controller.ApiPassword = string.Empty;
             controller.ApiToken = null;
         }
 

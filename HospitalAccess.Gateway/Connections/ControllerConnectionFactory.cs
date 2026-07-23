@@ -21,8 +21,24 @@ namespace HospitalAccess.Gateway.Connections;
 /// </summary>
 public sealed class ControllerConnectionFactory
 {
+    private readonly IDeviceSecretDefaults? _secretDefaults;
+
+    public ControllerConnectionFactory(IDeviceSecretDefaults? secretDefaults = null)
+    {
+        _secretDefaults = secretDefaults;
+    }
+
     public INCommandDetail CreateCommandDetail(Controller controller)
     {
+        // Senha de comunicação: a do controlador; vazia = a padrão global das Configurações.
+        var password = string.IsNullOrEmpty(controller.CommunicationPassword)
+            ? _secretDefaults?.DefaultCommunicationPassword
+            : controller.CommunicationPassword;
+        if (string.IsNullOrEmpty(password))
+            throw new DeviceCommandException(
+                $"Controlador '{controller.Name}' sem senha de comunicação: defina a senha padrão dos aparelhos " +
+                "na tela de Configurações ou uma senha própria no cadastro do controlador.");
+
         INCommandDetail cmdDtl;
         try
         {
@@ -32,7 +48,7 @@ public sealed class ControllerConnectionFactory
                 controller.Port,
                 CommandDetailFactory.ControllerType.A33_Face,
                 controller.SerialNumber,
-                controller.CommunicationPassword);
+                password);
         }
         catch (ArgumentException ex)
         {
