@@ -266,7 +266,15 @@ public class BedsController : ControllerBase
                         var toRemove = visitor.Permissions.Where(p => p.ControllerId != target.Id).ToList();
                         _db.Permissions.RemoveRange(toRemove);
                         if (visitor.Permissions.All(p => p.ControllerId != target.Id))
-                            visitor.Permissions.Add(new AccessPermission { ControllerId = target.Id, TimeGroup = visitor.TimeGroup });
+                            // _db.Permissions.Add (não visitor.Permissions.Add): num User já rastreado,
+                            // a navegação marcaria a permissão nova (PK preenchida) como Modified →
+                            // UPDATE de 0 linhas → DbUpdateConcurrencyException. Ver GroupAccessService.
+                            _db.Permissions.Add(new AccessPermission
+                            {
+                                UserId = visitor.Id,
+                                ControllerId = target.Id,
+                                TimeGroup = visitor.TimeGroup,
+                            });
 
                         UserAuditLogger.Record(_db, visitor, "Transferido de leito", CurrentUsername(),
                             $"{source?.Name ?? "?"} → {target.Name}");

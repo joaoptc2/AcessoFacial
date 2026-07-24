@@ -212,7 +212,15 @@ public class VisitorsController : ControllerBase
         var permsToRemove = visitor.Permissions.Where(p => p.ControllerId != request.ControllerId).ToList();
         _db.Permissions.RemoveRange(permsToRemove);
         if (visitor.Permissions.All(p => p.ControllerId != request.ControllerId))
-            visitor.Permissions.Add(new AccessPermission { ControllerId = request.ControllerId, TimeGroup = visitor.TimeGroup });
+            // _db.Permissions.Add (não visitor.Permissions.Add): num User já rastreado, a navegação
+            // marcaria a permissão nova (PK preenchida) como Modified → UPDATE de 0 linhas →
+            // DbUpdateConcurrencyException. Ver GroupAccessService.
+            _db.Permissions.Add(new AccessPermission
+            {
+                UserId = visitor.Id,
+                ControllerId = request.ControllerId,
+                TimeGroup = visitor.TimeGroup,
+            });
 
         UserAuditLogger.Record(_db, visitor, "Quarto alterado", User.Identity?.Name);
         await _db.SaveChangesAsync(ct);
