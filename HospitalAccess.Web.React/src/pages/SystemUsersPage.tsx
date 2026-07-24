@@ -20,7 +20,7 @@ const ROLE_HINT: Record<StaffRole, string> = {
  * login (o cargo viaja no token JWT). Só Admin.
  */
 export function SystemUsersPage() {
-  const { username: myUsername } = useAuth();
+  const { username: myUsername, role } = useAuth();
 
   const [users, setUsers] = useState<StaffUserDto[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -32,11 +32,24 @@ export function SystemUsersPage() {
   const [newRole, setNewRole] = useState<StaffRole>("Reception");
   const [creating, setCreating] = useState(false);
 
-  const load = async () => setUsers(await api.getStaffUsers());
+  const isAdmin = role === "Admin";
+
+  const load = async () => {
+    try {
+      setUsers(await api.getStaffUsers());
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Falha ao carregar os usuários do sistema.");
+    }
+  };
 
   useEffect(() => {
-    load();
-  }, []);
+    if (isAdmin) load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAdmin]);
+
+  if (!isAdmin) {
+    return <div className="alert alert-danger">Apenas administradores podem gerenciar os usuários do sistema.</div>;
+  }
 
   async function handleCreate(e: FormEvent) {
     e.preventDefault();

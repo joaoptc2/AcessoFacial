@@ -92,6 +92,11 @@ namespace HospitalAccess.Infrastructure.Persistence.Migrations
                 nullable: false,
                 defaultValue: false);
 
+            // Backfill: controladores que já têm/tiveram internação eram leitos ANTES do flag
+            // existir — sem isto, leitos ocupados sumiriam da tela de Gestão de Leitos.
+            migrationBuilder.Sql(
+                """UPDATE "Controllers" SET "IsRoom" = TRUE WHERE "Id" IN (SELECT DISTINCT "ControllerId" FROM "BedStays");""");
+
             migrationBuilder.UpdateData(
                 table: "SystemSettings",
                 keyColumn: "Id",

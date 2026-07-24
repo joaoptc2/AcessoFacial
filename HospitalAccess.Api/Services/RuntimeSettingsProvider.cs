@@ -34,6 +34,9 @@ public sealed class RuntimeSettingsProvider : IDeviceSecretDefaults, IDeviceHttp
     private readonly DeviceHttpOptions _deviceHttpDefaults;
     private readonly ILogger<RuntimeSettingsProvider> _logger;
     private volatile Snapshot? _current;
+    // Versão bumpada a cada Invalidate: um Reload que começou ANTES de um salvamento não pode
+    // cachear seu snapshot obsoleto por cima da invalidação (corrida Invalidate × Reload).
+    private int _version;
 
     public RuntimeSettingsProvider(IServiceScopeFactory scopeFactory, IOptions<HomeAssistantOptions> haDefaults,
         IOptions<BedManagementOptions> bedDefaults, IOptions<DeviceHttpOptions> deviceHttpDefaults,
@@ -56,12 +59,17 @@ public sealed class RuntimeSettingsProvider : IDeviceSecretDefaults, IDeviceHttp
     public string? DefaultApiPassword => NonEmpty(Current.DeviceDefaultPassword) ?? NonEmpty(_deviceHttpDefaults.DefaultApiPassword);
 
     /// <summary>Descarta o snapshot — o próximo acesso relê do banco (chamado pelo SettingsController ao salvar).</summary>
-    public void Invalidate() => _current = null;
+    public void Invalidate()
+    {
+        Interlocked.Increment(ref _version);
+        _current = null;
+    }
 
     private Snapshot Current => _current ?? Reload();
 
     private Snapshot Reload()
     {
+        var versionAtStart = Volatile.Read(ref _version);
         Domain.Entities.SystemSettings? row = null;
         try
         {
@@ -79,7 +87,9 @@ public sealed class RuntimeSettingsProvider : IDeviceSecretDefaults, IDeviceHttp
         }
 
         var snapshot = Compose(row);
-        _current = snapshot;
+        // Só cacheia se nenhum Invalidate aconteceu durante a leitura (snapshot ainda atual).
+        if (Volatile.Read(ref _version) == versionAtStart)
+            _current = snapshot;
         return snapshot;
     }
 

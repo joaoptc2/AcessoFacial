@@ -247,6 +247,11 @@ public class ControllersController : ControllerBase
         if (controller is null) return NotFound();
         if (request.SerialNumber.Length != 16)
             return BadRequest("SerialNumber deve ter exatamente 16 dígitos.");
+        // Desmarcar "É quarto/leito" com paciente internado esconderia um leito OCUPADO da
+        // gestão (inclusive por omissão do campo num PUT antigo) — bloqueia até resolver.
+        if (controller.IsRoom && !request.IsRoom &&
+            await _db.BedStays.AnyAsync(s => s.ControllerId == id && s.EndedAtUtc == null, ct))
+            return Conflict("Este quarto tem uma internação ativa — dê alta ou transfira o paciente antes de desmarcar 'É quarto/leito'.");
 
         controller.Name = request.Name;
         controller.IpAddress = request.IpAddress;

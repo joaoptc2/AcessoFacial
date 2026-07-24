@@ -217,14 +217,17 @@ public class BedsController : ControllerBase
         var oldControllerIds = new List<Guid>();
         uint visitorCode = 0;
 
-        // A unidade de trabalho (encerrar internação, abrir a nova, mover permissões) não tem
-        // NENHUM update tokenizado — o Notes do visitante sai depois via ExecuteUpdate. Ainda
-        // assim, um retry com recarga cobre qualquer corrida residual e LOGA as entidades em
-        // conflito (visível em Logs (Dev)) para diagnóstico.
+        // A unidade de trabalho (encerrar internação, abrir a nova, mover permissões, nota do
+        // visitante) roda numa TRANSAÇÃO explícita: ou commita tudo, ou nada — um cancelamento
+        // no meio não pode deixar a transferência commitada sem a nota/sem o enqueue. Nenhum
+        // update tokenizado (o Notes sai via ExecuteUpdate, dentro da mesma transação). O retry
+        // com recarga cobre corrida residual e LOGA as entidades em conflito (Logs (Dev)).
         for (var attempt = 1; ; attempt++)
         {
             try
             {
+                await using var tx = await _db.Database.BeginTransactionAsync(ct);
+
                 var stay = await _db.BedStays
                     .FirstOrDefaultAsync(s => s.ControllerId == controllerId && s.EndedAtUtc == null, ct);
                 if (stay is null) return NotFound("Não há internação ativa neste leito.");
@@ -271,6 +274,16 @@ public class BedsController : ControllerBase
                 }
 
                 await _db.SaveChangesAsync(ct);
+
+                // Nota do visitante via ExecuteUpdate (sem token xmin), DENTRO da transação.
+                if (stay.VisitorUserId is { } noteUserId && visitorCode != 0)
+                {
+                    var note = $"Paciente — leito {target.Name} (gestão de leitos)";
+                    await _db.Users.Where(u => u.Id == noteUserId)
+                        .ExecuteUpdateAsync(u => u.SetProperty(x => x.Notes, note), ct);
+                }
+
+                await tx.CommitAsync(ct);
                 patientName = stay.PatientName;
                 newStayId = newStay.Id;
                 visitorUserId = stay.VisitorUserId;
@@ -285,21 +298,14 @@ public class BedsController : ControllerBase
             }
         }
 
-        // Nota do visitante FORA da unidade crítica: o UPDATE tokenizado (xmin do User) era a
-        // única instrução com checagem de concorrência do fluxo — aqui vira uma escrita direta.
-        if (visitorUserId is { } noteUserId && visitorCode != 0)
-        {
-            var note = $"Paciente — leito {target.Name} (gestão de leitos)";
-            await _db.Users.Where(u => u.Id == noteUserId)
-                .ExecuteUpdateAsync(u => u.SetProperty(x => x.Notes, note), ct);
-        }
-
+        // Pós-commit: nada aqui pode ser cancelado pelo cliente (CancellationToken.None) — o
+        // enqueue e as chamadas ao HA precisam acontecer mesmo se a conexão HTTP cair.
         if (visitorUserId is { } vid2 && visitorCode != 0)
             _syncQueue.EnqueueChangeRoom(vid2, visitorCode, oldControllerIds);
 
         // HA: limpa a TV do leito antigo (se configurado) e dá boas-vindas no novo.
-        if (source is not null) await TriggerClearAsync(source, ct);
-        var (welcomeUrl, haCalled) = await TriggerWelcomeAsync(target, patientName, ct);
+        if (source is not null) await TriggerClearAsync(source, CancellationToken.None);
+        var (welcomeUrl, haCalled) = await TriggerWelcomeAsync(target, patientName, CancellationToken.None);
 
         return Ok(new
         {
@@ -323,6 +329,10 @@ public class BedsController : ControllerBase
         {
             try
             {
+                // Transação: encerrar a internação E revogar o acesso são um ato só — a alta
+                // nunca pode commitar deixando o paciente com acesso ativo e nada a reconciliar.
+                await using var tx = await _db.Database.BeginTransactionAsync(ct);
+
                 var stay = await _db.BedStays
                     .FirstOrDefaultAsync(s => s.ControllerId == controllerId && s.EndedAtUtc == null, ct);
                 if (stay is null) return NotFound("Não há internação ativa neste leito.");
@@ -340,6 +350,20 @@ public class BedsController : ControllerBase
                 }
 
                 await _db.SaveChangesAsync(ct);
+
+                // Revogação via ExecuteUpdate (sem token xmin), DENTRO da transação. Idempotente:
+                // só marca quem ainda está ativo. O worker de revogação lê do banco após o commit.
+                if (stay.VisitorUserId is { } revokeUserId)
+                {
+                    var username = CurrentUsername();
+                    var now = DateTime.UtcNow;
+                    await _db.Users.Where(u => u.Id == revokeUserId && u.RevokedAtUtc == null)
+                        .ExecuteUpdateAsync(u => u
+                            .SetProperty(x => x.RevokedAtUtc, now)
+                            .SetProperty(x => x.RevokedByUsername, username), ct);
+                }
+
+                await tx.CommitAsync(ct);
                 visitorUserId = stay.VisitorUserId;
                 break;
             }
@@ -352,19 +376,9 @@ public class BedsController : ControllerBase
             }
         }
 
-        if (visitorUserId is { } vid)
-        {
-            // Revogação por escrita direta (sem token xmin), ANTES do enqueue — o worker de
-            // revogação lê RevokedAtUtc do banco. Idempotente: só marca quem ainda está ativo.
-            var username = CurrentUsername();
-            var now = DateTime.UtcNow;
-            await _db.Users.Where(u => u.Id == vid && u.RevokedAtUtc == null)
-                .ExecuteUpdateAsync(u => u
-                    .SetProperty(x => x.RevokedAtUtc, now)
-                    .SetProperty(x => x.RevokedByUsername, username), ct);
-            _syncQueue.EnqueueRevoke(vid);
-        }
-        if (controller is not null) await TriggerClearAsync(controller, ct);
+        // Pós-commit: sem cancelamento do cliente (a fila e o HA precisam rodar de todo jeito).
+        if (visitorUserId is { } vid) _syncQueue.EnqueueRevoke(vid);
+        if (controller is not null) await TriggerClearAsync(controller, CancellationToken.None);
 
         return NoContent();
     }

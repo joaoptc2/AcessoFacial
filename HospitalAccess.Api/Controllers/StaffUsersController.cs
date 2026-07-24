@@ -79,9 +79,21 @@ public class StaffUsersController : ControllerBase
         if (!StaffUserRules.CanChange(user.Role, user.Active, request.Role, request.Active, isLastActiveAdmin, out var reason))
             return BadRequest(reason);
 
+        // A checagem acima é check-then-act: dois rebaixamentos simultâneos poderiam zerar os
+        // Admins. A transação re-conta DEPOIS da escrita e desfaz se o sistema ficou sem Admin.
+        await using var tx = await _db.Database.BeginTransactionAsync(ct);
         user.Role = request.Role;
         user.Active = request.Active;
         await _db.SaveChangesAsync(ct);
+
+        var activeAdmins = await _db.StaffUsers.CountAsync(s => s.Role == StaffRole.Admin && s.Active, ct);
+        if (activeAdmins == 0)
+        {
+            await tx.RollbackAsync(ct);
+            return BadRequest("A alteração deixaria o sistema sem nenhum Admin ativo — promova outro usuário antes.");
+        }
+
+        await tx.CommitAsync(ct);
         return NoContent();
     }
 

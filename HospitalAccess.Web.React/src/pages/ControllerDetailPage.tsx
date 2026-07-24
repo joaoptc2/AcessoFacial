@@ -27,6 +27,9 @@ export function ControllerDetailPage() {
   const [clock, setClock] = useState<string | null>(null);
   const [alarmSettings, setAlarmSettings] = useState<AlarmSettings | null>(null);
   const [kiosk, setKiosk] = useState<KioskSettings | null>(null);
+  // Texto local do limiar de febre: commit só no BLUR — um input controlado reformatado a cada
+  // tecla (toFixed) pula o cursor e impede a digitação; limites 30–45 °C protegem o aparelho.
+  const [tempAlarmText, setTempAlarmText] = useState("");
   const [audit, setAudit] = useState<PersonnelAudit | null>(null);
   const [photos, setPhotos] = useState<EventPhotoListItem[]>([]);
   const [photoImages, setPhotoImages] = useState<Record<string, string>>({});
@@ -51,7 +54,11 @@ export function ControllerDetailPage() {
       if (tab === "Rede" && !network) setNetwork(await api.getNetwork(id));
       else if (tab === "Relógio") setClock(await api.getClock(id));
       else if (tab === "Alarmes" && !alarmSettings) setAlarmSettings(await api.getAlarmSettings(id));
-      else if (tab === "Ajustes Locais" && !kiosk) setKiosk(await api.getKioskSettings(id));
+      else if (tab === "Ajustes Locais" && !kiosk) {
+        const k = await api.getKioskSettings(id);
+        setKiosk(k);
+        setTempAlarmText((k.temperatureAlarmThresholdX10 / 10).toFixed(1));
+      }
       else if (tab === "Log de Acessos") {
         const page = await api.queryAccessLog({ controllerId: id, page: 1, pageSize: 50 });
         setAccessLog(page.items);
@@ -471,6 +478,9 @@ export function ControllerDetailPage() {
                   <option value={2}>Inglês</option>
                   <option value={7}>Espanhol</option>
                   <option value={1}>Chinês</option>
+                  {![6, 13, 2, 7, 1].includes(kiosk.language) && (
+                    <option value={kiosk.language}>Outro (código {kiosk.language})</option>
+                  )}
                 </select>
               </div>
               <div className="form-field" style={{ minWidth: 160 }}>
@@ -504,6 +514,9 @@ export function ControllerDetailPage() {
                   <option value={1}>Curta (0,2–0,5 m)</option>
                   <option value={2}>Média (0,2–1,5 m)</option>
                   <option value={3}>Longa (acima de 1,5 m)</option>
+                  {![1, 2, 3].includes(kiosk.faceIdentifyRange) && (
+                    <option value={kiosk.faceIdentifyRange}>Outro (código {kiosk.faceIdentifyRange})</option>
+                  )}
                 </select>
               </div>
               <div className="form-field" style={{ minWidth: 200 }}>
@@ -520,7 +533,9 @@ export function ControllerDetailPage() {
                   min={1}
                   max={99}
                   value={kiosk.livenessSimilarity}
-                  onChange={(e) => setKiosk({ ...kiosk, livenessSimilarity: Number(e.target.value) })}
+                  onChange={(e) =>
+                    setKiosk({ ...kiosk, livenessSimilarity: Math.min(99, Math.max(1, Number(e.target.value) || 1)) })
+                  }
                 />
               </div>
               <div className="form-field" style={{ minWidth: 190 }}>
@@ -548,10 +563,18 @@ export function ControllerDetailPage() {
                 <input
                   type="number"
                   step="0.1"
-                  value={(kiosk.temperatureAlarmThresholdX10 / 10).toFixed(1)}
-                  onChange={(e) =>
-                    setKiosk({ ...kiosk, temperatureAlarmThresholdX10: Math.round(Number(e.target.value) * 10) })
-                  }
+                  min={30}
+                  max={45}
+                  value={tempAlarmText}
+                  onChange={(e) => setTempAlarmText(e.target.value)}
+                  onBlur={() => {
+                    const parsed = Number(tempAlarmText.replace(",", "."));
+                    const clamped = Number.isFinite(parsed) && parsed > 0
+                      ? Math.min(45, Math.max(30, parsed))
+                      : kiosk.temperatureAlarmThresholdX10 / 10;
+                    setKiosk({ ...kiosk, temperatureAlarmThresholdX10: Math.round(clamped * 10) });
+                    setTempAlarmText(clamped.toFixed(1));
+                  }}
                 />
               </div>
             </div>

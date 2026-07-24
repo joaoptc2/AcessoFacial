@@ -23,9 +23,11 @@ export function SettingsPage() {
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  // Segredos digitados nesta sessão (nunca vêm do GET).
+  // Segredos digitados nesta sessão (nunca vêm do GET) + flags de limpeza explícita.
   const [devicePassword, setDevicePassword] = useState("");
+  const [clearDevicePassword, setClearDevicePassword] = useState(false);
   const [haToken, setHaToken] = useState("");
+  const [clearHaToken, setClearHaToken] = useState(false);
   const [haTest, setHaTest] = useState<{ ok: boolean; message: string } | null>(null);
   const [testingHa, setTestingHa] = useState(false);
 
@@ -57,19 +59,24 @@ export function SettingsPage() {
         controllerAuditRetentionDays: settings.controllerAuditRetentionDays,
         qrFormat: settings.qrFormat,
         deviceDefaultPassword: devicePassword || undefined,
-        homeAssistantEnabled: settings.homeAssistantEnabled,
+        clearDeviceDefaultPassword: clearDevicePassword,
+        // "on"/"off" = decisão explícita; "" = herdar do appsettings do servidor.
+        homeAssistantEnabled: settings.homeAssistantEnabled === null ? "" : settings.homeAssistantEnabled ? "on" : "off",
         homeAssistantBaseUrl: settings.homeAssistantBaseUrl,
         homeAssistantToken: haToken || undefined,
+        clearHomeAssistantToken: clearHaToken,
         homeAssistantWelcomeService: settings.homeAssistantWelcomeService,
         homeAssistantClearService: settings.homeAssistantClearService,
         welcomeBaseImagePath: settings.welcomeBaseImagePath,
         welcomePublicBaseUrl: settings.welcomePublicBaseUrl,
-        welcomeTextY: settings.welcomeTextY,
-        welcomeFontSize: settings.welcomeFontSize,
+        welcomeTextY: settings.welcomeTextY === null ? "" : String(settings.welcomeTextY),
+        welcomeFontSize: settings.welcomeFontSize === null ? "" : String(settings.welcomeFontSize),
         welcomeFontColorHex: settings.welcomeFontColorHex,
       });
       setDevicePassword("");
+      setClearDevicePassword(false);
       setHaToken("");
+      setClearHaToken(false);
       setSavedAt(new Date().toLocaleString());
       // Recarrega os indicadores (hasToken/hasPassword/efetivo).
       setSettings(await api.getSettings());
@@ -104,9 +111,16 @@ export function SettingsPage() {
             <input
               type="password"
               value={devicePassword}
+              disabled={clearDevicePassword}
               onChange={(e) => setDevicePassword(e.target.value)}
               placeholder={settings.hasDeviceDefaultPassword ? "(manter a atual)" : "senha usada por todos os controladores"}
             />
+            {settings.hasDeviceDefaultPassword && (
+              <label style={{ display: "flex", alignItems: "center", gap: "0.35rem", fontWeight: "normal" }}>
+                <input type="checkbox" checked={clearDevicePassword} onChange={(e) => setClearDevicePassword(e.target.checked)} />
+                Limpar (volta a valer o appsettings do servidor)
+              </label>
+            )}
             <span className="text-muted" style={{ fontSize: "0.85rem" }}>
               Usada como senha de comunicação E do painel web de todos os controladores. Um aparelho
               com senha própria no cadastro (avançado) é exceção e tem precedência.
@@ -143,9 +157,16 @@ export function SettingsPage() {
               <input
                 type="password"
                 value={haToken}
+                disabled={clearHaToken}
                 onChange={(e) => setHaToken(e.target.value)}
                 placeholder={settings.hasHomeAssistantToken ? "(manter o atual)" : "perfil do HA → Segurança → criar token"}
               />
+              {settings.hasHomeAssistantToken && (
+                <label style={{ display: "flex", alignItems: "center", gap: "0.35rem", fontWeight: "normal" }}>
+                  <input type="checkbox" checked={clearHaToken} onChange={(e) => setClearHaToken(e.target.checked)} />
+                  Limpar token
+                </label>
+              )}
             </div>
             <div className="form-field" style={{ minWidth: 220 }}>
               <label>Serviço de boas-vindas</label>

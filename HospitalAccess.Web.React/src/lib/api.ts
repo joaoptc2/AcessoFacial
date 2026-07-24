@@ -445,23 +445,26 @@ export interface SystemSettingsDto {
   updatedByUsername: string | null;
 }
 
+// Semântica dos campos de runtime: omitido = MANTER o valor atual; string vazia = voltar a
+// HERDAR o appsettings. Segredos: valor = trocar; clear* = apagar; omitido = manter.
 export interface UpdateSettingsRequest {
   eventPhotoRetentionDays: number;
   accessLogRetentionDays: number;
   alarmLogRetentionDays: number;
   controllerAuditRetentionDays: number;
   qrFormat: QrFormat;
-  // Vazio/omitido = manter a senha/token atual.
   deviceDefaultPassword?: string;
-  homeAssistantEnabled?: boolean | null;
+  clearDeviceDefaultPassword?: boolean;
+  homeAssistantEnabled?: "on" | "off" | "";
   homeAssistantBaseUrl?: string;
   homeAssistantToken?: string;
+  clearHomeAssistantToken?: boolean;
   homeAssistantWelcomeService?: string;
   homeAssistantClearService?: string;
   welcomeBaseImagePath?: string;
   welcomePublicBaseUrl?: string;
-  welcomeTextY?: number | null;
-  welcomeFontSize?: number | null;
+  welcomeTextY?: string;
+  welcomeFontSize?: string;
   welcomeFontColorHex?: string;
 }
 
@@ -788,12 +791,6 @@ export const api = {
   createVisitor: (body: CreateVisitorRequest) =>
     request<{ id: string; userCode: number }>("/visitors", { method: "POST", body: JSON.stringify(body) }),
   generateVisitorQr: (id: string) => requestBlob(`/visitors/${id}/qrcode`, { method: "POST" }),
-  renderQrFromText: (text: string) =>
-    requestBlob(`/visitors/qrcode/render`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
-    }),
   revokeVisitor: (id: string) => request<void>(`/visitors/${id}`, { method: "DELETE" }),
   deleteVisitor: (id: string) => request<void>(`/visitors/${id}/permanent`, { method: "DELETE" }),
   changeVisitorRoom: (id: string, controllerId: string) =>

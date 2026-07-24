@@ -86,6 +86,9 @@ export function UserGroupsPage() {
     try {
       await api.deleteUserGroup(confirmDelete.id);
       setConfirmDelete(null);
+      // Se o grupo excluído estava em edição inline, sai do modo edição — senão o form de
+      // "Novo grupo" ficaria escondido sem caminho de volta.
+      cancelEdit();
       await load();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Falha inesperada ao excluir.");

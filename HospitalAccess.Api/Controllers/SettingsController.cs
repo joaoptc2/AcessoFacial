@@ -7,25 +7,30 @@ using Microsoft.EntityFrameworkCore;
 
 namespace HospitalAccess.Api.Controllers;
 
+// SEMÂNTICA (protege contra clientes antigos que não enviam os campos novos):
+// - campo NULL/omitido = MANTER o valor atual (nunca regride nada por omissão);
+// - string VAZIA = voltar a HERDAR o appsettings (decisão explícita da tela);
+// - segredos: valor novo = trocar; Clear* = apagar (volta a herdar); omitido = manter.
+// HomeAssistantEnabled/WelcomeTextY/WelcomeFontSize viajam como STRING pela mesma razão
+// ("on"/"off"/"400"… = valor; "" = herdar; null = manter).
 public record UpdateSettingsRequest(
     int EventPhotoRetentionDays,
     int AccessLogRetentionDays,
     int AlarmLogRetentionDays,
     int ControllerAuditRetentionDays,
     string QrFormat,
-    // Senha padrão única dos aparelhos (comunicação + painel web). Vazio/omitido = manter a atual.
     string? DeviceDefaultPassword = null,
-    // Home Assistant: null em Enabled = herdar do appsettings; token vazio/omitido = manter o atual.
-    bool? HomeAssistantEnabled = null,
+    bool ClearDeviceDefaultPassword = false,
+    string? HomeAssistantEnabled = null,       // "on" | "off" | "" (herdar) | null (manter)
     string? HomeAssistantBaseUrl = null,
     string? HomeAssistantToken = null,
+    bool ClearHomeAssistantToken = false,
     string? HomeAssistantWelcomeService = null,
     string? HomeAssistantClearService = null,
-    // Tela de boas-vindas (gestão de leitos). Nulls = herdar do appsettings.
     string? WelcomeBaseImagePath = null,
     string? WelcomePublicBaseUrl = null,
-    int? WelcomeTextY = null,
-    float? WelcomeFontSize = null,
+    string? WelcomeTextY = null,
+    string? WelcomeFontSize = null,
     string? WelcomeFontColorHex = null);
 
 /// <summary>
@@ -96,12 +101,25 @@ public class SettingsController : ControllerBase
             return BadRequest("Os prazos de retenção não podem ser negativos (0 = reter indefinidamente).");
         if (request.QrFormat is not ("Appendix8Rc4" or "PlainText"))
             return BadRequest("QrFormat deve ser 'Appendix8Rc4' ou 'PlainText'.");
-        if (request.WelcomeTextY is < 0)
-            return BadRequest("A posição Y do texto de boas-vindas não pode ser negativa.");
-        if (request.WelcomeFontSize is <= 0)
-            return BadRequest("O tamanho da fonte de boas-vindas deve ser maior que zero.");
-        var color = (request.WelcomeFontColorHex ?? "").Trim();
-        if (color.Length > 0 && !System.Text.RegularExpressions.Regex.IsMatch(color, "^#?[0-9a-fA-F]{6}$"))
+        if (request.HomeAssistantEnabled is not (null or "" or "on" or "off"))
+            return BadRequest("HomeAssistantEnabled deve ser 'on', 'off' ou vazio (herdar).");
+
+        int? textY = null;
+        if (!string.IsNullOrWhiteSpace(request.WelcomeTextY))
+        {
+            if (!int.TryParse(request.WelcomeTextY, out var y) || y < 0)
+                return BadRequest("A posição Y do texto de boas-vindas deve ser um inteiro não-negativo.");
+            textY = y;
+        }
+        float? fontSize = null;
+        if (!string.IsNullOrWhiteSpace(request.WelcomeFontSize))
+        {
+            if (!float.TryParse(request.WelcomeFontSize, System.Globalization.CultureInfo.InvariantCulture, out var fs) || fs <= 0)
+                return BadRequest("O tamanho da fonte de boas-vindas deve ser maior que zero.");
+            fontSize = fs;
+        }
+        var color = request.WelcomeFontColorHex?.Trim();
+        if (!string.IsNullOrEmpty(color) && !System.Text.RegularExpressions.Regex.IsMatch(color, "^#?[0-9a-fA-F]{6}$"))
             return BadRequest("A cor do texto deve ser um hex de 6 dígitos (ex.: #FFFFFF).");
 
         var settings = await GetOrCreateAsync(ct);
@@ -111,21 +129,40 @@ public class SettingsController : ControllerBase
         settings.ControllerAuditRetentionDays = request.ControllerAuditRetentionDays;
         settings.QrFormat = request.QrFormat;
 
-        // Segredos: em branco = manter o atual (o GET não os devolve para o form reenviar).
+        // Segredos: novo valor = trocar; Clear* = apagar (volta a herdar); omitido = manter.
         if (!string.IsNullOrWhiteSpace(request.DeviceDefaultPassword))
             settings.DeviceDefaultPassword = request.DeviceDefaultPassword.Trim();
+        if (request.ClearDeviceDefaultPassword)
+            settings.DeviceDefaultPassword = string.Empty;
         if (!string.IsNullOrWhiteSpace(request.HomeAssistantToken))
             settings.HomeAssistantToken = request.HomeAssistantToken.Trim();
+        if (request.ClearHomeAssistantToken)
+            settings.HomeAssistantToken = string.Empty;
 
-        settings.HomeAssistantEnabled = request.HomeAssistantEnabled;
-        settings.HomeAssistantBaseUrl = (request.HomeAssistantBaseUrl ?? "").Trim();
-        settings.HomeAssistantWelcomeService = (request.HomeAssistantWelcomeService ?? "").Trim();
-        settings.HomeAssistantClearService = (request.HomeAssistantClearService ?? "").Trim();
-        settings.WelcomeBaseImagePath = (request.WelcomeBaseImagePath ?? "").Trim();
-        settings.WelcomePublicBaseUrl = (request.WelcomePublicBaseUrl ?? "").Trim().TrimEnd('/');
-        settings.WelcomeTextY = request.WelcomeTextY;
-        settings.WelcomeFontSize = request.WelcomeFontSize;
-        settings.WelcomeFontColorHex = color.Length > 0 && !color.StartsWith('#') ? $"#{color}" : color;
+        // Campos de runtime: NULL = manter (cliente antigo não regride nada); "" = herdar.
+        if (request.HomeAssistantEnabled is not null)
+            settings.HomeAssistantEnabled = request.HomeAssistantEnabled switch
+            {
+                "on" => true,
+                "off" => false,
+                _ => null,
+            };
+        if (request.HomeAssistantBaseUrl is not null)
+            settings.HomeAssistantBaseUrl = request.HomeAssistantBaseUrl.Trim();
+        if (request.HomeAssistantWelcomeService is not null)
+            settings.HomeAssistantWelcomeService = request.HomeAssistantWelcomeService.Trim();
+        if (request.HomeAssistantClearService is not null)
+            settings.HomeAssistantClearService = request.HomeAssistantClearService.Trim();
+        if (request.WelcomeBaseImagePath is not null)
+            settings.WelcomeBaseImagePath = request.WelcomeBaseImagePath.Trim();
+        if (request.WelcomePublicBaseUrl is not null)
+            settings.WelcomePublicBaseUrl = request.WelcomePublicBaseUrl.Trim().TrimEnd('/');
+        if (request.WelcomeTextY is not null)
+            settings.WelcomeTextY = textY;
+        if (request.WelcomeFontSize is not null)
+            settings.WelcomeFontSize = fontSize;
+        if (color is not null)
+            settings.WelcomeFontColorHex = color.Length > 0 && !color.StartsWith('#') ? $"#{color}" : color;
 
         settings.UpdatedAtUtc = DateTime.UtcNow;
         settings.UpdatedByUsername = User.Identity?.Name;

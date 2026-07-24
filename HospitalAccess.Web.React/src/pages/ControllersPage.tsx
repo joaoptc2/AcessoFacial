@@ -59,6 +59,7 @@ export function ControllersPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [editingOriginalIp, setEditingOriginalIp] = useState("");
   const [detectingSn, setDetectingSn] = useState(false);
   const [discovering, setDiscovering] = useState(false);
   const [discovered, setDiscovered] = useState<{ serialNumber: string; ipAddress: string }[] | null>(null);
@@ -108,6 +109,12 @@ export function ControllersPage() {
           isRoom: form.isRoom,
         });
       } else {
+        // Se a URL do painel era a derivada do IP antigo (http://IP) e o IP mudou, acompanha —
+        // senão o QR/painel continuaria apontando para o endereço velho.
+        const apiBaseUrl =
+          editingOriginalIp && ip !== editingOriginalIp && form.apiBaseUrl === `http://${editingOriginalIp}`
+            ? `http://${ip}`
+            : form.apiBaseUrl;
         // Senha em branco = mantém a atual (a API não a devolve).
         await api.updateController(editingId, {
           name: form.name,
@@ -119,7 +126,7 @@ export function ControllersPage() {
           connectionMode: form.connectionMode,
           timeoutMs: form.timeoutMs,
           restartCount: form.restartCount,
-          apiBaseUrl: form.apiBaseUrl || undefined,
+          apiBaseUrl: apiBaseUrl || undefined,
           apiPassword: form.apiPassword ? form.apiPassword : undefined,
           homeAssistantRoomId: form.homeAssistantRoomId || undefined,
           isRoom: form.isRoom,
@@ -162,6 +169,7 @@ export function ControllersPage() {
   async function startEdit(id: string) {
     const detail = await api.getController(id);
     setEditingId(id);
+    setEditingOriginalIp(detail.ipAddress);
     setShowAdvanced(false);
     setForm({
       name: detail.name,
@@ -183,6 +191,7 @@ export function ControllersPage() {
 
   function cancelEdit() {
     setEditingId(null);
+    setEditingOriginalIp("");
     setShowAdvanced(false);
     setForm(emptyForm);
   }
@@ -390,6 +399,7 @@ export function ControllersPage() {
                 <label>Senha própria (8 hex)</label>
                 <input
                   value={form.communicationPassword}
+                  disabled={form.useDefaultPasswords}
                   onChange={(e) => setForm({ ...form, communicationPassword: e.target.value })}
                   placeholder={editingId !== null ? "(manter atual)" : "(usar a padrão global)"}
                 />
@@ -442,6 +452,7 @@ export function ControllersPage() {
                   type="password"
                   placeholder={editingId !== null ? "(manter atual)" : "(usar a padrão global)"}
                   value={form.apiPassword}
+                  disabled={form.useDefaultPasswords}
                   onChange={(e) => setForm({ ...form, apiPassword: e.target.value })}
                 />
               </div>
@@ -451,7 +462,16 @@ export function ControllersPage() {
                     type="checkbox"
                     id="useDefaultPw"
                     checked={form.useDefaultPasswords}
-                    onChange={(e) => setForm({ ...form, useDefaultPasswords: e.target.checked })}
+                    onChange={(e) =>
+                      // Marcar limpa as senhas digitadas — evita "voltar à padrão" e trocar a
+                      // senha própria no MESMO salvar (uma anularia a outra em silêncio).
+                      setForm({
+                        ...form,
+                        useDefaultPasswords: e.target.checked,
+                        communicationPassword: e.target.checked ? "" : form.communicationPassword,
+                        apiPassword: e.target.checked ? "" : form.apiPassword,
+                      })
+                    }
                   />
                   <label htmlFor="useDefaultPw" style={{ margin: 0 }} title="Limpa as senhas próprias deste aparelho — ele volta a usar a senha padrão das Configurações.">
                     Voltar à senha padrão global
