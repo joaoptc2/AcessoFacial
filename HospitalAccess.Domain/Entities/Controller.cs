@@ -68,6 +68,12 @@ public class Controller
     public string HomeAssistantRoomId { get; set; } = string.Empty;
 
     /// <summary>
+    /// Este controlador representa um QUARTO/LEITO? Nem toda porta é um leito (vestiários,
+    /// farmácia…) — só as marcadas aparecem na Gestão de Leitos.
+    /// </summary>
+    public bool IsRoom { get; set; }
+
+    /// <summary>
     /// Como o servidor se comunica com este controlador. Default <see cref="ControllerConnectionMode.TcpClient"/>
     /// (servidor disca para o controlador). Se o hardware exigir modo "phone home", troque para
     /// <see cref="ControllerConnectionMode.TcpServerClient"/>. Ver README seção 2.

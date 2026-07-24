@@ -14,8 +14,6 @@ export function UsersPage() {
   const [creating, setCreating] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [syncing, setSyncing] = useState(false);
   const [search, setSearch] = useState("");
   const [groupFilter, setGroupFilter] = useState("");
   const [historyUserId, setHistoryUserId] = useState<string | null>(null);
@@ -77,25 +75,6 @@ export function UsersPage() {
     }
   }
 
-  async function handleSyncFailed() {
-    setError(null);
-    setNotice(null);
-    setSyncing(true);
-    try {
-      const { enqueued } = await api.syncFailedUsers();
-      setNotice(
-        enqueued > 0
-          ? `${enqueued} usuário(s) com erro/pendência reenfileirado(s). A sincronização roda em segundo plano, um de cada vez.`
-          : "Nenhum usuário com erro ou pendente de sincronização.",
-      );
-      await load();
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Falha ao reenfileirar sincronização.");
-    } finally {
-      setSyncing(false);
-    }
-  }
-
   async function toggleHistory(id: string) {
     if (historyUserId === id) {
       setHistoryUserId(null);
@@ -112,9 +91,6 @@ export function UsersPage() {
         <h2>Usuários permanentes (acesso por face)</h2>
         {canEdit && (
           <div className="btn-group">
-            <button className="btn btn-outline" onClick={handleSyncFailed} disabled={syncing}>
-              {syncing ? "Reenfileirando..." : "Sincronizar com erro"}
-            </button>
             {!creating && (
               <button className="btn btn-primary" onClick={startCreate}>
                 + Novo usuário
@@ -125,7 +101,6 @@ export function UsersPage() {
       </div>
 
       {!canEdit && <p className="text-muted">Seu papel (Recepção) tem acesso só de leitura a usuários permanentes.</p>}
-      {notice && <div className="alert alert-success">{notice}</div>}
 
       {creating && canEdit && (
         <div className="card" style={{ marginBottom: "1.25rem" }}>
@@ -209,7 +184,13 @@ export function UsersPage() {
                               Reativar
                             </button>
                           )}
-                          <button className="btn btn-danger-outline btn-sm" onClick={() => withReload(() => api.deleteUser(u.id), "Falha ao excluir.")}>
+                          <button
+                            className="btn btn-danger-outline btn-sm"
+                            onClick={() => {
+                              if (!window.confirm(`Excluir o usuário "${u.name}"? O cadastro será removido dos controladores e do sistema.`)) return;
+                              withReload(() => api.deleteUser(u.id), "Falha ao excluir.");
+                            }}
+                          >
                             Excluir
                           </button>
                         </>

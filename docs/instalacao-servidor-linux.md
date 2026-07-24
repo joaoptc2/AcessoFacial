@@ -303,6 +303,13 @@ sudo systemctl stop hospitalaccess-api
 sudo systemctl start hospitalaccess-api
 ```
 
+> **Se a migração for esquecida**: o serviço sobe mesmo assim, mas loga um ERRO destacado no
+> startup ("BANCO DESATUALIZADO: migration(s) pendente(s): …") e o painel mostra uma faixa
+> vermelha com o nome da migration e a instrução desta seção. As consultas às tabelas/colunas
+> das migrations pendentes falham com `42703 column ... does not exist` até a migração ser
+> aplicada e o serviço reiniciado. O script idempotente (opção a) é seguro de re-rodar — ele
+> aplica apenas o que falta.
+
 ## Checklist rápido de verificação pós-instalação
 - [ ] `systemctl status hospitalaccess-api` — `active (running)`.
 - [ ] `curl -s http://127.0.0.1:5080/api/auth/login -X POST -H "Content-Type: application/json" -d '{"username":"admin","password":"..."}'` devolve um token.

@@ -1,5 +1,7 @@
 using HospitalAccess.Api.Options;
 using HospitalAccess.Api.Services;
+using HospitalAccess.Infrastructure.Devices;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using SixLabors.ImageSharp;
@@ -35,6 +37,12 @@ public sealed class WelcomeImageServiceTests : IDisposable
         return path;
     }
 
+    /// <summary>Sem banco nos testes: o RuntimeSettingsProvider cai no fallback do appsettings.</summary>
+    private sealed class NoDbScopeFactory : IServiceScopeFactory
+    {
+        public IServiceScope CreateScope() => throw new InvalidOperationException("sem banco nos testes");
+    }
+
     private WelcomeImageService CreateService(Action<BedManagementOptions>? configure = null)
     {
         var options = new BedManagementOptions
@@ -45,7 +53,13 @@ public sealed class WelcomeImageServiceTests : IDisposable
             FontPath = FindFont(),
         };
         configure?.Invoke(options);
-        return new WelcomeImageService(Options.Create(options), NullLogger<WelcomeImageService>.Instance);
+        var runtime = new RuntimeSettingsProvider(
+            new NoDbScopeFactory(),
+            Options.Create(new HomeAssistantOptions()),
+            Options.Create(options),
+            Options.Create(new DeviceHttpOptions()),
+            NullLogger<RuntimeSettingsProvider>.Instance);
+        return new WelcomeImageService(runtime, NullLogger<WelcomeImageService>.Instance);
     }
 
     [Fact]

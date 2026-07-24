@@ -22,15 +22,18 @@ public sealed class SyncRetryBackgroundService : BackgroundService
     private readonly IUserSyncQueue _queue;
     private readonly SyncRetryOptions _options;
     private readonly SyncScanHeartbeat _heartbeat;
+    private readonly TimeZoneInfo _deviceTimeZone;
     private readonly ILogger<SyncRetryBackgroundService> _logger;
 
     public SyncRetryBackgroundService(IServiceScopeFactory scopeFactory, IUserSyncQueue queue,
-        IOptions<SyncRetryOptions> options, SyncScanHeartbeat heartbeat, ILogger<SyncRetryBackgroundService> logger)
+        IOptions<SyncRetryOptions> options, SyncScanHeartbeat heartbeat, TimeZoneInfo deviceTimeZone,
+        ILogger<SyncRetryBackgroundService> logger)
     {
         _scopeFactory = scopeFactory;
         _queue = queue;
         _options = options.Value;
         _heartbeat = heartbeat;
+        _deviceTimeZone = deviceTimeZone;
         _logger = logger;
     }
 
@@ -82,7 +85,7 @@ public sealed class SyncRetryBackgroundService : BackgroundService
                     _logger.LogInformation(
                         "Sincronização: {Pending} pendente(s), {Due} falha(s) elegível(is) agora, {Waiting} aguardando backoff{Next}, {Quarantined} em quarentena (erro permanente — resolver pela tela de usuários); {Enqueued} usuário(s) reenfileirado(s) nesta varredura.",
                         pendingCount, dueNow, waitingBackoff,
-                        nextRetryAt is { } next ? $" (próxima às {next:HH:mm:ss} UTC)" : "",
+                        nextRetryAt is { } next ? $" (próxima às {TimeZoneInfo.ConvertTimeFromUtc(next, _deviceTimeZone):HH:mm:ss})" : "",
                         quarantined, enqueued);
                 }
             }

@@ -41,9 +41,6 @@ export function Sidebar() {
       <NavLink to="/timegroups" className={navClass}>
         Grade Horária
       </NavLink>
-      <NavLink to="/holidays" className={navClass}>
-        Feriados
-      </NavLink>
 
       <div className="sidebar-section">Auditoria</div>
       <NavLink to="/accesslog" className={navClass}>
@@ -56,6 +53,9 @@ export function Sidebar() {
       {isAdmin && (
         <>
           <div className="sidebar-section">Administração</div>
+          <NavLink to="/staff" className={navClass}>
+            Usuários do Sistema
+          </NavLink>
           <NavLink to="/settings" className={navClass}>
             Configurações
           </NavLink>

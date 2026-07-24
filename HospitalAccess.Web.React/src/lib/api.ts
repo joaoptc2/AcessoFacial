@@ -18,6 +18,7 @@ export interface ControllerDto {
   supportsWaitRepeatMessage: boolean;
   timeoutMs: number;
   restartCount: number;
+  isRoom: boolean;
   userCount: number;
 }
 
@@ -39,19 +40,24 @@ export interface ControllerDetailDto {
   hasApiPassword: boolean;
   // Slug do quarto no Home Assistant (ex.: "quarto_101"). Vazio = sem integração HA.
   homeAssistantRoomId: string;
+  // Este controlador é um quarto/leito (aparece na Gestão de Leitos)?
+  isRoom: boolean;
 }
 
+// Cadastro simplificado: só nome + IP + SN obrigatórios; o resto tem default no servidor
+// (porta 8000, painel http://IP, senhas = padrão global das Configurações).
 export interface CreateControllerRequest {
   name: string;
   ipAddress: string;
-  port: number;
   serialNumber: string;
-  communicationPassword: string;
-  supportsWaitRepeatMessage: boolean;
-  connectionMode: ControllerConnectionMode;
+  port?: number;
+  communicationPassword?: string;
+  supportsWaitRepeatMessage?: boolean;
+  connectionMode?: ControllerConnectionMode;
   apiBaseUrl?: string;
   apiPassword?: string;
   homeAssistantRoomId?: string;
+  isRoom?: boolean;
 }
 
 export interface UpdateControllerRequest {
@@ -69,6 +75,9 @@ export interface UpdateControllerRequest {
   // Em branco/omitido mantém a senha atual do painel web.
   apiPassword?: string;
   homeAssistantRoomId?: string;
+  isRoom?: boolean;
+  // true = limpa as senhas próprias do aparelho (volta a usar a senha padrão global).
+  useDefaultPasswords?: boolean;
 }
 
 export interface SyncStatusDto {
@@ -385,6 +394,8 @@ export interface DashboardDto {
   total: number;
   online: number;
   offline: number;
+  // Não-vazio = o binário subiu na frente do banco (migration não aplicada — docs §13).
+  pendingMigrations: string[];
   controllers: ControllerStatusItem[];
 }
 
@@ -411,11 +422,62 @@ export interface SystemSettingsDto {
   alarmLogRetentionDays: number;
   controllerAuditRetentionDays: number;
   qrFormat: QrFormat;
+  // Segredos nunca são devolvidos — só o indicador de presença.
+  hasDeviceDefaultPassword: boolean;
+  homeAssistantEnabled: boolean | null;
+  homeAssistantBaseUrl: string;
+  hasHomeAssistantToken: boolean;
+  homeAssistantWelcomeService: string;
+  homeAssistantClearService: string;
+  welcomeBaseImagePath: string;
+  welcomePublicBaseUrl: string;
+  welcomeTextY: number | null;
+  welcomeFontSize: number | null;
+  welcomeFontColorHex: string;
+  homeAssistantEffective: {
+    enabled: boolean;
+    baseUrl: string;
+    hasToken: boolean;
+    welcomeService: string;
+    clearService: string;
+  };
   updatedAtUtc: string;
   updatedByUsername: string | null;
 }
 
-export type UpdateSettingsRequest = Omit<SystemSettingsDto, "updatedAtUtc" | "updatedByUsername">;
+// Semântica dos campos de runtime: omitido = MANTER o valor atual; string vazia = voltar a
+// HERDAR o appsettings. Segredos: valor = trocar; clear* = apagar; omitido = manter.
+export interface UpdateSettingsRequest {
+  eventPhotoRetentionDays: number;
+  accessLogRetentionDays: number;
+  alarmLogRetentionDays: number;
+  controllerAuditRetentionDays: number;
+  qrFormat: QrFormat;
+  deviceDefaultPassword?: string;
+  clearDeviceDefaultPassword?: boolean;
+  homeAssistantEnabled?: "on" | "off" | "";
+  homeAssistantBaseUrl?: string;
+  homeAssistantToken?: string;
+  clearHomeAssistantToken?: boolean;
+  homeAssistantWelcomeService?: string;
+  homeAssistantClearService?: string;
+  welcomeBaseImagePath?: string;
+  welcomePublicBaseUrl?: string;
+  welcomeTextY?: string;
+  welcomeFontSize?: string;
+  welcomeFontColorHex?: string;
+}
+
+// ---- Usuários do sistema (logins) ----
+
+export type StaffRole = "Admin" | "Operator" | "Reception";
+
+export interface StaffUserDto {
+  id: string;
+  username: string;
+  role: StaffRole;
+  active: boolean;
+}
 
 // ---- Gestão de leitos ----
 
@@ -729,12 +791,6 @@ export const api = {
   createVisitor: (body: CreateVisitorRequest) =>
     request<{ id: string; userCode: number }>("/visitors", { method: "POST", body: JSON.stringify(body) }),
   generateVisitorQr: (id: string) => requestBlob(`/visitors/${id}/qrcode`, { method: "POST" }),
-  renderQrFromText: (text: string) =>
-    requestBlob(`/visitors/qrcode/render`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
-    }),
   revokeVisitor: (id: string) => request<void>(`/visitors/${id}`, { method: "DELETE" }),
   deleteVisitor: (id: string) => request<void>(`/visitors/${id}/permanent`, { method: "DELETE" }),
   changeVisitorRoom: (id: string, controllerId: string) =>
@@ -788,6 +844,16 @@ export const api = {
   // ---- Configurações do sistema (Admin) ----
   getSettings: () => request<SystemSettingsDto>("/settings"),
   updateSettings: (body: UpdateSettingsRequest) => request<void>("/settings", { method: "PUT", body: JSON.stringify(body) }),
+  testHomeAssistant: () => request<{ ok: boolean; message: string }>("/settings/homeassistant/test", { method: "POST" }),
+
+  // ---- Usuários do sistema (Admin) ----
+  getStaffUsers: () => request<StaffUserDto[]>("/staffusers"),
+  createStaffUser: (body: { username: string; password: string; role: StaffRole }) =>
+    request<StaffUserDto>("/staffusers", { method: "POST", body: JSON.stringify(body) }),
+  updateStaffUser: (id: string, body: { role: StaffRole; active: boolean }) =>
+    request<void>(`/staffusers/${id}`, { method: "PUT", body: JSON.stringify(body) }),
+  resetStaffPassword: (id: string, newPassword: string) =>
+    request<void>(`/staffusers/${id}/reset-password`, { method: "POST", body: JSON.stringify({ newPassword }) }),
 
   // ---- Gestão de leitos ----
   getBeds: () => request<BedDto[]>("/beds"),

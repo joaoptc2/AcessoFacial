@@ -258,6 +258,19 @@ filtro por nível/texto, botão de ativar/desativar e botão de limpar. API: `GE
 zero; nada vai para disco (o log completo do serviço continua no journal/console) e o conteúdo se
 perde no restart — é diagnóstico, não auditoria.
 
+## Configurações pela tela e usuários do sistema
+
+A tela **Configurações** (Admin) administra, sem linha de comando: retenção de dados (LGPD),
+a **senha padrão dos aparelhos** (uma só, usada como senha de comunicação E do painel web de
+todos os controladores — criptografada em repouso; aparelho com senha própria no cadastro é
+exceção), a **integração Home Assistant** (ligar/desligar, URL, token, serviços, com botão
+"Testar conexão") e a **tela de boas-vindas** dos leitos (imagem base, URL pública, posição/
+fonte/cor). O que for salvo na tela (banco) tem **precedência** sobre o `appsettings`; campo
+vazio herda o arquivo — e as mudanças valem imediatamente, sem reiniciar o serviço
+(`RuntimeSettingsProvider`). A tela **Usuários do Sistema** (Admin) gerencia os logins da
+aplicação e os cargos (Admin/Operador/Recepção), com guardas: o último Admin ativo não pode
+ser rebaixado/desativado e ninguém se tranca para fora sozinho.
+
 ## Tela "Sincronizações" (`/sync`)
 
 Visão global de TODAS as pendências de sincronização usuário×porta (`GET /api/sync/pending`,
@@ -295,9 +308,11 @@ porta/quarto**.
 ## Gestão de Leitos + Home Assistant
 
 Módulo de internações na tela **Gestão de Leitos** (`/beds`, perfis Admin/Operator/Reception).
-O modelo é **1 leito = 1 controlador/porta**: todo controlador cadastrado é um leito. A entidade
-`BedStay` registra cada internação (índice único filtrado garante no máximo **uma internação
-ativa por leito**); as internações encerradas formam o **histórico de mudanças de leito**.
+O modelo é **1 leito = 1 controlador/porta**, mas nem toda porta é um leito: só os
+controladores marcados com **"É quarto/leito"** no cadastro (campo `IsRoom`) aparecem na
+gestão — vestiários, farmácia etc. ficam de fora. A entidade `BedStay` registra cada
+internação (índice único filtrado garante no máximo **uma internação ativa por leito**); as
+internações encerradas formam o **histórico de mudanças de leito**.
 
 Fluxos (`BedsController`, rota `api/beds`):
 
@@ -376,6 +391,10 @@ TCP, seções 1-9) e o **cliente HTTP** do painel web (`Infrastructure/Devices/`
 > Para um passo a passo completo de instalação em servidor Linux de produção
 > (systemd, Nginx com WebSocket, usuário dedicado, backups), veja
 > [`docs/instalacao-servidor-linux.md`](docs/instalacao-servidor-linux.md).
+>
+> As migrations NÃO são aplicadas automaticamente no boot (§13 do guia). Se o binário subir na
+> frente do banco, o startup loga "BANCO DESATUALIZADO" com o nome das migrations pendentes e o
+> painel mostra uma faixa vermelha com a instrução — aplique o script idempotente e reinicie.
 > A seção abaixo é o setup rápido para desenvolvimento local.
 
 ### Pré-requisitos

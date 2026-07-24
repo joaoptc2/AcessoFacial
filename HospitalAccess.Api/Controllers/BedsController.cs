@@ -29,19 +29,19 @@ public class BedsController : ControllerBase
     private readonly IUserSyncQueue _syncQueue;
     private readonly WelcomeImageService _welcome;
     private readonly HomeAssistantClient _ha;
-    private readonly HomeAssistantOptions _haOptions;
+    private readonly RuntimeSettingsProvider _settings;
     private readonly BedManagementOptions _options;
     private readonly ILogger<BedsController> _logger;
 
     public BedsController(AccessDbContext db, IUserSyncQueue syncQueue, WelcomeImageService welcome,
-        HomeAssistantClient ha, IOptions<HomeAssistantOptions> haOptions,
+        HomeAssistantClient ha, RuntimeSettingsProvider settings,
         IOptions<BedManagementOptions> options, ILogger<BedsController> logger)
     {
         _db = db;
         _syncQueue = syncQueue;
         _welcome = welcome;
         _ha = ha;
-        _haOptions = haOptions.Value;
+        _settings = settings;
         _options = options.Value;
         _logger = logger;
     }
@@ -64,7 +64,11 @@ public class BedsController : ControllerBase
             .Select(st => new { st.UserId, st.ControllerId, st.State })
             .ToListAsync(ct);
 
-        var controllers = await _db.Controllers.AsNoTracking().OrderBy(c => c.Name).ToListAsync(ct);
+        // Só controladores marcados como quarto/leito — nem toda porta é um leito (vestiários etc.).
+        var controllers = await _db.Controllers.AsNoTracking()
+            .Where(c => c.IsRoom)
+            .OrderBy(c => c.Name)
+            .ToListAsync(ct);
         var beds = controllers.Select(c =>
         {
             stayByController.TryGetValue(c.Id, out var stay);
@@ -131,8 +135,10 @@ public class BedsController : ControllerBase
         var patientName = (request.PatientName ?? string.Empty).Trim();
         if (patientName.Length == 0) return BadRequest("Informe o nome do paciente.");
 
-        var controller = await _db.Controllers.FirstOrDefaultAsync(c => c.Id == controllerId, ct);
+        var controller = await _db.Controllers.AsNoTracking().FirstOrDefaultAsync(c => c.Id == controllerId, ct);
         if (controller is null) return NotFound("Leito (controlador) não existe.");
+        if (!controller.IsRoom)
+            return BadRequest("Este controlador não está marcado como quarto/leito (edite-o na tela de controladores).");
 
         if (await _db.BedStays.AnyAsync(s => s.ControllerId == controllerId && s.EndedAtUtc == null, ct))
             return Conflict("Este leito já está ocupado. Transfira ou dê alta ao paciente atual antes.");
@@ -196,69 +202,114 @@ public class BedsController : ControllerBase
         if (request.ToControllerId == controllerId)
             return BadRequest("O leito de destino é o mesmo de origem.");
 
-        var stay = await _db.BedStays
-            .FirstOrDefaultAsync(s => s.ControllerId == controllerId && s.EndedAtUtc == null, ct);
-        if (stay is null) return NotFound("Não há internação ativa neste leito.");
-
-        var target = await _db.Controllers.FirstOrDefaultAsync(c => c.Id == request.ToControllerId, ct);
+        // AsNoTracking: os controladores só fornecem nomes/HA aqui. Uma entidade Controller
+        // rastreada carrega o token xmin — e a linha é reescrita o tempo todo (health-check,
+        // token do painel), então ela não pode participar da unidade de trabalho.
+        var target = await _db.Controllers.AsNoTracking().FirstOrDefaultAsync(c => c.Id == request.ToControllerId, ct);
         if (target is null) return BadRequest("Leito de destino não existe.");
-        if (await _db.BedStays.AnyAsync(s => s.ControllerId == target.Id && s.EndedAtUtc == null, ct))
-            return Conflict("O leito de destino já está ocupado.");
+        if (!target.IsRoom)
+            return BadRequest("O controlador de destino não está marcado como quarto/leito.");
+        var source = await _db.Controllers.AsNoTracking().FirstOrDefaultAsync(c => c.Id == controllerId, ct);
 
-        var source = await _db.Controllers.FirstOrDefaultAsync(c => c.Id == controllerId, ct);
-
-        stay.EndedAtUtc = DateTime.UtcNow;
-        stay.EndReason = BedStayEndReason.Transfer;
-        stay.EndedByUsername = CurrentUsername();
-
-        var newStay = new BedStay
-        {
-            ControllerId = target.Id,
-            PatientName = stay.PatientName,
-            VisitorUserId = stay.VisitorUserId,
-            CreatedByUsername = CurrentUsername(),
-        };
-        _db.BedStays.Add(newStay);
-
-        // Move o acesso: troca a permissão para o destino e deixa as linhas de sincronização
-        // antigas 'Synced' — a reconciliação revoga no aparelho de origem (fluxo validado da
-        // troca de quarto de visitante).
+        var patientName = string.Empty;
+        Guid newStayId = default;
+        Guid? visitorUserId = null;
         var oldControllerIds = new List<Guid>();
         uint visitorCode = 0;
-        if (stay.VisitorUserId is { } visitorId)
-        {
-            var visitor = await _db.Users.Include(u => u.Permissions)
-                .FirstOrDefaultAsync(u => u.Id == visitorId, ct);
-            if (visitor is not null && visitor.RevokedAtUtc is null)
-            {
-                visitorCode = visitor.UserCode;
-                oldControllerIds = visitor.Permissions
-                    .Where(p => p.ControllerId != target.Id)
-                    .Select(p => p.ControllerId)
-                    .ToList();
-                var toRemove = visitor.Permissions.Where(p => p.ControllerId != target.Id).ToList();
-                _db.Permissions.RemoveRange(toRemove);
-                if (visitor.Permissions.All(p => p.ControllerId != target.Id))
-                    visitor.Permissions.Add(new AccessPermission { ControllerId = target.Id, TimeGroup = visitor.TimeGroup });
 
-                visitor.Notes = $"Paciente — leito {target.Name} (gestão de leitos)";
-                UserAuditLogger.Record(_db, visitor, "Transferido de leito", CurrentUsername(),
-                    $"{source?.Name ?? "?"} → {target.Name}");
+        // A unidade de trabalho (encerrar internação, abrir a nova, mover permissões, nota do
+        // visitante) roda numa TRANSAÇÃO explícita: ou commita tudo, ou nada — um cancelamento
+        // no meio não pode deixar a transferência commitada sem a nota/sem o enqueue. Nenhum
+        // update tokenizado (o Notes sai via ExecuteUpdate, dentro da mesma transação). O retry
+        // com recarga cobre corrida residual e LOGA as entidades em conflito (Logs (Dev)).
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                await using var tx = await _db.Database.BeginTransactionAsync(ct);
+
+                var stay = await _db.BedStays
+                    .FirstOrDefaultAsync(s => s.ControllerId == controllerId && s.EndedAtUtc == null, ct);
+                if (stay is null) return NotFound("Não há internação ativa neste leito.");
+                if (await _db.BedStays.AnyAsync(s => s.ControllerId == target.Id && s.EndedAtUtc == null, ct))
+                    return Conflict("O leito de destino já está ocupado.");
+
+                stay.EndedAtUtc = DateTime.UtcNow;
+                stay.EndReason = BedStayEndReason.Transfer;
+                stay.EndedByUsername = CurrentUsername();
+
+                var newStay = new BedStay
+                {
+                    ControllerId = target.Id,
+                    PatientName = stay.PatientName,
+                    VisitorUserId = stay.VisitorUserId,
+                    CreatedByUsername = CurrentUsername(),
+                };
+                _db.BedStays.Add(newStay);
+
+                // Move o acesso: troca a permissão para o destino e deixa as linhas de
+                // sincronização antigas 'Synced' — a reconciliação revoga no aparelho de origem
+                // (fluxo validado da troca de quarto de visitante).
+                oldControllerIds = new List<Guid>();
+                visitorCode = 0;
+                if (stay.VisitorUserId is { } visitorId)
+                {
+                    var visitor = await _db.Users.Include(u => u.Permissions)
+                        .FirstOrDefaultAsync(u => u.Id == visitorId, ct);
+                    if (visitor is not null && visitor.RevokedAtUtc is null)
+                    {
+                        visitorCode = visitor.UserCode;
+                        oldControllerIds = visitor.Permissions
+                            .Where(p => p.ControllerId != target.Id)
+                            .Select(p => p.ControllerId)
+                            .ToList();
+                        var toRemove = visitor.Permissions.Where(p => p.ControllerId != target.Id).ToList();
+                        _db.Permissions.RemoveRange(toRemove);
+                        if (visitor.Permissions.All(p => p.ControllerId != target.Id))
+                            visitor.Permissions.Add(new AccessPermission { ControllerId = target.Id, TimeGroup = visitor.TimeGroup });
+
+                        UserAuditLogger.Record(_db, visitor, "Transferido de leito", CurrentUsername(),
+                            $"{source?.Name ?? "?"} → {target.Name}");
+                    }
+                }
+
+                await _db.SaveChangesAsync(ct);
+
+                // Nota do visitante via ExecuteUpdate (sem token xmin), DENTRO da transação.
+                if (stay.VisitorUserId is { } noteUserId && visitorCode != 0)
+                {
+                    var note = $"Paciente — leito {target.Name} (gestão de leitos)";
+                    await _db.Users.Where(u => u.Id == noteUserId)
+                        .ExecuteUpdateAsync(u => u.SetProperty(x => x.Notes, note), ct);
+                }
+
+                await tx.CommitAsync(ct);
+                patientName = stay.PatientName;
+                newStayId = newStay.Id;
+                visitorUserId = stay.VisitorUserId;
+                break;
+            }
+            catch (DbUpdateConcurrencyException ex) when (attempt <= 2)
+            {
+                _logger.LogError(ex,
+                    "Conflito de concorrência ao transferir leito (tentativa {Attempt}); entidades em conflito: {Entities}. Recarregando e repetindo.",
+                    attempt, string.Join(", ", ex.Entries.Select(e => e.Metadata.ClrType.Name)));
+                _db.ChangeTracker.Clear();
             }
         }
 
-        await _db.SaveChangesAsync(ct);
-
-        if (stay.VisitorUserId is { } vid2 && visitorCode != 0)
+        // Pós-commit: nada aqui pode ser cancelado pelo cliente (CancellationToken.None) — o
+        // enqueue e as chamadas ao HA precisam acontecer mesmo se a conexão HTTP cair.
+        if (visitorUserId is { } vid2 && visitorCode != 0)
             _syncQueue.EnqueueChangeRoom(vid2, visitorCode, oldControllerIds);
 
         // HA: limpa a TV do leito antigo (se configurado) e dá boas-vindas no novo.
-        if (source is not null) await TriggerClearAsync(source, ct);
-        var (welcomeUrl, haCalled) = await TriggerWelcomeAsync(target, stay.PatientName, ct);
+        if (source is not null) await TriggerClearAsync(source, CancellationToken.None);
+        var (welcomeUrl, haCalled) = await TriggerWelcomeAsync(target, patientName, CancellationToken.None);
 
         return Ok(new
         {
-            stayId = newStay.Id,
+            stayId = newStayId,
             fromController = source?.Name,
             toController = target.Name,
             welcomeImageUrl = welcomeUrl,
@@ -270,33 +321,64 @@ public class BedsController : ControllerBase
     [HttpPost("{controllerId:guid}/discharge")]
     public async Task<IActionResult> Discharge(Guid controllerId, CancellationToken ct)
     {
-        var stay = await _db.BedStays
-            .FirstOrDefaultAsync(s => s.ControllerId == controllerId && s.EndedAtUtc == null, ct);
-        if (stay is null) return NotFound("Não há internação ativa neste leito.");
+        // AsNoTracking pelos mesmos motivos do Transfer: nomes/HA apenas, sem token na unidade.
+        var controller = await _db.Controllers.AsNoTracking().FirstOrDefaultAsync(c => c.Id == controllerId, ct);
 
-        var controller = await _db.Controllers.FirstOrDefaultAsync(c => c.Id == controllerId, ct);
-
-        stay.EndedAtUtc = DateTime.UtcNow;
-        stay.EndReason = BedStayEndReason.Discharge;
-        stay.EndedByUsername = CurrentUsername();
-
-        if (stay.VisitorUserId is { } visitorId)
+        Guid? visitorUserId = null;
+        for (var attempt = 1; ; attempt++)
         {
-            var visitor = await _db.Users.FirstOrDefaultAsync(u => u.Id == visitorId, ct);
-            if (visitor is not null && visitor.RevokedAtUtc is null)
+            try
             {
-                visitor.RevokedAtUtc = DateTime.UtcNow;
-                visitor.RevokedByUsername = CurrentUsername();
-                UserAuditLogger.Record(_db, visitor, "Alta (leito)", CurrentUsername(),
-                    $"Leito: {controller?.Name ?? "?"}");
+                // Transação: encerrar a internação E revogar o acesso são um ato só — a alta
+                // nunca pode commitar deixando o paciente com acesso ativo e nada a reconciliar.
+                await using var tx = await _db.Database.BeginTransactionAsync(ct);
+
+                var stay = await _db.BedStays
+                    .FirstOrDefaultAsync(s => s.ControllerId == controllerId && s.EndedAtUtc == null, ct);
+                if (stay is null) return NotFound("Não há internação ativa neste leito.");
+
+                stay.EndedAtUtc = DateTime.UtcNow;
+                stay.EndReason = BedStayEndReason.Discharge;
+                stay.EndedByUsername = CurrentUsername();
+
+                if (stay.VisitorUserId is { } visitorId)
+                {
+                    var visitor = await _db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == visitorId, ct);
+                    if (visitor is not null && visitor.RevokedAtUtc is null)
+                        UserAuditLogger.Record(_db, visitor, "Alta (leito)", CurrentUsername(),
+                            $"Leito: {controller?.Name ?? "?"}");
+                }
+
+                await _db.SaveChangesAsync(ct);
+
+                // Revogação via ExecuteUpdate (sem token xmin), DENTRO da transação. Idempotente:
+                // só marca quem ainda está ativo. O worker de revogação lê do banco após o commit.
+                if (stay.VisitorUserId is { } revokeUserId)
+                {
+                    var username = CurrentUsername();
+                    var now = DateTime.UtcNow;
+                    await _db.Users.Where(u => u.Id == revokeUserId && u.RevokedAtUtc == null)
+                        .ExecuteUpdateAsync(u => u
+                            .SetProperty(x => x.RevokedAtUtc, now)
+                            .SetProperty(x => x.RevokedByUsername, username), ct);
+                }
+
+                await tx.CommitAsync(ct);
+                visitorUserId = stay.VisitorUserId;
+                break;
+            }
+            catch (DbUpdateConcurrencyException ex) when (attempt <= 2)
+            {
+                _logger.LogError(ex,
+                    "Conflito de concorrência na alta do leito (tentativa {Attempt}); entidades em conflito: {Entities}. Recarregando e repetindo.",
+                    attempt, string.Join(", ", ex.Entries.Select(e => e.Metadata.ClrType.Name)));
+                _db.ChangeTracker.Clear();
             }
         }
 
-        await _db.SaveChangesAsync(ct);
-
-        // Depois do commit (a revogação lê RevokedAtUtc do banco), pela fila serial.
-        if (stay.VisitorUserId is { } vid) _syncQueue.EnqueueRevoke(vid);
-        if (controller is not null) await TriggerClearAsync(controller, ct);
+        // Pós-commit: sem cancelamento do cliente (a fila e o HA precisam rodar de todo jeito).
+        if (visitorUserId is { } vid) _syncQueue.EnqueueRevoke(vid);
+        if (controller is not null) await TriggerClearAsync(controller, CancellationToken.None);
 
         return NoContent();
     }
@@ -346,7 +428,7 @@ public class BedsController : ControllerBase
         if (url is not null && !string.IsNullOrWhiteSpace(controller.HomeAssistantRoomId))
         {
             haCalled = await _ha.CallServiceAsync(
-                _haOptions.WelcomeService,
+                _settings.HomeAssistant.WelcomeService,
                 HomeAssistantPayload.Welcome(controller.HomeAssistantRoomId, patientName, url), ct);
         }
         return (url, haCalled);
@@ -354,10 +436,11 @@ public class BedsController : ControllerBase
 
     private async Task TriggerClearAsync(Domain.Entities.Controller controller, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(_haOptions.ClearService) ||
+        var clearService = _settings.HomeAssistant.ClearService;
+        if (string.IsNullOrWhiteSpace(clearService) ||
             string.IsNullOrWhiteSpace(controller.HomeAssistantRoomId))
             return;
-        await _ha.CallServiceAsync(_haOptions.ClearService,
+        await _ha.CallServiceAsync(clearService,
             HomeAssistantPayload.Clear(controller.HomeAssistantRoomId), ct);
     }
 

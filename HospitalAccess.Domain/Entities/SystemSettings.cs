@@ -41,6 +41,34 @@ public class SystemSettings
     /// </summary>
     public bool DevelopmentModeEnabled { get; set; }
 
+    // ------------------------------------------------------------------------------------------
+    // Configurações administráveis pela TELA (sem linha de comando). Semântica de herança:
+    // valor vazio/null = vale o que estiver no appsettings (migração suave — ambientes já
+    // configurados por arquivo continuam funcionando). Ver RuntimeSettingsProvider.
+    // ------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Senha padrão ÚNICA dos aparelhos (senha de comunicação do protocolo E senha do painel
+    /// web — no parque do hospital elas são sempre iguais). Criptografada em repouso.
+    /// Controlador com senha própria preenchida tem precedência (exceção ao padrão).
+    /// </summary>
+    public string DeviceDefaultPassword { get; set; } = string.Empty;
+
+    /// <summary>Home Assistant: null = herda do appsettings; true/false = decisão explícita da tela.</summary>
+    public bool? HomeAssistantEnabled { get; set; }
+    public string HomeAssistantBaseUrl { get; set; } = string.Empty;
+    /// <summary>Long-lived access token do HA. Criptografado em repouso.</summary>
+    public string HomeAssistantToken { get; set; } = string.Empty;
+    public string HomeAssistantWelcomeService { get; set; } = string.Empty;
+    public string HomeAssistantClearService { get; set; } = string.Empty;
+
+    /// <summary>Tela de boas-vindas (gestão de leitos): imagem base e composição do texto.</summary>
+    public string WelcomeBaseImagePath { get; set; } = string.Empty;
+    public string WelcomePublicBaseUrl { get; set; } = string.Empty;
+    public int? WelcomeTextY { get; set; }
+    public float? WelcomeFontSize { get; set; }
+    public string WelcomeFontColorHex { get; set; } = string.Empty;
+
     /// <summary>Última atualização das configurações.</summary>
     public DateTime UpdatedAtUtc { get; set; } = DateTime.UtcNow;
 

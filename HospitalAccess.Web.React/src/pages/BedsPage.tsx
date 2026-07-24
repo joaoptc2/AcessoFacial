@@ -26,7 +26,8 @@ function syncBadge(state: string | null) {
  * (tela JPG gerada pelo servidor com o nome do paciente).
  */
 export function BedsPage() {
-  const [beds, setBeds] = useState<BedDto[]>([]);
+  // null = ainda carregando (o cartão de "nenhum quarto" não pode piscar durante o load).
+  const [beds, setBeds] = useState<BedDto[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -115,7 +116,7 @@ export function BedsPage() {
       setError("Escolha o leito de destino.");
       return;
     }
-    const target = beds.find((b) => b.controllerId === transferTarget);
+    const target = (beds ?? []).find((b) => b.controllerId === transferTarget);
     run(async () => {
       const result = await api.transferPatient(bed.controllerId, transferTarget);
       setTransferBedId(null);
@@ -159,7 +160,7 @@ export function BedsPage() {
     }
   }
 
-  const freeBeds = beds.filter((b) => !b.occupied);
+  const freeBeds = (beds ?? []).filter((b) => !b.occupied);
 
   return (
     <div>
@@ -172,6 +173,14 @@ export function BedsPage() {
       {error && <div className="alert alert-danger">{error}</div>}
       {notice && <div className="alert alert-success">{notice}</div>}
 
+      {beds !== null && beds.length === 0 && (
+        <div className="card text-muted" style={{ marginBottom: "1rem" }}>
+          Nenhum controlador está marcado como quarto/leito. Na tela{" "}
+          <strong>Controladores / Portas</strong>, edite os controladores dos quartos e marque{" "}
+          <strong>"É quarto/leito"</strong> — eles passam a aparecer aqui.
+        </div>
+      )}
+
       <table>
         <thead>
           <tr>
@@ -183,7 +192,7 @@ export function BedsPage() {
           </tr>
         </thead>
         <tbody>
-          {beds.map((bed) => (
+          {(beds ?? []).map((bed) => (
             <tr key={bed.controllerId}>
               <td>
                 {bed.name}
@@ -321,7 +330,7 @@ export function BedsPage() {
             }}
           >
             <option value="">(todos)</option>
-            {beds.map((b) => (
+            {(beds ?? []).map((b) => (
               <option key={b.controllerId} value={b.controllerId}>
                 {b.name}
               </option>

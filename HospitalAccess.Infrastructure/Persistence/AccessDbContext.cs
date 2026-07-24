@@ -83,6 +83,11 @@ public class AccessDbContext : DbContext
         // Senha do painel web (API HTTP) também criptografada em repouso.
         b.Entity<Controller>().Property(c => c.ApiPassword).HasConversion(encrypted);
 
+        // Segredos administráveis pela tela de Configurações — mesmo protetor (valores vazios
+        // passam sem cifrar, então o seed HasData abaixo não gera ciphertext em design-time).
+        b.Entity<SystemSettings>().Property(s => s.DeviceDefaultPassword).HasConversion(encrypted);
+        b.Entity<SystemSettings>().Property(s => s.HomeAssistantToken).HasConversion(encrypted);
+
         b.Entity<GroupControllerDefault>().HasIndex(d => new { d.GroupId, d.ControllerId }).IsUnique();
         b.Entity<GroupControllerDefault>()
             .HasOne(d => d.Group)

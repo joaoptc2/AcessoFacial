@@ -14,11 +14,14 @@ public sealed class DeviceHttpClientFactory : IDisposable
 {
     private readonly SocketsHttpHandler _handler;
     private readonly DeviceHttpOptions _options;
+    private readonly IDeviceHttpSecretDefaults? _runtimeDefaults;
     private readonly ILogger<DeviceHttpClient> _logger;
 
-    public DeviceHttpClientFactory(IOptions<DeviceHttpOptions> options, ILogger<DeviceHttpClient> logger)
+    public DeviceHttpClientFactory(IOptions<DeviceHttpOptions> options, ILogger<DeviceHttpClient> logger,
+        IDeviceHttpSecretDefaults? runtimeDefaults = null)
     {
         _options = options.Value;
+        _runtimeDefaults = runtimeDefaults;
         _logger = logger;
         _handler = new SocketsHttpHandler
         {
@@ -30,9 +33,14 @@ public sealed class DeviceHttpClientFactory : IDisposable
         };
     }
 
-    /// <summary>Senha efetiva do painel web: a do controlador se preenchida, senão o padrão global.</summary>
+    /// <summary>
+    /// Senha efetiva do painel web: a do controlador se preenchida, senão a padrão configurada
+    /// pela tela (RuntimeSettingsProvider), senão a do appsettings (Device:DefaultApiPassword).
+    /// </summary>
     public string? ResolvePassword(Controller controller) =>
-        string.IsNullOrEmpty(controller.ApiPassword) ? _options.DefaultApiPassword : controller.ApiPassword;
+        !string.IsNullOrEmpty(controller.ApiPassword) ? controller.ApiPassword
+        : !string.IsNullOrEmpty(_runtimeDefaults?.DefaultApiPassword) ? _runtimeDefaults.DefaultApiPassword
+        : _options.DefaultApiPassword;
 
     /// <summary>True se o controlador está apto a falar HTTP (tem URL base e uma senha resolvida).</summary>
     public bool CanUseHttp(Controller controller) =>

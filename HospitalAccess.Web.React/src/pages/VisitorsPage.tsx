@@ -29,12 +29,6 @@ export function VisitorsPage() {
   const [qrVisitorName, setQrVisitorName] = useState("");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
-  // QR copiado da controladora (o texto do campo "QRCode" que o aparelho valida).
-  const [deviceQrText, setDeviceQrText] = useState("");
-  const [deviceQrImage, setDeviceQrImage] = useState<string | null>(null);
-  const [deviceQrBlob, setDeviceQrBlob] = useState<Blob | null>(null);
-  const [deviceQrError, setDeviceQrError] = useState<string | null>(null);
-  const [deviceQrBusy, setDeviceQrBusy] = useState(false);
 
   const load = async () => setVisitors(await api.getVisitors());
 
@@ -71,25 +65,6 @@ export function VisitorsPage() {
     if (!qrBlob) return;
     const safeName = qrVisitorName.replace(/[^\w.-]+/g, "_") || "visitante";
     downloadBlob(qrBlob, `qr-${safeName}.png`);
-  }
-
-  async function renderDeviceQr() {
-    setDeviceQrError(null);
-    const text = deviceQrText.trim();
-    if (!text) {
-      setDeviceQrError("Cole o texto do QRCode que aparece na controladora.");
-      return;
-    }
-    setDeviceQrBusy(true);
-    try {
-      const blob = await api.renderQrFromText(text);
-      setDeviceQrBlob(blob);
-      setDeviceQrImage(URL.createObjectURL(blob));
-    } catch (err) {
-      setDeviceQrError(err instanceof ApiError ? err.message : "Falha ao gerar o QR.");
-    } finally {
-      setDeviceQrBusy(false);
-    }
   }
 
   async function handleCreate(e: FormEvent) {
@@ -183,11 +158,6 @@ export function VisitorsPage() {
         </div>
         <div className="form-field" style={{ marginBottom: "0.75rem" }}>
           <label>Quarto (porta)</label>
-          <p className="text-muted" style={{ margin: "0 0 0.4rem", fontSize: "0.85rem" }}>
-            O visitante temporário fica em <strong>um quarto por vez</strong>. O QR é lido desse
-            controlador. Para mudar de quarto depois, use <strong>Trocar quarto</strong> na lista — o QR
-            antigo é invalidado e um novo é gerado.
-          </p>
           {controllers.length === 0 ? (
             <span className="text-muted">Nenhum controlador cadastrado.</span>
           ) : (
@@ -230,64 +200,12 @@ export function VisitorsPage() {
               Baixar PNG
             </button>
           </div>
-          <p className="text-muted" style={{ fontSize: "0.8rem", marginTop: "0.6rem", marginBottom: "0.4rem" }}>
-            <strong>Imprima ou envie a imagem inteira, incluindo a moldura branca.</strong> Não recorte o QR
-            rente às bordas — sem a margem branca o leitor não consegue lê-lo (aparece “QR inválido”). Prefira o
-            <strong> Baixar PNG</strong> a tirar print da tela.
-          </p>
-          <p className="text-muted" style={{ fontSize: "0.8rem", marginBottom: 0 }}>
-            O QR só abre a porta depois que o visitante é <strong>sincronizado</strong> nos controladores das
-            portas escolhidas (feito automaticamente ao cadastrar). Se nenhuma porta foi selecionada, o QR
-            não abrirá nada — edite/recadastre incluindo as portas.
+          <p className="text-muted" style={{ fontSize: "0.8rem", marginTop: "0.6rem", marginBottom: 0 }}>
+            Imprima/envie a imagem inteira (com a moldura branca). O QR abre a porta assim que a
+            sincronização do visitante concluir.
           </p>
         </div>
       )}
-
-      <div className="card" style={{ marginBottom: "1.25rem", maxWidth: 560, borderLeft: "3px solid var(--color-primary, #2f6fed)" }}>
-        <h4 style={{ marginTop: 0 }}>QR da controladora (recomendado — este abre a porta)</h4>
-        <p className="text-muted" style={{ marginTop: 0, fontSize: "0.85rem" }}>
-          O leitor só aceita o QR que a <strong>própria controladora</strong> guardou para a pessoa. Abra o
-          sistema web do controlador → cadastro do usuário → aba <strong>QR Code</strong>, copie o texto do campo
-          <strong> QRCode</strong> e cole aqui. O sistema gera um PNG limpo e imprimível desse código.
-        </p>
-        <div className="form-field" style={{ marginBottom: "0.6rem" }}>
-          <label>Texto do QRCode da controladora</label>
-          <textarea
-            value={deviceQrText}
-            onChange={(e) => setDeviceQrText(e.target.value)}
-            rows={2}
-            placeholder="Ex.: dXNlcl9pZD0xX3RpbWU9MTc4MzA5NjA3OTgxMzIzOA=="
-            style={{ width: "100%", fontFamily: "monospace", fontSize: "0.85rem" }}
-          />
-        </div>
-        {deviceQrError && <div className="alert alert-danger">{deviceQrError}</div>}
-        <button type="button" className="btn btn-primary btn-sm" onClick={renderDeviceQr} disabled={deviceQrBusy}>
-          Gerar PNG
-        </button>
-        {deviceQrImage && (
-          <div style={{ marginTop: "0.8rem" }}>
-            <div style={{ background: "#fff", padding: 16, borderRadius: 8, display: "inline-block" }}>
-              <img
-                src={deviceQrImage}
-                alt="QR da controladora"
-                style={{ display: "block", width: 260, height: 260, imageRendering: "pixelated" }}
-              />
-            </div>
-            <div className="btn-group" style={{ marginTop: "0.6rem" }}>
-              <button
-                type="button"
-                className="btn btn-primary btn-sm"
-                onClick={() => deviceQrBlob && downloadBlob(deviceQrBlob, "qr-controladora.png")}
-              >
-                Baixar PNG
-              </button>
-            </div>
-            <p className="text-muted" style={{ fontSize: "0.8rem", marginBottom: 0 }}>
-              Imprima/envie a imagem inteira (com a moldura branca). Não recorte.
-            </p>
-          </div>
-        )}
-      </div>
 
       <div className="card form-row" style={{ marginBottom: "1rem" }}>
         <div className="form-field" style={{ minWidth: 260 }}>

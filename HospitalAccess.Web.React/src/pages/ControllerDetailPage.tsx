@@ -27,6 +27,9 @@ export function ControllerDetailPage() {
   const [clock, setClock] = useState<string | null>(null);
   const [alarmSettings, setAlarmSettings] = useState<AlarmSettings | null>(null);
   const [kiosk, setKiosk] = useState<KioskSettings | null>(null);
+  // Texto local do limiar de febre: commit só no BLUR — um input controlado reformatado a cada
+  // tecla (toFixed) pula o cursor e impede a digitação; limites 30–45 °C protegem o aparelho.
+  const [tempAlarmText, setTempAlarmText] = useState("");
   const [audit, setAudit] = useState<PersonnelAudit | null>(null);
   const [photos, setPhotos] = useState<EventPhotoListItem[]>([]);
   const [photoImages, setPhotoImages] = useState<Record<string, string>>({});
@@ -51,7 +54,11 @@ export function ControllerDetailPage() {
       if (tab === "Rede" && !network) setNetwork(await api.getNetwork(id));
       else if (tab === "Relógio") setClock(await api.getClock(id));
       else if (tab === "Alarmes" && !alarmSettings) setAlarmSettings(await api.getAlarmSettings(id));
-      else if (tab === "Ajustes Locais" && !kiosk) setKiosk(await api.getKioskSettings(id));
+      else if (tab === "Ajustes Locais" && !kiosk) {
+        const k = await api.getKioskSettings(id);
+        setKiosk(k);
+        setTempAlarmText((k.temperatureAlarmThresholdX10 / 10).toFixed(1));
+      }
       else if (tab === "Log de Acessos") {
         const page = await api.queryAccessLog({ controllerId: id, page: 1, pageSize: 50 });
         setAccessLog(page.items);
@@ -459,31 +466,117 @@ export function ControllerDetailPage() {
         (kiosk === null ? (
           <p className="text-muted">Carregando ajustes locais...</p>
         ) : (
-          <div className="card" style={{ maxWidth: 640 }}>
+          <div className="card" style={{ maxWidth: 720 }}>
+            {/* Valores/rotulagem conforme o protocolo oficial do 8190H (Classe I, comandos
+                0x21-0x29): nada de números crus para quem opera a tela. */}
             <div className="form-row" style={{ marginBottom: "0.75rem" }}>
-              {(
-                [
-                  ["language", "Idioma (código)"],
-                  ["volume", "Volume (0-10)"],
-                  ["fillLightMode", "Luz de preenchimento (modo)"],
-                  ["maskDetectionMode", "Detecção de máscara (modo)"],
-                  ["temperatureDetectionMode", "Detecção de temperatura (modo)"],
-                  ["temperatureAlarmThresholdX10", "Limiar de alarme de temperatura (°C x10)"],
-                  ["temperatureDisplayMode", "Exibição de temperatura (modo)"],
-                  ["faceIdentifyRange", "Distância de reconhecimento facial"],
-                  ["livenessDetectionMode", "Detecção de vida (modo)"],
-                  ["livenessSimilarity", "Limiar de detecção de vida"],
-                ] as const
-              ).map(([key, label]) => (
-                <div className="form-field" key={key}>
-                  <label>{label}</label>
-                  <input
-                    type="number"
-                    value={kiosk[key]}
-                    onChange={(e) => setKiosk({ ...kiosk, [key]: Number(e.target.value) })}
-                  />
-                </div>
-              ))}
+              <div className="form-field" style={{ minWidth: 170 }}>
+                <label>Idioma do aparelho</label>
+                <select value={kiosk.language} onChange={(e) => setKiosk({ ...kiosk, language: Number(e.target.value) })}>
+                  <option value={6}>Português (Brasil)</option>
+                  <option value={13}>Português (Portugal)</option>
+                  <option value={2}>Inglês</option>
+                  <option value={7}>Espanhol</option>
+                  <option value={1}>Chinês</option>
+                  {![6, 13, 2, 7, 1].includes(kiosk.language) && (
+                    <option value={kiosk.language}>Outro (código {kiosk.language})</option>
+                  )}
+                </select>
+              </div>
+              <div className="form-field" style={{ minWidth: 160 }}>
+                <label>Volume ({kiosk.volume === 0 ? "mudo" : kiosk.volume}/10)</label>
+                <input
+                  type="range"
+                  min={0}
+                  max={10}
+                  value={kiosk.volume}
+                  onChange={(e) => setKiosk({ ...kiosk, volume: Number(e.target.value) })}
+                />
+              </div>
+              <div className="form-field" style={{ minWidth: 200 }}>
+                <label>Luz de preenchimento</label>
+                <select value={kiosk.fillLightMode} onChange={(e) => setKiosk({ ...kiosk, fillLightMode: Number(e.target.value) })}>
+                  <option value={0}>Sempre desligada</option>
+                  <option value={1}>Sempre ligada</option>
+                  <option value={2}>Acende ao detectar pessoa</option>
+                </select>
+              </div>
+              <div className="form-field" style={{ minWidth: 170 }}>
+                <label>Detecção de máscara</label>
+                <select value={kiosk.maskDetectionMode} onChange={(e) => setKiosk({ ...kiosk, maskDetectionMode: Number(e.target.value) })}>
+                  <option value={0}>Desligada</option>
+                  <option value={1}>Ligada</option>
+                </select>
+              </div>
+              <div className="form-field" style={{ minWidth: 200 }}>
+                <label>Distância de reconhecimento</label>
+                <select value={kiosk.faceIdentifyRange} onChange={(e) => setKiosk({ ...kiosk, faceIdentifyRange: Number(e.target.value) })}>
+                  <option value={1}>Curta (0,2–0,5 m)</option>
+                  <option value={2}>Média (0,2–1,5 m)</option>
+                  <option value={3}>Longa (acima de 1,5 m)</option>
+                  {![1, 2, 3].includes(kiosk.faceIdentifyRange) && (
+                    <option value={kiosk.faceIdentifyRange}>Outro (código {kiosk.faceIdentifyRange})</option>
+                  )}
+                </select>
+              </div>
+              <div className="form-field" style={{ minWidth: 200 }}>
+                <label>Detecção de vida (anti-foto)</label>
+                <select value={kiosk.livenessDetectionMode} onChange={(e) => setKiosk({ ...kiosk, livenessDetectionMode: Number(e.target.value) })}>
+                  <option value={0}>Desligada</option>
+                  <option value={1}>Ligada</option>
+                </select>
+              </div>
+              <div className="form-field" style={{ minWidth: 170 }}>
+                <label>Rigor da detecção de vida (1–99)</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={99}
+                  value={kiosk.livenessSimilarity}
+                  onChange={(e) =>
+                    setKiosk({ ...kiosk, livenessSimilarity: Math.min(99, Math.max(1, Number(e.target.value) || 1)) })
+                  }
+                />
+              </div>
+              <div className="form-field" style={{ minWidth: 190 }}>
+                <label>Medição de temperatura</label>
+                <select
+                  value={kiosk.temperatureDetectionMode}
+                  onChange={(e) => setKiosk({ ...kiosk, temperatureDetectionMode: Number(e.target.value) })}
+                >
+                  <option value={0}>Desligada</option>
+                  <option value={1}>Ligada</option>
+                </select>
+              </div>
+              <div className="form-field" style={{ minWidth: 190 }}>
+                <label>Mostrar temperatura na tela</label>
+                <select
+                  value={kiosk.temperatureDisplayMode}
+                  onChange={(e) => setKiosk({ ...kiosk, temperatureDisplayMode: Number(e.target.value) })}
+                >
+                  <option value={0}>Não mostrar</option>
+                  <option value={1}>Mostrar</option>
+                </select>
+              </div>
+              <div className="form-field" style={{ minWidth: 190 }}>
+                <label>Alarme de febre acima de (°C)</label>
+                <input
+                  type="number"
+                  step="0.1"
+                  min={30}
+                  max={45}
+                  value={tempAlarmText}
+                  onChange={(e) => setTempAlarmText(e.target.value)}
+                  onBlur={() => {
+                    const parsed = Number(tempAlarmText.replace(",", "."));
+                    const clamped = Number.isFinite(parsed) && parsed > 0
+                      ? Math.min(45, Math.max(30, parsed))
+                      : kiosk.temperatureAlarmThresholdX10 / 10;
+                    setKiosk({ ...kiosk, temperatureAlarmThresholdX10: Math.round(clamped * 10) });
+                    setTempAlarmText(clamped.toFixed(1));
+                  }}
+                />
+              </div>
             </div>
             <button className="btn btn-primary" onClick={saveKiosk} disabled={busy}>
               Salvar ajustes locais
