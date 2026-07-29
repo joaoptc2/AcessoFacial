@@ -43,29 +43,11 @@ public sealed class WelcomeImageService
     public async Task<string> GenerateAsync(Guid controllerId, string patientName, CancellationToken ct = default)
     {
         var cfg = _settings.Welcome;
-        if (string.IsNullOrWhiteSpace(cfg.BaseImagePath))
-            throw new InvalidOperationException(
-                "Imagem base da tela de boas-vindas não configurada — defina na tela de Configurações (ou BedManagement:WelcomeBaseImagePath).");
-        if (!File.Exists(cfg.BaseImagePath))
-            throw new InvalidOperationException(
-                $"Imagem base da tela de boas-vindas não encontrada: {cfg.BaseImagePath}");
-
         Directory.CreateDirectory(cfg.OutputDirectory);
         var fileName = FileNameFor(controllerId);
         var outputPath = Path.Combine(cfg.OutputDirectory, fileName);
 
-        using var image = await Image.LoadAsync(cfg.BaseImagePath, ct);
-
-        var font = GetFontFamily(cfg.FontPath).CreateFont(cfg.FontSize, FontStyle.Bold);
-        var color = Color.ParseHex(string.IsNullOrWhiteSpace(cfg.FontColorHex) ? "#FFFFFF" : cfg.FontColorHex);
-
-        var textOptions = new TextOptions(font);
-        var size = TextMeasurer.MeasureSize(patientName, textOptions);
-        var x = cfg.CenterHorizontally
-            ? Math.Max(0, (image.Width - size.Width) / 2f)
-            : cfg.TextX;
-
-        image.Mutate(ctx => ctx.DrawText(patientName, font, color, new PointF(x, cfg.TextY)));
+        using var image = await RenderAsync(cfg, patientName, ct);
 
         // Sempre JPG (requisito): grava num temporário e move por cima — o HA nunca busca um
         // arquivo pela metade.
@@ -77,6 +59,83 @@ public sealed class WelcomeImageService
             controllerId, outputPath, patientName);
 
         return PublicUrlFor(cfg.PublicBaseUrl, fileName);
+    }
+
+    /// <summary>
+    /// Prévia da tela com um nome de exemplo: mesmos parâmetros efetivos da geração real, mas
+    /// devolve os BYTES do JPEG sem escrever nada no diretório público.
+    /// </summary>
+    public async Task<byte[]> RenderPreviewAsync(string patientName, CancellationToken ct = default)
+    {
+        using var image = await RenderAsync(_settings.Welcome, patientName, ct);
+        using var ms = new MemoryStream();
+        await image.SaveAsync(ms, new JpegEncoder { Quality = 90 }, ct);
+        return ms.ToArray();
+    }
+
+    /// <summary>
+    /// Recebe o upload da imagem base: valida decodificando, re-encoda como JPEG (q95) e salva
+    /// FORA do diretório público (no pai do WelcomeOutputDirectory — ex.:
+    /// /var/lib/hospitalaccess/welcome-base.jpg). Devolve caminho e dimensões.
+    /// </summary>
+    public async Task<(string Path, int Width, int Height)> SaveBaseImageAsync(Stream content, CancellationToken ct = default)
+    {
+        Image image;
+        try
+        {
+            image = await Image.LoadAsync(content, ct);
+        }
+        catch (Exception ex) when (ex is UnknownImageFormatException or InvalidImageContentException)
+        {
+            throw new InvalidOperationException("O arquivo enviado não é uma imagem válida — envie um JPG ou PNG.", ex);
+        }
+
+        using (image)
+        {
+            var cfg = _settings.Welcome;
+            var parentDir = Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(Path.GetFullPath(cfg.OutputDirectory)));
+            var basePath = Path.Combine(string.IsNullOrEmpty(parentDir) ? cfg.OutputDirectory : parentDir, "welcome-base.jpg");
+            Directory.CreateDirectory(Path.GetDirectoryName(basePath)!);
+
+            var tempPath = basePath + ".tmp";
+            await image.SaveAsync(tempPath, new JpegEncoder { Quality = 95 }, ct);
+            File.Move(tempPath, basePath, overwrite: true);
+
+            _logger.LogInformation("Imagem base de boas-vindas atualizada: {Path} ({W}x{H}).", basePath, image.Width, image.Height);
+            return (basePath, image.Width, image.Height);
+        }
+    }
+
+    /// <summary>Núcleo compartilhado: carrega a base e desenha o nome (validações com mensagens claras).</summary>
+    private async Task<Image> RenderAsync(RuntimeSettingsProvider.WelcomeSettings cfg, string patientName, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(cfg.BaseImagePath))
+            throw new InvalidOperationException(
+                "Imagem base da tela de boas-vindas não configurada — envie/defina na tela de Configurações (ou BedManagement:WelcomeBaseImagePath).");
+        if (!File.Exists(cfg.BaseImagePath))
+            throw new InvalidOperationException(
+                $"Imagem base da tela de boas-vindas não encontrada: {cfg.BaseImagePath}");
+
+        var image = await Image.LoadAsync(cfg.BaseImagePath, ct);
+        try
+        {
+            var font = GetFontFamily(cfg.FontPath).CreateFont(cfg.FontSize, FontStyle.Bold);
+            var color = Color.ParseHex(string.IsNullOrWhiteSpace(cfg.FontColorHex) ? "#FFFFFF" : cfg.FontColorHex);
+
+            var textOptions = new TextOptions(font);
+            var size = TextMeasurer.MeasureSize(patientName, textOptions);
+            var x = cfg.CenterHorizontally
+                ? Math.Max(0, (image.Width - size.Width) / 2f)
+                : cfg.TextX;
+
+            image.Mutate(ctx => ctx.DrawText(patientName, font, color, new PointF(x, cfg.TextY)));
+            return image;
+        }
+        catch
+        {
+            image.Dispose();
+            throw;
+        }
     }
 
     public static string FileNameFor(Guid controllerId) => $"leito-{controllerId:N}.jpg";

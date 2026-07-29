@@ -385,8 +385,8 @@ export function ControllersPage() {
           </div>
           {editingId === null && !showAdvanced && (
             <p className="text-muted" style={{ margin: "0.5rem 0 0" }}>
-              Porta 8000, painel web em http://IP e a senha padrão dos aparelhos (Configurações) são
-              assumidos automaticamente — use "Avançado…" só para exceções.
+              Porta 8000, painel web em http://IP e as senhas padrão dos aparelhos (Configurações;
+              fábrica FFFFFFFF/1409) são assumidas automaticamente — use "Avançado…" só para exceções.
             </p>
           )}
           {showAdvanced && (

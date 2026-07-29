@@ -423,7 +423,8 @@ export interface SystemSettingsDto {
   controllerAuditRetentionDays: number;
   qrFormat: QrFormat;
   // Segredos nunca são devolvidos — só o indicador de presença.
-  hasDeviceDefaultPassword: boolean;
+  hasDeviceDefaultCommunicationPassword: boolean;
+  hasDeviceDefaultApiPassword: boolean;
   homeAssistantEnabled: boolean | null;
   homeAssistantBaseUrl: string;
   hasHomeAssistantToken: boolean;
@@ -453,8 +454,10 @@ export interface UpdateSettingsRequest {
   alarmLogRetentionDays: number;
   controllerAuditRetentionDays: number;
   qrFormat: QrFormat;
-  deviceDefaultPassword?: string;
-  clearDeviceDefaultPassword?: boolean;
+  deviceDefaultCommunicationPassword?: string;
+  clearDeviceDefaultCommunicationPassword?: boolean;
+  deviceDefaultApiPassword?: string;
+  clearDeviceDefaultApiPassword?: boolean;
   homeAssistantEnabled?: "on" | "off" | "";
   homeAssistantBaseUrl?: string;
   homeAssistantToken?: string;
@@ -845,6 +848,16 @@ export const api = {
   getSettings: () => request<SystemSettingsDto>("/settings"),
   updateSettings: (body: UpdateSettingsRequest) => request<void>("/settings", { method: "PUT", body: JSON.stringify(body) }),
   testHomeAssistant: () => request<{ ok: boolean; message: string }>("/settings/homeassistant/test", { method: "POST" }),
+  uploadWelcomeImage: (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return request<{ path: string; width: number; height: number }>("/settings/welcome-image", {
+      method: "POST",
+      body: form,
+    });
+  },
+  previewWelcomeImage: (name: string) =>
+    requestBlob(`/settings/welcome-image/preview?name=${encodeURIComponent(name)}`),
 
   // ---- Usuários do sistema (Admin) ----
   getStaffUsers: () => request<StaffUserDto[]>("/staffusers"),

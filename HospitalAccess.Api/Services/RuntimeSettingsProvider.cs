@@ -26,7 +26,12 @@ public sealed class RuntimeSettingsProvider : IDeviceSecretDefaults, IDeviceHttp
     public sealed record WelcomeSettings(string BaseImagePath, string OutputDirectory, string PublicBaseUrl,
         int TextX, int TextY, bool CenterHorizontally, float FontSize, string FontColorHex, string FontPath);
 
-    private sealed record Snapshot(HomeAssistantSettings HomeAssistant, WelcomeSettings Welcome, string DeviceDefaultPassword);
+    private sealed record Snapshot(HomeAssistantSettings HomeAssistant, WelcomeSettings Welcome,
+        string DeviceDefaultCommunicationPassword, string DeviceDefaultApiPassword);
+
+    /// <summary>Padrões de FÁBRICA do 8190H — último recurso quando nem o banco nem o appsettings definem.</summary>
+    public const string FactoryCommunicationPassword = "FFFFFFFF";
+    public const string FactoryApiPassword = "1409";
 
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly HomeAssistantOptions _haDefaults;
@@ -52,11 +57,15 @@ public sealed class RuntimeSettingsProvider : IDeviceSecretDefaults, IDeviceHttp
     public HomeAssistantSettings HomeAssistant => Current.HomeAssistant;
     public WelcomeSettings Welcome => Current.Welcome;
 
-    /// <summary>Senha de comunicação padrão dos aparelhos (a global única das Configurações).</summary>
-    public string? DefaultCommunicationPassword => NonEmpty(Current.DeviceDefaultPassword);
+    /// <summary>Senha de comunicação padrão: Configurações → padrão de fábrica (FFFFFFFF).</summary>
+    public string? DefaultCommunicationPassword =>
+        NonEmpty(Current.DeviceDefaultCommunicationPassword) ?? FactoryCommunicationPassword;
 
-    /// <summary>Senha padrão do painel web: a global única, senão a do appsettings (Device:DefaultApiPassword).</summary>
-    public string? DefaultApiPassword => NonEmpty(Current.DeviceDefaultPassword) ?? NonEmpty(_deviceHttpDefaults.DefaultApiPassword);
+    /// <summary>Senha padrão do painel web: Configurações → appsettings (Device:DefaultApiPassword) → padrão de fábrica (1409).</summary>
+    public string? DefaultApiPassword =>
+        NonEmpty(Current.DeviceDefaultApiPassword)
+        ?? NonEmpty(_deviceHttpDefaults.DefaultApiPassword)
+        ?? FactoryApiPassword;
 
     /// <summary>Descarta o snapshot — o próximo acesso relê do banco (chamado pelo SettingsController ao salvar).</summary>
     public void Invalidate()
@@ -111,7 +120,8 @@ public sealed class RuntimeSettingsProvider : IDeviceSecretDefaults, IDeviceHttp
             row?.WelcomeFontSize ?? _bedDefaults.FontSize,
             Pick(row?.WelcomeFontColorHex, _bedDefaults.FontColorHex),
             _bedDefaults.FontPath),
-        row?.DeviceDefaultPassword ?? string.Empty);
+        row?.DeviceDefaultCommunicationPassword ?? string.Empty,
+        row?.DeviceDefaultApiPassword ?? string.Empty);
 
     private static string Pick(string? fromDb, string fallback) =>
         string.IsNullOrWhiteSpace(fromDb) ? fallback : fromDb;
