@@ -190,14 +190,18 @@ public sealed class WelcomeImageServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task Fonte_ausente_lanca_erro_citando_a_configuracao()
+    public async Task Fonte_configurada_ausente_cai_no_fallback_de_sistema()
     {
+        // Cenário real de produção: servidor sem fonts-dejavu-core no caminho configurado.
+        // A sondagem deve achar QUALQUER fonte comum do sistema e a geração seguir normal.
         CreateBaseImage();
         var service = CreateService(o => o.FontPath = Path.Combine(_root, "nao-existe.ttf"));
+        var controllerId = Guid.NewGuid();
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => service.GenerateAsync(Guid.NewGuid(), "Maria"));
-        Assert.Contains("FontPath", ex.Message);
+        var url = await service.GenerateAsync(controllerId, "Maria");
+
+        Assert.True(File.Exists(Path.Combine(_root, "out", WelcomeImageService.FileNameFor(controllerId))));
+        Assert.Contains($"/welcome/leito-{controllerId:N}.jpg", url);
     }
 
     public void Dispose()

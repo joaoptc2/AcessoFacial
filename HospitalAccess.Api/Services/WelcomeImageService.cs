@@ -147,6 +147,16 @@ public sealed class WelcomeImageService
         return $"{baseUrl}/welcome/{fileName}?v={DateTime.UtcNow.Ticks}";
     }
 
+    /// <summary>Fontes comuns por distro, sondadas quando o FontPath configurado não existe.</summary>
+    public static readonly string[] FontCandidates =
+    {
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+        "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+    };
+
     private FontFamily GetFontFamily(string fontPath)
     {
         // O FontPath vem só do appsettings (não muda em runtime) — cache simples continua válido.
@@ -154,14 +164,41 @@ public sealed class WelcomeImageService
         lock (_fontLock)
         {
             if (_fontFamily is { } cached2) return cached2;
-            if (string.IsNullOrWhiteSpace(fontPath) || !File.Exists(fontPath))
+
+            var resolved = ResolveFontPath(fontPath);
+            if (resolved is null)
                 throw new InvalidOperationException(
-                    $"Fonte TTF não encontrada em '{fontPath}' — configure BedManagement:FontPath " +
-                    "(ex.: /usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf).");
+                    $"Nenhuma fonte TTF encontrada (configurada: '{fontPath}'; sondadas: {string.Join(", ", FontCandidates)} " +
+                    "e /usr/share/fonts). Instale uma fonte (ex.: `sudo apt install fonts-dejavu-core`) " +
+                    "ou aponte BedManagement:FontPath para um .ttf existente.");
+            if (!string.Equals(resolved, fontPath, StringComparison.Ordinal))
+                _logger.LogWarning(
+                    "Fonte configurada '{Configured}' não existe — usando '{Resolved}' no lugar (instale fonts-dejavu-core ou ajuste BedManagement:FontPath).",
+                    fontPath, resolved);
+
             var collection = new FontCollection();
-            var family = collection.Add(fontPath);
+            var family = collection.Add(resolved);
             _fontFamily = family;
             return family;
+        }
+    }
+
+    /// <summary>Caminho configurado → candidatos comuns → primeiro .ttf do sistema. Null = nada encontrado.</summary>
+    private static string? ResolveFontPath(string configuredPath)
+    {
+        if (!string.IsNullOrWhiteSpace(configuredPath) && File.Exists(configuredPath)) return configuredPath;
+        foreach (var candidate in FontCandidates)
+            if (File.Exists(candidate)) return candidate;
+        try
+        {
+            return Directory.Exists("/usr/share/fonts")
+                ? Directory.EnumerateFiles("/usr/share/fonts", "*.ttf", SearchOption.AllDirectories).FirstOrDefault()
+                : null;
+        }
+        catch
+        {
+            // Diretório ilegível (permissões) — trata como "não achou".
+            return null;
         }
     }
 }
