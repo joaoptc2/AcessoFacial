@@ -71,6 +71,8 @@ public class SystemSettings
     /// <summary>Tela de boas-vindas (gestão de leitos): imagem base e composição do texto.</summary>
     public string WelcomeBaseImagePath { get; set; } = string.Empty;
     public string WelcomePublicBaseUrl { get; set; } = string.Empty;
+    /// <summary>Fonte TTF/OTF enviada pela tela (vazio = fonte do sistema/appsettings).</summary>
+    public string WelcomeFontPath { get; set; } = string.Empty;
     public int? WelcomeTextY { get; set; }
     public float? WelcomeFontSize { get; set; }
     public string WelcomeFontColorHex { get; set; } = string.Empty;

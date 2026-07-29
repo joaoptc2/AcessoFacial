@@ -435,6 +435,8 @@ export interface SystemSettingsDto {
   welcomeTextY: number | null;
   welcomeFontSize: number | null;
   welcomeFontColorHex: string;
+  // Fonte enviada pela tela (vazio = fonte do sistema).
+  welcomeFontPath: string;
   homeAssistantEffective: {
     enabled: boolean;
     baseUrl: string;
@@ -469,6 +471,8 @@ export interface UpdateSettingsRequest {
   welcomeTextY?: string;
   welcomeFontSize?: string;
   welcomeFontColorHex?: string;
+  // "" = voltar à fonte do sistema; omitido = manter.
+  welcomeFontPath?: string;
 }
 
 // ---- Usuários do sistema (logins) ----
@@ -858,6 +862,14 @@ export const api = {
   },
   previewWelcomeImage: (name: string) =>
     requestBlob(`/settings/welcome-image/preview?name=${encodeURIComponent(name)}`),
+  uploadWelcomeFont: (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return request<{ path: string; familyName: string }>("/settings/welcome-font", {
+      method: "POST",
+      body: form,
+    });
+  },
 
   // ---- Usuários do sistema (Admin) ----
   getStaffUsers: () => request<StaffUserDto[]>("/staffusers"),

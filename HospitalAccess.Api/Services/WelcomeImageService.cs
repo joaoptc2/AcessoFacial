@@ -19,7 +19,11 @@ public sealed class WelcomeImageService
     private readonly RuntimeSettingsProvider _settings;
     private readonly ILogger<WelcomeImageService> _logger;
     private readonly object _fontLock = new();
+    // Cache sensível a mudanças: a fonte agora pode ser TROCADA em runtime (upload pela tela),
+    // inclusive sobrescrevendo o mesmo caminho — o cache invalida por caminho E data do arquivo.
     private FontFamily? _fontFamily;
+    private string? _cachedFontPath;
+    private DateTime _cachedFontWriteUtc;
 
     public WelcomeImageService(RuntimeSettingsProvider settings, ILogger<WelcomeImageService> logger)
     {
@@ -157,28 +161,68 @@ public sealed class WelcomeImageService
         "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
     };
 
+    /// <summary>
+    /// Recebe o upload de uma fonte TTF/OTF: valida carregando com o motor de fontes, salva
+    /// FORA do diretório público (welcome-font.ttf, ao lado da imagem base) e devolve o
+    /// caminho + o nome da família (para a tela confirmar qual fonte entrou).
+    /// </summary>
+    public async Task<(string Path, string FamilyName)> SaveFontAsync(Stream content, CancellationToken ct = default)
+    {
+        using var buffer = new MemoryStream();
+        await content.CopyToAsync(buffer, ct);
+
+        string familyName;
+        try
+        {
+            buffer.Position = 0;
+            var probe = new FontCollection();
+            familyName = probe.Add(buffer).Name;
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException("O arquivo enviado não é uma fonte TTF/OTF válida.", ex);
+        }
+
+        var cfg = _settings.Welcome;
+        var parentDir = Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(Path.GetFullPath(cfg.OutputDirectory)));
+        var fontPath = Path.Combine(string.IsNullOrEmpty(parentDir) ? cfg.OutputDirectory : parentDir, "welcome-font.ttf");
+        Directory.CreateDirectory(Path.GetDirectoryName(fontPath)!);
+
+        var tempPath = fontPath + ".tmp";
+        await File.WriteAllBytesAsync(tempPath, buffer.ToArray(), ct);
+        File.Move(tempPath, fontPath, overwrite: true);
+
+        _logger.LogInformation("Fonte de boas-vindas atualizada: {Path} (família \"{Family}\").", fontPath, familyName);
+        return (fontPath, familyName);
+    }
+
     private FontFamily GetFontFamily(string fontPath)
     {
-        // O FontPath vem só do appsettings (não muda em runtime) — cache simples continua válido.
-        if (_fontFamily is { } cached) return cached;
         lock (_fontLock)
         {
-            if (_fontFamily is { } cached2) return cached2;
-
             var resolved = ResolveFontPath(fontPath);
             if (resolved is null)
                 throw new InvalidOperationException(
                     $"Nenhuma fonte TTF encontrada (configurada: '{fontPath}'; sondadas: {string.Join(", ", FontCandidates)} " +
-                    "e /usr/share/fonts). Instale uma fonte (ex.: `sudo apt install fonts-dejavu-core`) " +
-                    "ou aponte BedManagement:FontPath para um .ttf existente.");
+                    "e /usr/share/fonts). Instale uma fonte (ex.: `sudo apt install fonts-dejavu-core`), envie uma pela " +
+                    "tela de Configurações ou aponte BedManagement:FontPath para um .ttf existente.");
+
+            var writeUtc = File.GetLastWriteTimeUtc(resolved);
+            if (_fontFamily is { } cached &&
+                string.Equals(_cachedFontPath, resolved, StringComparison.Ordinal) &&
+                _cachedFontWriteUtc == writeUtc)
+                return cached;
+
             if (!string.Equals(resolved, fontPath, StringComparison.Ordinal))
                 _logger.LogWarning(
-                    "Fonte configurada '{Configured}' não existe — usando '{Resolved}' no lugar (instale fonts-dejavu-core ou ajuste BedManagement:FontPath).",
+                    "Fonte configurada '{Configured}' não existe — usando '{Resolved}' no lugar (instale fonts-dejavu-core, envie uma fonte pela tela ou ajuste BedManagement:FontPath).",
                     fontPath, resolved);
 
             var collection = new FontCollection();
             var family = collection.Add(resolved);
             _fontFamily = family;
+            _cachedFontPath = resolved;
+            _cachedFontWriteUtc = writeUtc;
             return family;
         }
     }
