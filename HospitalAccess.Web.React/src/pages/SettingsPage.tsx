@@ -23,13 +23,24 @@ export function SettingsPage() {
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  // Segredos digitados nesta sessão (nunca vêm do GET) + flags de limpeza explícita.
-  const [devicePassword, setDevicePassword] = useState("");
-  const [clearDevicePassword, setClearDevicePassword] = useState(false);
+  // Segredos digitados nesta sessão (nunca vêm do GET — write-only) + flags de limpeza.
+  const [commPassword, setCommPassword] = useState("");
+  const [clearCommPassword, setClearCommPassword] = useState(false);
+  const [apiPassword, setApiPassword] = useState("");
+  const [clearApiPassword, setClearApiPassword] = useState(false);
   const [haToken, setHaToken] = useState("");
   const [clearHaToken, setClearHaToken] = useState(false);
   const [haTest, setHaTest] = useState<{ ok: boolean; message: string } | null>(null);
   const [testingHa, setTestingHa] = useState(false);
+
+  // Upload/prévia da imagem de boas-vindas.
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadInfo, setUploadInfo] = useState<string | null>(null);
+  const [previewName, setPreviewName] = useState("Maria da Silva");
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewing, setPreviewing] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
 
   useEffect(() => {
     api.getSettings().then(setSettings).catch((err) => setError(err instanceof ApiError ? err.message : "Falha ao carregar."));
@@ -58,8 +69,10 @@ export function SettingsPage() {
         alarmLogRetentionDays: settings.alarmLogRetentionDays,
         controllerAuditRetentionDays: settings.controllerAuditRetentionDays,
         qrFormat: settings.qrFormat,
-        deviceDefaultPassword: devicePassword || undefined,
-        clearDeviceDefaultPassword: clearDevicePassword,
+        deviceDefaultCommunicationPassword: commPassword || undefined,
+        clearDeviceDefaultCommunicationPassword: clearCommPassword,
+        deviceDefaultApiPassword: apiPassword || undefined,
+        clearDeviceDefaultApiPassword: clearApiPassword,
         // "on"/"off" = decisão explícita; "" = herdar do appsettings do servidor.
         homeAssistantEnabled: settings.homeAssistantEnabled === null ? "" : settings.homeAssistantEnabled ? "on" : "off",
         homeAssistantBaseUrl: settings.homeAssistantBaseUrl,
@@ -73,8 +86,10 @@ export function SettingsPage() {
         welcomeFontSize: settings.welcomeFontSize === null ? "" : String(settings.welcomeFontSize),
         welcomeFontColorHex: settings.welcomeFontColorHex,
       });
-      setDevicePassword("");
-      setClearDevicePassword(false);
+      setCommPassword("");
+      setClearCommPassword(false);
+      setApiPassword("");
+      setClearApiPassword(false);
       setHaToken("");
       setClearHaToken(false);
       setSavedAt(new Date().toLocaleString());
@@ -99,32 +114,90 @@ export function SettingsPage() {
     }
   }
 
+  async function uploadWelcome() {
+    if (!uploadFile) return;
+    setUploading(true);
+    setUploadInfo(null);
+    setPreviewError(null);
+    try {
+      const result = await api.uploadWelcomeImage(uploadFile);
+      setUploadInfo(`Imagem base atualizada (${result.width}×${result.height}) — já vale para as próximas boas-vindas.`);
+      setUploadFile(null);
+      setSettings(await api.getSettings()); // o caminho da base foi gravado no servidor
+    } catch (err) {
+      setPreviewError(err instanceof ApiError ? err.message : "Falha ao enviar a imagem.");
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function generatePreview() {
+    setPreviewing(true);
+    setPreviewError(null);
+    try {
+      const blob = await api.previewWelcomeImage(previewName.trim() || "Maria da Silva");
+      setPreviewUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return URL.createObjectURL(blob);
+      });
+    } catch (err) {
+      setPreviewError(err instanceof ApiError ? err.message : "Falha ao gerar a prévia.");
+    } finally {
+      setPreviewing(false);
+    }
+  }
+
   return (
     <div>
       <h2>Configurações do sistema</h2>
 
       <form onSubmit={handleSave}>
         <div className="card" style={{ maxWidth: 620, marginBottom: "1.25rem" }}>
-          <h3 style={{ marginTop: 0 }}>Dispositivos</h3>
-          <div className="form-field" style={{ marginBottom: "0.5rem" }}>
-            <label>Senha padrão dos aparelhos {settings.hasDeviceDefaultPassword && <span className="pill pill-success">definida</span>}</label>
-            <input
-              type="password"
-              value={devicePassword}
-              disabled={clearDevicePassword}
-              onChange={(e) => setDevicePassword(e.target.value)}
-              placeholder={settings.hasDeviceDefaultPassword ? "(manter a atual)" : "senha usada por todos os controladores"}
-            />
-            {settings.hasDeviceDefaultPassword && (
-              <label style={{ display: "flex", alignItems: "center", gap: "0.35rem", fontWeight: "normal" }}>
-                <input type="checkbox" checked={clearDevicePassword} onChange={(e) => setClearDevicePassword(e.target.checked)} />
-                Limpar (volta a valer o appsettings do servidor)
+          <h3 style={{ marginTop: 0 }}>Dispositivos — senhas padrão</h3>
+          <p className="text-muted" style={{ marginTop: 0, fontSize: "0.85rem" }}>
+            Valem para todos os controladores sem senha própria no cadastro. Por segurança os
+            valores <strong>não são reexibidos</strong> — o selo "definida" confirma que estão
+            salvos. Sem nada definido, valem os padrões de fábrica.
+          </p>
+          <div className="form-row">
+            <div className="form-field" style={{ minWidth: 250 }}>
+              <label>
+                Senha de comunicação (fábrica: FFFFFFFF){" "}
+                {settings.hasDeviceDefaultCommunicationPassword && <span className="pill pill-success">definida</span>}
               </label>
-            )}
-            <span className="text-muted" style={{ fontSize: "0.85rem" }}>
-              Usada como senha de comunicação E do painel web de todos os controladores. Um aparelho
-              com senha própria no cadastro (avançado) é exceção e tem precedência.
-            </span>
+              <input
+                type="password"
+                value={commPassword}
+                disabled={clearCommPassword}
+                onChange={(e) => setCommPassword(e.target.value)}
+                placeholder={settings.hasDeviceDefaultCommunicationPassword ? "(manter a atual)" : "(usar padrão de fábrica)"}
+              />
+              {settings.hasDeviceDefaultCommunicationPassword && (
+                <label style={{ display: "flex", alignItems: "center", gap: "0.35rem", fontWeight: "normal" }}>
+                  <input type="checkbox" checked={clearCommPassword} onChange={(e) => setClearCommPassword(e.target.checked)} />
+                  Limpar (volta ao padrão de fábrica)
+                </label>
+              )}
+            </div>
+            <div className="form-field" style={{ minWidth: 250 }}>
+              <label>
+                Senha do painel web (fábrica: 1409){" "}
+                {settings.hasDeviceDefaultApiPassword && <span className="pill pill-success">definida</span>}
+              </label>
+              <input
+                type="password"
+                value={apiPassword}
+                disabled={clearApiPassword}
+                onChange={(e) => setApiPassword(e.target.value)}
+                placeholder={settings.hasDeviceDefaultApiPassword ? "(manter a atual)" : "(usar padrão de fábrica)"}
+              />
+              {settings.hasDeviceDefaultApiPassword && (
+                <label style={{ display: "flex", alignItems: "center", gap: "0.35rem", fontWeight: "normal" }}>
+                  <input type="checkbox" checked={clearApiPassword} onChange={(e) => setClearApiPassword(e.target.checked)} />
+                  Limpar (volta ao padrão de fábrica)
+                </label>
+              )}
+            </div>
           </div>
         </div>
 
@@ -252,6 +325,50 @@ export function SettingsPage() {
             O nome do paciente é centralizado na horizontal na altura Y escolhida. Campos vazios
             herdam o appsettings do servidor. A mudança vale já na próxima internação/reexibição.
           </p>
+
+          <hr className="divider" />
+          <h4 style={{ marginTop: 0 }}>Imagem base</h4>
+          <div className="form-row">
+            <div className="form-field" style={{ minWidth: 260 }}>
+              <label>Enviar nova imagem (JPG/PNG, até 10 MB)</label>
+              <input
+                type="file"
+                accept="image/jpeg,image/png"
+                onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)}
+              />
+            </div>
+            <div className="form-field">
+              <button type="button" className="btn btn-primary btn-sm" onClick={uploadWelcome} disabled={!uploadFile || uploading}>
+                {uploading ? "Enviando…" : "Enviar imagem"}
+              </button>
+            </div>
+          </div>
+          {uploadInfo && <div className="alert alert-success">{uploadInfo}</div>}
+
+          <h4>Prévia (como a TV vai mostrar)</h4>
+          <div className="form-row">
+            <div className="form-field" style={{ minWidth: 220 }}>
+              <label>Nome de exemplo</label>
+              <input value={previewName} onChange={(e) => setPreviewName(e.target.value)} />
+            </div>
+            <div className="form-field">
+              <button type="button" className="btn btn-outline btn-sm" onClick={generatePreview} disabled={previewing}>
+                {previewing ? "Gerando…" : "Gerar prévia"}
+              </button>
+            </div>
+          </div>
+          <p className="text-muted" style={{ fontSize: "0.8rem", margin: "0 0 0.5rem" }}>
+            A prévia usa a configuração SALVA — clique em "Salvar configurações" antes se mudou
+            posição/fonte/cor.
+          </p>
+          {previewError && <div className="alert alert-danger">{previewError}</div>}
+          {previewUrl && (
+            <img
+              src={previewUrl}
+              alt="Prévia da tela de boas-vindas"
+              style={{ maxWidth: "100%", borderRadius: 8, border: "1px solid var(--border, #e2e8f0)" }}
+            />
+          )}
         </div>
 
         <div className="card" style={{ maxWidth: 620, marginBottom: "1.25rem" }}>

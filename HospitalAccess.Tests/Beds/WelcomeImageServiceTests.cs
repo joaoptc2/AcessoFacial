@@ -103,6 +103,57 @@ public sealed class WelcomeImageServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Preview_gera_jpeg_valido_sem_escrever_no_diretorio_publico()
+    {
+        CreateBaseImage(640, 480);
+        var service = CreateService();
+
+        var bytes = await service.RenderPreviewAsync("Nome de Exemplo");
+
+        using var ms = new MemoryStream(bytes);
+        using var generated = Image.Load(ms, out IImageFormat format);
+        Assert.Equal("JPEG", format.Name);
+        Assert.Equal(640, generated.Width);
+        Assert.Equal(480, generated.Height);
+        // A prévia não pode poluir o diretório público servido em /welcome/*.
+        Assert.False(Directory.Exists(Path.Combine(_root, "out")));
+    }
+
+    [Fact]
+    public async Task Upload_da_base_reencoda_jpeg_fora_do_diretorio_publico()
+    {
+        var service = CreateService();
+
+        byte[] png;
+        using (var source = new Image<Rgba32>(300, 200, Color.DarkGreen))
+        using (var ms = new MemoryStream())
+        {
+            source.Save(ms, new SixLabors.ImageSharp.Formats.Png.PngEncoder());
+            png = ms.ToArray();
+        }
+
+        using var upload = new MemoryStream(png);
+        var (path, width, height) = await service.SaveBaseImageAsync(upload);
+
+        Assert.Equal(300, width);
+        Assert.Equal(200, height);
+        // Salva no PAI do diretório público (não em /welcome/*).
+        Assert.Equal(Path.Combine(_root, "welcome-base.jpg"), path);
+        using var saved = Image.Load(path, out IImageFormat format);
+        Assert.Equal("JPEG", format.Name);
+    }
+
+    [Fact]
+    public async Task Upload_de_arquivo_invalido_lanca_erro_claro()
+    {
+        var service = CreateService();
+        using var junk = new MemoryStream(new byte[] { 1, 2, 3, 4, 5 });
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => service.SaveBaseImageAsync(junk));
+        Assert.Contains("não é uma imagem válida", ex.Message);
+    }
+
+    [Fact]
     public async Task Sem_public_base_url_devolve_caminho_relativo()
     {
         CreateBaseImage();

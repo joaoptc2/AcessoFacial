@@ -48,11 +48,17 @@ public class SystemSettings
     // ------------------------------------------------------------------------------------------
 
     /// <summary>
-    /// Senha padrão ÚNICA dos aparelhos (senha de comunicação do protocolo E senha do painel
-    /// web — no parque do hospital elas são sempre iguais). Criptografada em repouso.
-    /// Controlador com senha própria preenchida tem precedência (exceção ao padrão).
+    /// Senha de COMUNICAÇÃO padrão dos aparelhos (protocolo binário — padrão de fábrica
+    /// "FFFFFFFF"). Criptografada em repouso. Controlador com senha própria tem precedência.
     /// </summary>
-    public string DeviceDefaultPassword { get; set; } = string.Empty;
+    public string DeviceDefaultCommunicationPassword { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Senha padrão do PAINEL WEB dos aparelhos (padrão de fábrica "1409"). Criptografada em
+    /// repouso. Controlador com senha própria tem precedência; vazio herda o appsettings
+    /// (Device:DefaultApiPassword) e, em último caso, o padrão de fábrica.
+    /// </summary>
+    public string DeviceDefaultApiPassword { get; set; } = string.Empty;
 
     /// <summary>Home Assistant: null = herda do appsettings; true/false = decisão explícita da tela.</summary>
     public bool? HomeAssistantEnabled { get; set; }

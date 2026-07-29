@@ -19,8 +19,11 @@ public record UpdateSettingsRequest(
     int AlarmLogRetentionDays,
     int ControllerAuditRetentionDays,
     string QrFormat,
-    string? DeviceDefaultPassword = null,
-    bool ClearDeviceDefaultPassword = false,
+    // Senhas padrão dos aparelhos: comunicação (fábrica FFFFFFFF) e painel web (fábrica 1409).
+    string? DeviceDefaultCommunicationPassword = null,
+    bool ClearDeviceDefaultCommunicationPassword = false,
+    string? DeviceDefaultApiPassword = null,
+    bool ClearDeviceDefaultApiPassword = false,
     string? HomeAssistantEnabled = null,       // "on" | "off" | "" (herdar) | null (manter)
     string? HomeAssistantBaseUrl = null,
     string? HomeAssistantToken = null,
@@ -47,12 +50,15 @@ public class SettingsController : ControllerBase
     private readonly AccessDbContext _db;
     private readonly RuntimeSettingsProvider _runtime;
     private readonly HomeAssistantClient _ha;
+    private readonly WelcomeImageService _welcome;
 
-    public SettingsController(AccessDbContext db, RuntimeSettingsProvider runtime, HomeAssistantClient ha)
+    public SettingsController(AccessDbContext db, RuntimeSettingsProvider runtime, HomeAssistantClient ha,
+        WelcomeImageService welcome)
     {
         _db = db;
         _runtime = runtime;
         _ha = ha;
+        _welcome = welcome;
     }
 
     [HttpGet]
@@ -68,7 +74,8 @@ public class SettingsController : ControllerBase
             settings.ControllerAuditRetentionDays,
             settings.QrFormat,
             // Segredos: só o indicador de presença (o valor nunca sai do servidor).
-            HasDeviceDefaultPassword = !string.IsNullOrEmpty(settings.DeviceDefaultPassword),
+            HasDeviceDefaultCommunicationPassword = !string.IsNullOrEmpty(settings.DeviceDefaultCommunicationPassword),
+            HasDeviceDefaultApiPassword = !string.IsNullOrEmpty(settings.DeviceDefaultApiPassword),
             settings.HomeAssistantEnabled,
             settings.HomeAssistantBaseUrl,
             HasHomeAssistantToken = !string.IsNullOrEmpty(settings.HomeAssistantToken),
@@ -129,11 +136,15 @@ public class SettingsController : ControllerBase
         settings.ControllerAuditRetentionDays = request.ControllerAuditRetentionDays;
         settings.QrFormat = request.QrFormat;
 
-        // Segredos: novo valor = trocar; Clear* = apagar (volta a herdar); omitido = manter.
-        if (!string.IsNullOrWhiteSpace(request.DeviceDefaultPassword))
-            settings.DeviceDefaultPassword = request.DeviceDefaultPassword.Trim();
-        if (request.ClearDeviceDefaultPassword)
-            settings.DeviceDefaultPassword = string.Empty;
+        // Segredos: novo valor = trocar; Clear* = apagar (volta a herdar/fábrica); omitido = manter.
+        if (!string.IsNullOrWhiteSpace(request.DeviceDefaultCommunicationPassword))
+            settings.DeviceDefaultCommunicationPassword = request.DeviceDefaultCommunicationPassword.Trim();
+        if (request.ClearDeviceDefaultCommunicationPassword)
+            settings.DeviceDefaultCommunicationPassword = string.Empty;
+        if (!string.IsNullOrWhiteSpace(request.DeviceDefaultApiPassword))
+            settings.DeviceDefaultApiPassword = request.DeviceDefaultApiPassword.Trim();
+        if (request.ClearDeviceDefaultApiPassword)
+            settings.DeviceDefaultApiPassword = string.Empty;
         if (!string.IsNullOrWhiteSpace(request.HomeAssistantToken))
             settings.HomeAssistantToken = request.HomeAssistantToken.Trim();
         if (request.ClearHomeAssistantToken)
@@ -179,6 +190,56 @@ public class SettingsController : ControllerBase
     {
         var (ok, message) = await _ha.TestAsync(ct);
         return Ok(new { ok, message });
+    }
+
+    /// <summary>
+    /// Upload da imagem base da tela de boas-vindas: valida, re-encoda como JPEG e salva fora
+    /// do diretório público; o caminho passa a valer imediatamente (WelcomeBaseImagePath).
+    /// </summary>
+    [HttpPost("welcome-image")]
+    [RequestSizeLimit(10 * 1024 * 1024)]
+    public async Task<IActionResult> UploadWelcomeImage(IFormFile? file, CancellationToken ct)
+    {
+        if (file is null || file.Length == 0)
+            return BadRequest("Envie um arquivo de imagem (JPG ou PNG).");
+
+        string path;
+        int width, height;
+        try
+        {
+            await using var stream = file.OpenReadStream();
+            (path, width, height) = await _welcome.SaveBaseImageAsync(stream, ct);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ex.Message);
+        }
+
+        var settings = await GetOrCreateAsync(ct);
+        settings.WelcomeBaseImagePath = path;
+        settings.UpdatedAtUtc = DateTime.UtcNow;
+        settings.UpdatedByUsername = User.Identity?.Name;
+        await _db.SaveChangesAsync(ct);
+        _runtime.Invalidate();
+
+        return Ok(new { path, width, height });
+    }
+
+    /// <summary>Prévia da tela de boas-vindas com um nome de exemplo (usa a configuração EFETIVA — salve antes).</summary>
+    [HttpGet("welcome-image/preview")]
+    public async Task<IActionResult> PreviewWelcomeImage([FromQuery] string? name, CancellationToken ct)
+    {
+        var sample = string.IsNullOrWhiteSpace(name) ? "Maria da Silva" : name.Trim();
+        try
+        {
+            var bytes = await _welcome.RenderPreviewAsync(sample, ct);
+            return File(bytes, "image/jpeg");
+        }
+        catch (InvalidOperationException ex)
+        {
+            // Base/fonte ausente → mensagem acionável em vez de 500.
+            return BadRequest(ex.Message);
+        }
     }
 
     private async Task<SystemSettings> GetOrCreateAsync(CancellationToken ct)
