@@ -193,7 +193,11 @@ não implementadas" mais abaixo — a maioria virou item desta lista):
   + `GET .../event-photos` + `GET .../event-photos/{photoId}/image`, persistidas em `EventPhoto`.
 - **Leitura reversa / auditoria** (`ReadPersonDataBase`, Classe VII): compara os `UserCode`
   efetivamente cadastrados no controlador com as permissões do banco, sem persistir nada —
-  auditoria sob demanda em `GET /api/controllers/{id}/personnel-audit`.
+  auditoria sob demanda em `GET /api/controllers/{id}/personnel-audit` (faltantes vêm
+  enriquecidos com id/nome/código) ou de **todos os controladores de uma vez** em
+  `GET /api/controllers/personnel-audit-all` (leituras em paralelo com teto de concorrência;
+  falha de um aparelho não derruba os demais). Cada faltante pode ser reenviado
+  individualmente por `POST .../personnel-audit/repair/{userId}`.
 - **Cartões Mifare**: o SDK **não abstrai a estrutura de setor Mifare** (Apêndices 10-13 do
   protocolo) — só expõe `Person.CardData` (um `uint`). Por isso o suporte aqui se limita a
   associar um número de cartão a um usuário (`User.CardNumber`), enviado ao controlador
@@ -583,8 +587,10 @@ erro — vira timeout do nosso lado). Cheque nesta ordem:
    aparelhos cronicamente lentos, suba o `TimeoutMs` do cadastro (o upload de face já usa piso
    de 15 s).
 6. **Divergência de cadastro** (auditoria acusa usuários faltando apesar de "Synced"): use o
-   botão **"Reparar divergências"** na aba Auditoria — os faltantes voltam a Pending e são
-   re-enviados pela fila.
+   botão **"Auditar usuários em todos"** na tela de Controladores para varrer todos os
+   aparelhos de uma vez — cada faltante aparece com nome/código e botão **"Resincronizar"**
+   individual; a aba Auditoria da página de detalhes mantém o **"Reparar divergências"** que
+   re-envia todos os faltantes daquele aparelho de uma vez (voltam a Pending e entram na fila).
 7. **Aviso "Health-check caiu no TCP connect da porta do SDK"**: a sonda de presença esgotou os
    caminhos neutros (ping ICMP falhou e não há painel HTTP para testar) e está usando a porta
    do protocolo como último recurso — funciona, mas abre/derruba uma conexão no canal do

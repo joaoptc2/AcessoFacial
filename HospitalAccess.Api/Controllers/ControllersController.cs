@@ -495,6 +495,45 @@ public class ControllersController : ControllerBase
 
     // --- Leitura reversa / auditoria ---
 
+    /// <summary>Usuário apontado como "Faltando no dispositivo" pela auditoria — enriquecido para a tela oferecer o reenvio individual.</summary>
+    public sealed record AuditMissingUser(Guid UserId, uint UserCode, string Name, string Type);
+
+    private sealed record AuditReport(
+        List<AuditMissingUser> MissingOnDevice, List<uint> ExtraOnDevice, int DeviceCount, int ExpectedCount);
+
+    /// <summary>
+    /// Núcleo da auditoria (compartilhado entre a auditoria individual e a de todos os
+    /// controladores): compara os códigos lidos do aparelho com os usuários ATIVOS que têm
+    /// permissão nesta porta. Revogado/expirado NÃO deve estar no aparelho: a permissão dele
+    /// permanece no banco (para reativação), e contá-la aqui fazia um visitante revogado com
+    /// sucesso aparecer como "Faltando no dispositivo" para sempre — e um revogado que FICOU
+    /// no aparelho passava despercebido (ele aparece como "Extra", que é o estado verdadeiro).
+    /// </summary>
+    private async Task<AuditReport> BuildAuditReportAsync(Guid controllerId, HashSet<uint> onDevice, CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        var expected = await _db.Permissions.AsNoTracking()
+            .Where(p => p.ControllerId == controllerId
+                        && p.User!.RevokedAtUtc == null
+                        && (p.User.ValidUntil == null || p.User.ValidUntil > now))
+            .Select(p => new { p.UserId, p.User!.UserCode, p.User.Name, p.User.Type })
+            .ToListAsync(ct);
+
+        var expectedCodes = expected.Select(e => e.UserCode).ToHashSet();
+        var missing = expected
+            .Where(e => !onDevice.Contains(e.UserCode))
+            .GroupBy(e => e.UserCode).Select(g => g.First())
+            .OrderBy(e => e.Name)
+            .Select(e => new AuditMissingUser(e.UserId, e.UserCode, e.Name, e.Type.ToString()))
+            .ToList();
+
+        return new AuditReport(
+            missing,
+            onDevice.Except(expectedCodes).OrderBy(c => c).ToList(),
+            onDevice.Count,
+            expectedCodes.Count);
+    }
+
     /// <summary>Compara os usuários efetivamente cadastrados no controlador com as permissões no banco.</summary>
     [HttpGet("{id:guid}/personnel-audit")]
     [Authorize(Roles = "Admin,Operator")]
@@ -506,31 +545,78 @@ public class ControllersController : ControllerBase
         try
         {
             var onDevice = (await _gateway.ReadRegisteredUserCodesAsync(controller, ct)).ToHashSet();
-            // "Esperado" = usuários ATIVOS. Revogado/expirado NÃO deve estar no aparelho: a
-            // permissão dele permanece no banco (para reativação), e contá-la aqui fazia um
-            // visitante revogado com sucesso aparecer como "Faltando no dispositivo" para
-            // sempre — e um revogado que FICOU no aparelho passava despercebido (agora ele
-            // aparece como "Extra", que é o estado verdadeiro, com o botão de excluir).
-            var now = DateTime.UtcNow;
-            var expected = (await _db.Permissions
-                .Where(p => p.ControllerId == id
-                            && p.User!.RevokedAtUtc == null
-                            && (p.User.ValidUntil == null || p.User.ValidUntil > now))
-                .Select(p => p.User!.UserCode)
-                .ToListAsync(ct)).ToHashSet();
-
-            return Ok(new
-            {
-                MissingOnDevice = expected.Except(onDevice).ToList(),
-                ExtraOnDevice = onDevice.Except(expected).ToList(),
-                DeviceCount = onDevice.Count,
-                ExpectedCount = expected.Count,
-            });
+            return Ok(await BuildAuditReportAsync(id, onDevice, ct));
         }
         catch (Exception ex)
         {
             return StatusCode(502, new { error = ex.Message });
         }
+    }
+
+    /// <summary>
+    /// Auditoria de usuários em TODOS os controladores de uma vez: lê os códigos cadastrados
+    /// de cada aparelho em paralelo (concorrência limitada — cada leitura já é serializada por
+    /// aparelho pelo gate do gateway) e compara com o banco. Falha de um aparelho não derruba
+    /// os demais: o item correspondente sai com <c>error</c> preenchido.
+    /// </summary>
+    [HttpGet("personnel-audit-all")]
+    [Authorize(Roles = "Admin,Operator")]
+    public async Task<IActionResult> PersonnelAuditAll(CancellationToken ct)
+    {
+        var controllers = await _db.Controllers.AsNoTracking().OrderBy(c => c.Name).ToListAsync(ct);
+
+        // Só as LEITURAS DE DISPOSITIVO rodam em paralelo (teto de 4 — ~30 aparelhos numa rede
+        // sensível a rajadas). O cálculo do "esperado" usa o DbContext, que NÃO é thread-safe,
+        // então roda sequencial depois que todas as leituras terminam.
+        using var gate = new SemaphoreSlim(4);
+        var reads = await Task.WhenAll(controllers.Select(async controller =>
+        {
+            await gate.WaitAsync(ct);
+            try
+            {
+                var codes = (await _gateway.ReadRegisteredUserCodesAsync(controller, ct)).ToHashSet();
+                return (Controller: controller, Codes: (HashSet<uint>?)codes, Error: (string?)null);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                return (Controller: controller, Codes: null, Error: ex.Message);
+            }
+            finally { gate.Release(); }
+        }));
+
+        var results = new List<object>(reads.Length);
+        foreach (var read in reads)
+        {
+            if (read.Codes is null)
+            {
+                results.Add(new
+                {
+                    ControllerId = read.Controller.Id,
+                    ControllerName = read.Controller.Name,
+                    Error = read.Error,
+                    MissingOnDevice = (List<AuditMissingUser>?)null,
+                    ExtraOnDevice = (List<uint>?)null,
+                    DeviceCount = (int?)null,
+                    ExpectedCount = (int?)null,
+                });
+                continue;
+            }
+
+            var report = await BuildAuditReportAsync(read.Controller.Id, read.Codes, ct);
+            results.Add(new
+            {
+                ControllerId = read.Controller.Id,
+                ControllerName = read.Controller.Name,
+                Error = (string?)null,
+                MissingOnDevice = (List<AuditMissingUser>?)report.MissingOnDevice,
+                ExtraOnDevice = (List<uint>?)report.ExtraOnDevice,
+                DeviceCount = (int?)report.DeviceCount,
+                ExpectedCount = (int?)report.ExpectedCount,
+            });
+        }
+
+        return Ok(new { GeneratedAtUtc = DateTime.UtcNow, Results = results });
     }
 
     /// <summary>
@@ -590,6 +676,48 @@ public class ControllersController : ControllerBase
             await AuditAsync(controller, "RepararAuditoria", success: false, error: ex.Message, ct);
             return StatusCode(502, new { error = ex.Message });
         }
+    }
+
+    /// <summary>
+    /// Reenvia UM usuário apontado como "Faltando no dispositivo" pela auditoria. O resync
+    /// comum não serve aqui: ele só reseta linhas Failed, e a divergência típica é uma linha
+    /// SYNCED com o usuário ausente do aparelho — o SyncUserAsync a pularia como "já ok".
+    /// Este endpoint volta a linha desta porta para Pending (qualquer estado, exceto conflito
+    /// de duplicidade, que tem fluxo próprio) e enfileira; sem linha, só enfileira (a
+    /// sincronização cria o status ao enviar).
+    /// </summary>
+    [HttpPost("{id:guid}/personnel-audit/repair/{userId:guid}")]
+    [Authorize(Roles = "Admin,Operator")]
+    public async Task<IActionResult> RepairPersonnelAuditUser(Guid id, Guid userId, CancellationToken ct)
+    {
+        var controller = await _db.Controllers.FirstOrDefaultAsync(c => c.Id == id, ct);
+        if (controller is null) return NotFound();
+        var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == userId, ct);
+        if (user is null) return NotFound(new { error = "Usuário não encontrado." });
+
+        var now = DateTime.UtcNow;
+        if (user.RevokedAtUtc != null || (user.ValidUntil != null && user.ValidUntil <= now))
+            return Conflict(new { error = "Usuário revogado/expirado não é reenviado ao aparelho." });
+        if (!await _db.Permissions.AnyAsync(p => p.ControllerId == id && p.UserId == userId, ct))
+            return Conflict(new { error = "O usuário não tem permissão nesta porta." });
+
+        var status = await _db.SyncStatuses
+            .FirstOrDefaultAsync(s => s.ControllerId == id && s.UserId == userId, ct);
+        if (status is not null)
+        {
+            if (status.ConflictUserCode != null)
+                return Conflict(new { error = "Há um conflito de face duplicada nesta porta — resolva pelo fluxo de conflito (substituir/manter)." });
+            status.State = SyncState.Pending;
+            status.RetryCount = 0;
+            status.NextRetryAtUtc = null;
+            status.LastError = null;
+            status.UpdatedAt = now;
+            await _db.SaveChangesAsync(ct);
+        }
+
+        _syncQueue.EnqueueSync(userId);
+        await AuditAsync(controller, $"ReenviarUsuário#{user.UserCode}", success: true, error: null, ct);
+        return Accepted(new { message = "Reenvio enfileirado." });
     }
 
     /// <summary>

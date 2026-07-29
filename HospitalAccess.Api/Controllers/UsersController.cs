@@ -42,15 +42,37 @@ public class UsersController : ControllerBase
         _logger = logger;
     }
 
-    /// <summary>Lista os usuários permanentes (visitantes ficam em /api/visitors).</summary>
+    /// <summary>
+    /// Lista os usuários permanentes PAGINADOS (visitantes ficam em /api/visitors). Busca por
+    /// nome (case-insensitive) ou código exato; filtro opcional por grupo. Resposta no padrão
+    /// {total, page, pageSize, items}.
+    /// </summary>
     [HttpGet]
-    public async Task<IActionResult> List(CancellationToken ct)
+    public async Task<IActionResult> List(
+        [FromQuery] int page = 1, [FromQuery] int pageSize = 25,
+        [FromQuery] string? search = null, [FromQuery] Guid? groupId = null,
+        CancellationToken ct = default)
     {
-        var users = await _db.Users
-            .Where(u => u.Type == UserType.Permanent)
-            .Include(u => u.Group)
-            .Include(u => u.Permissions).ThenInclude(p => p.Controller)
-            .OrderBy(u => u.Name)
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 200);
+
+        var query = _db.Users.Where(u => u.Type == UserType.Permanent);
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            // ToLower().Contains traduz para strpos(lower(...)) no Npgsql — sem curinga de LIKE
+            // para escapar. Termo todo numérico também casa o código exato do usuário.
+            var term = search.Trim().ToLowerInvariant();
+            query = uint.TryParse(term, out var code)
+                ? query.Where(u => u.Name.ToLower().Contains(term) || u.UserCode == code)
+                : query.Where(u => u.Name.ToLower().Contains(term));
+        }
+        if (groupId is not null)
+            query = query.Where(u => u.GroupId == groupId);
+
+        var total = await query.CountAsync(ct);
+        var items = await query
+            .OrderBy(u => u.Name).ThenBy(u => u.Id) // desempate estável entre páginas
+            .Skip((page - 1) * pageSize).Take(pageSize)
             .Select(u => new
             {
                 u.Id,
@@ -69,7 +91,7 @@ public class UsersController : ControllerBase
             })
             .ToListAsync(ct);
 
-        return Ok(users);
+        return Ok(new { total, page, pageSize, items });
     }
 
     [HttpGet("{id:guid}")]

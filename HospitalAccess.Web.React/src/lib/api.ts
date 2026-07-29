@@ -197,11 +197,35 @@ export interface KioskSettings {
   livenessSimilarity: number;
 }
 
+// Usuário "Faltando no dispositivo" — enriquecido para oferecer o reenvio individual.
+export interface AuditMissingUser {
+  userId: string;
+  userCode: number;
+  name: string;
+  type: string; // "Permanent" | "Visitor"
+}
+
 export interface PersonnelAudit {
-  missingOnDevice: number[];
+  missingOnDevice: AuditMissingUser[];
   extraOnDevice: number[];
   deviceCount: number;
   expectedCount: number;
+}
+
+// Auditoria de todos os controladores: falha de um aparelho vem em `error` (demais campos null).
+export interface PersonnelAuditAllItem {
+  controllerId: string;
+  controllerName: string;
+  error: string | null;
+  missingOnDevice: AuditMissingUser[] | null;
+  extraOnDevice: number[] | null;
+  deviceCount: number | null;
+  expectedCount: number | null;
+}
+
+export interface PersonnelAuditAllResult {
+  generatedAtUtc: string;
+  results: PersonnelAuditAllItem[];
 }
 
 export interface EventPhotoListItem {
@@ -281,6 +305,13 @@ export interface UserListItemDto {
   createdAtUtc: string;
   revokedAtUtc: string | null;
   controllers: UserControllerRef[];
+}
+
+export interface UserListPage {
+  total: number;
+  page: number;
+  pageSize: number;
+  items: UserListItemDto[];
 }
 
 /** Campos de perfil opcionais compartilhados por criação/edição. */
@@ -754,8 +785,11 @@ export const api = {
 
   // ---- Auditoria / leitura reversa ----
   getPersonnelAudit: (id: string) => request<PersonnelAudit>(`/controllers/${id}/personnel-audit`),
+  getPersonnelAuditAll: () => request<PersonnelAuditAllResult>("/controllers/personnel-audit-all"),
   repairPersonnelAudit: (id: string) =>
     request<{ repaired: number; enqueued: number }>(`/controllers/${id}/personnel-audit/repair`, { method: "POST" }),
+  repairPersonnelAuditUser: (id: string, userId: string) =>
+    request<{ message: string }>(`/controllers/${id}/personnel-audit/repair/${userId}`, { method: "POST" }),
 
   // ---- Foto do evento ----
   downloadEventPhotos: (id: string, quantity: number) =>
@@ -779,7 +813,8 @@ export const api = {
     }),
 
   // ---- Usuários permanentes ----
-  getUsers: () => request<UserListItemDto[]>("/users"),
+  getUsers: (params: { page: number; pageSize: number; search?: string; groupId?: string }) =>
+    request<UserListPage>(`/users${buildQuery(params)}`),
   getUser: (id: string) => request<UserDetailDto>(`/users/${id}`),
   createUser: (form: FormData) => request<{ id: string; userCode: number }>("/users", { method: "POST", body: form }),
   updateUser: (id: string, form: FormData) => request<void>(`/users/${id}`, { method: "PUT", body: form }),

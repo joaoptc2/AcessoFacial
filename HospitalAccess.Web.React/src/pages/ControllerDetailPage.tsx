@@ -204,6 +204,21 @@ export function ControllerDetailPage() {
     }
   }
 
+  async function resyncMissingUser(userId: string, name: string) {
+    if (!id) return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await api.repairPersonnelAuditUser(id, userId);
+      setNotice(`Reenvio de "${name}" enfileirado. Compare de novo em alguns minutos.`);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Falha ao reenviar o usuário.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function deleteExtraFromDevice(code: number) {
     if (!id) return;
     if (!window.confirm(`Excluir o usuário ${code} diretamente deste controlador?`)) return;
@@ -602,13 +617,21 @@ export function ControllerDetailPage() {
                     <p className="text-muted">Nenhum.</p>
                   ) : (
                     <>
-                      <ul>
-                        {audit.missingOnDevice.map((code) => (
-                          <li key={code}>{code}</li>
+                      <ul style={{ listStyle: "none", paddingLeft: 0 }}>
+                        {audit.missingOnDevice.map((u) => (
+                          <li key={u.userId} style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.3rem" }}>
+                            <span>
+                              {u.name} <span className="text-muted">#{u.userCode}</span>
+                              {u.type === "Visitor" && <span className="pill" style={{ marginLeft: "0.4rem" }}>Visitante</span>}
+                            </span>
+                            <button className="btn btn-outline btn-sm" disabled={busy} onClick={() => resyncMissingUser(u.userId, u.name)}>
+                              Resincronizar
+                            </button>
+                          </li>
                         ))}
                       </ul>
                       <button className="btn btn-primary btn-sm" disabled={busy} onClick={repairAudit}>
-                        Reparar divergências (re-enviar faltantes)
+                        Reparar divergências (re-enviar todos os faltantes)
                       </button>
                     </>
                   )}
