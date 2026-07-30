@@ -41,6 +41,9 @@ public sealed class DeviceHealthBackgroundService : BackgroundService
     /// <summary>Aviso de fallback na porta do SDK: 1× POR CONTROLADOR por processo (um flag global silenciaria os demais aparelhos que caíssem no fallback depois do primeiro).</summary>
     private readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, byte> _sdkFallbackWarnedByController = new();
 
+    /// <summary>Throttle da varredura de auto-relocalização (1 broadcast cobre TODOS os offline do ciclo).</summary>
+    private DateTime _lastRelocateScanUtc = DateTime.MinValue;
+
     public DeviceHealthBackgroundService(IServiceScopeFactory scopeFactory, IDeviceGateway gateway,
         IOptions<HealthCheckOptions> options, ILogger<DeviceHealthBackgroundService> logger)
     {
@@ -85,7 +88,7 @@ public sealed class DeviceHealthBackgroundService : BackgroundService
 
         var sw = Stopwatch.StartNew();
         var reachable = 0;
-        var unreachable = new System.Collections.Concurrent.ConcurrentBag<string>();
+        var offlineControllers = new System.Collections.Concurrent.ConcurrentBag<Domain.Entities.Controller>();
         using var gate = new SemaphoreSlim(Math.Max(1, _options.MaxParallelChecks));
         var tasks = controllers.Select(async controller =>
         {
@@ -93,7 +96,7 @@ public sealed class DeviceHealthBackgroundService : BackgroundService
             try
             {
                 if (await CheckOneAsync(controller, ct)) Interlocked.Increment(ref reachable);
-                else unreachable.Add($"{controller.Name} ({controller.IpAddress})");
+                else offlineControllers.Add(controller);
             }
             finally
             {
@@ -102,6 +105,7 @@ public sealed class DeviceHealthBackgroundService : BackgroundService
         });
         await Task.WhenAll(tasks);
         sw.Stop();
+        var unreachable = offlineControllers.Select(c => $"{c.Name} ({c.IpAddress})").ToList();
 
         var offline = controllers.Count - reachable;
         // Nomeia os inalcançáveis na própria linha (até 5) — sem isso o operador via a contagem
@@ -129,6 +133,57 @@ public sealed class DeviceHealthBackgroundService : BackgroundService
         {
             _logger.LogInformation("Health-check: {Reach}/{Total} alcançáveis em {Ms}ms.",
                 reachable, controllers.Count, sw.ElapsedMilliseconds);
+        }
+
+        if (offline > 0) await TryRelocateOfflineAsync(offlineControllers.ToList(), ct);
+    }
+
+    /// <summary>
+    /// Rede de segurança para o MAC ALEATÓRIO dos 8190H: em DHCP, o IP troca no reboot e o
+    /// aparelho "some" (as sondas discam para o IP cadastrado). Com aparelho(s) offline no ciclo,
+    /// roda UMA varredura UDP broadcast (throttle global) e, para cada SN cadastrado que responder
+    /// com IP diferente, atualiza o cadastro sozinho. Broadcast não cruza VLAN — fora da L2 dos
+    /// aparelhos a varredura apenas não encontra nada (sem efeito colateral).
+    /// </summary>
+    private async Task TryRelocateOfflineAsync(List<Domain.Entities.Controller> offline, CancellationToken ct)
+    {
+        if (!_options.AutoRelocateBySn) return;
+        var scanInterval = TimeSpan.FromMinutes(Math.Max(1, _options.RelocateScanMinutes));
+        if (DateTime.UtcNow - _lastRelocateScanUtc < scanInterval) return;
+        _lastRelocateScanUtc = DateTime.UtcNow;
+
+        try
+        {
+            var found = await DeviceDiscovery.SweepAsync(
+                _gateway, DeviceDiscovery.DefaultPorts, TimeSpan.FromSeconds(4), ct);
+            if (found.Count == 0) return;
+
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AccessDbContext>();
+            foreach (var controller in offline)
+            {
+                var match = RelocateRules.Match(controller.SerialNumber, controller.IpAddress, found);
+                if (match.Outcome != RelocateRules.Outcome.Moved) continue;
+
+                var newIp = match.DiscoveredIp!;
+                var newApiBaseUrl = RelocateRules.FollowDerivedApiBaseUrl(controller.ApiBaseUrl, controller.IpAddress, newIp);
+                await db.Controllers.Where(c => c.Id == controller.Id)
+                    .ExecuteUpdateAsync(s => s
+                        .SetProperty(c => c.IpAddress, newIp)
+                        .SetProperty(c => c.ApiBaseUrl, newApiBaseUrl), ct);
+                _logger.LogWarning(
+                    "Auto-relocalização: o controlador {Name} (SN {Sn}) respondeu à varredura em {NewIp} — cadastro atualizado de {OldIp} para {NewIp}. " +
+                    "Causa típica: DHCP + MAC aleatório; fixe IP estático na aba Rede para não repetir.",
+                    controller.Name, controller.SerialNumber, newIp, controller.IpAddress, newIp);
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Falha na varredura de auto-relocalização por SN.");
         }
     }
 

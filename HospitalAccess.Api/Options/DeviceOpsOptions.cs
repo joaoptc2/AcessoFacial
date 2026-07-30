@@ -91,4 +91,18 @@ public sealed class HealthCheckOptions
     /// aparelho — prefira liberar ICMP ou configurar ApiBaseUrl e desligar isto.
     /// </summary>
     public bool AllowSdkPortFallback { get; set; } = true;
+
+    /// <summary>
+    /// Auto-relocalização por SN: quando um ciclo encontra aparelho(s) inalcançável(is), roda UMA
+    /// varredura UDP broadcast e, se o SN cadastrado responder com IP DIFERENTE, atualiza o
+    /// cadastro sozinho (o MAC aleatório dos 8190H troca o IP no reboot quando em DHCP). O
+    /// broadcast não cruza VLAN — em servidor fora da L2 dos aparelhos a varredura só não acha nada.
+    /// </summary>
+    public bool AutoRelocateBySn { get; set; } = true;
+
+    /// <summary>
+    /// Intervalo mínimo entre varreduras de auto-relocalização (minutos). As portas UDP varridas
+    /// são as padrão do sistema (8101 de fábrica + 60000 legado — ver DeviceDiscovery).
+    /// </summary>
+    public int RelocateScanMinutes { get; set; } = 10;
 }

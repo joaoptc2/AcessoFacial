@@ -527,7 +527,7 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
             lock (found)
             {
                 if (!found.Exists(f => f.SerialNumber == result.SN))
-                    found.Add(new DiscoveredController(result.SN, result.TCP?.mIP ?? string.Empty));
+                    found.Add(new DiscoveredController(result.SN, result.TCP?.mIP ?? string.Empty, result.TCP?.mMAC ?? string.Empty));
             }
         }
 

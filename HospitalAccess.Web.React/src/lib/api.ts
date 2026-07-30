@@ -155,6 +155,16 @@ export interface SyncOverviewDto {
 export interface DiscoveredController {
   serialNumber: string;
   ipAddress: string;
+  // MAC reportado na varredura. Nos 8190H é ALEATÓRIO (muda a cada reinício) — serve para
+  // conferência pontual, não para reserva DHCP.
+  mac: string;
+}
+
+export interface RelocateResult {
+  moved: boolean;
+  oldIp?: string;
+  ipAddress: string;
+  message: string;
 }
 
 export interface ControllerNetworkInfo {
@@ -730,8 +740,9 @@ export const api = {
     request<void>(`/controllers/${id}`, { method: "PUT", body: JSON.stringify(body) }),
   deleteController: (id: string) => request<void>(`/controllers/${id}`, { method: "DELETE" }),
 
-  discoverControllers: (udpPort = 60000, scanSeconds = 4) =>
-    request<DiscoveredController[]>(`/controllers/discover?udpPort=${udpPort}&scanSeconds=${scanSeconds}`, {
+  // Sem udpPort: o servidor varre as portas padrão (8101 de fábrica + 60000 legado) e mescla.
+  discoverControllers: (udpPort?: number, scanSeconds?: number) =>
+    request<DiscoveredController[]>(`/controllers/discover${buildQuery({ udpPort, scanSeconds })}`, {
       method: "POST",
     }),
 
@@ -767,6 +778,8 @@ export const api = {
   getNetwork: (id: string) => request<ControllerNetworkInfo>(`/controllers/${id}/network`),
   updateNetwork: (id: string, body: ControllerNetworkInfo) =>
     request<void>(`/controllers/${id}/network`, { method: "PUT", body: JSON.stringify(body) }),
+  relocateController: (id: string) =>
+    request<RelocateResult>(`/controllers/${id}/relocate`, { method: "POST" }),
 
   // ---- Relógio ----
   getClock: (id: string) => request<string>(`/controllers/${id}/clock`),

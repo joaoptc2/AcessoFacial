@@ -597,6 +597,18 @@ erro — vira timeout do nosso lado). Cheque nesta ordem:
    protocolo a cada ciclo. Saída: liberar ICMP até o aparelho **ou** preencher o `ApiBaseUrl`
    dele (ex.: `http://192.168.19.197`); depois, desligue `HealthCheck:AllowSdkPortFallback`
    no appsettings. O aviso sai uma vez por controlador a cada subida do serviço.
+8. **IP que muda sozinho / MAC aleatório**: os 8190H usam MAC ALEATÓRIO que muda a cada
+   reinício — reserva DHCP por MAC (UniFi etc.) não segura o IP. Prática recomendada:
+   **IP estático no próprio aparelho** — aba Rede da página de detalhes, botão **"Fixar IP
+   atual (desligar DHCP)"** (ou desmarcando "Obter IP automaticamente"); gravar um IP novo
+   pela aba já atualiza o cadastro junto. Rede de segurança: se um aparelho "sumir" porque o
+   IP trocou, o health-check roda uma varredura UDP e **relocaliza pelo SN** sozinho
+   (`HealthCheck:AutoRelocateBySn`, 1 varredura a cada `RelocateScanMinutes` no máximo);
+   também dá para forçar pelo botão **"Relocalizar por SN"** no modal Controlar. Limite
+   físico: broadcast UDP não cruza VLAN — o servidor precisa estar na mesma L2 dos
+   aparelhos. Todas as varreduras ("Detectar SN", "Descobrir", relocalização) testam as
+   portas UDP **8101** (padrão de fábrica, a que o demo oficial usa) e **60000** (legado)
+   e mesclam os resultados — aparelho recém-tirado da caixa aparece sem configurar nada.
 8. **Visitante revogado/excluído e a contagem do aparelho**: a remoção usa DOIS canais — o
    painel HTTP (`People/Delete`, validado em hardware: remove pessoa+QR; só onde há
    `ApiBaseUrl`) e o SDK (`DeletePerson`, **verificado**: falha reportada pelo aparelho vira

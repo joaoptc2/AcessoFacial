@@ -5,6 +5,7 @@ import {
   ApiError,
   type ControllerConnectionMode,
   type ControllerDto,
+  type DiscoveredController,
   type PersonnelAuditAllResult,
   type SyncStatusDto,
 } from "../lib/api";
@@ -69,12 +70,13 @@ export function ControllersPage() {
   const [editingOriginalIp, setEditingOriginalIp] = useState("");
   const [detectingSn, setDetectingSn] = useState(false);
   const [discovering, setDiscovering] = useState(false);
-  const [discovered, setDiscovered] = useState<{ serialNumber: string; ipAddress: string }[] | null>(null);
+  const [discovered, setDiscovered] = useState<DiscoveredController[] | null>(null);
 
   const [modalController, setModalController] = useState<ControllerDto | null>(null);
   const [doorResult, setDoorResult] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<string | null>(null);
   const [syncStatuses, setSyncStatuses] = useState<SyncStatusDto[]>([]);
+  const [relocating, setRelocating] = useState(false);
 
   // Auditoria de todos os controladores de uma vez (leituras em paralelo no servidor).
   const [auditAll, setAuditAll] = useState<PersonnelAuditAllResult | null>(null);
@@ -326,6 +328,27 @@ export function ControllersPage() {
     setSyncStatuses(await api.getSyncStatus(modalController.id));
   }
 
+  /** Varredura UDP pelo SN: aparelho que trocou de IP (DHCP + MAC aleatório) re-encontra o cadastro. */
+  async function runRelocate() {
+    if (!modalController) return;
+    setRelocating(true);
+    setSyncStatuses([]);
+    setDoorResult(null);
+    setTestResult(null);
+    try {
+      const result = await api.relocateController(modalController.id);
+      setTestResult(result.message);
+      if (result.moved) {
+        setModalController({ ...modalController, ipAddress: result.ipAddress });
+        await load();
+      }
+    } catch (err) {
+      setTestResult(`Falha: ${err instanceof ApiError ? err.message : "erro inesperado"}`);
+    } finally {
+      setRelocating(false);
+    }
+  }
+
   async function resolveConflict(userId: string, action: "replace" | "keep") {
     if (!modalController) return;
     try {
@@ -373,7 +396,7 @@ export function ControllersPage() {
             <p className="text-muted" style={{ marginTop: "0.5rem" }}>
               {discovered.length === 0
                 ? "Nenhum controlador respondeu à varredura (esperado sem hardware real acessível)."
-                : discovered.map((d) => `${d.serialNumber} — ${d.ipAddress}`).join(", ")}
+                : discovered.map((d) => `${d.serialNumber} — ${d.ipAddress}${d.mac ? ` (MAC ${d.mac})` : ""}`).join(", ")}
             </p>
           )}
         </>
@@ -741,6 +764,16 @@ export function ControllersPage() {
             <button className="btn btn-outline btn-sm" onClick={runSyncStatus}>
               Status de sincronização
             </button>
+            {isAdminOrOperator && (
+              <button
+                className="btn btn-outline btn-sm"
+                onClick={runRelocate}
+                disabled={relocating}
+                title="Varredura UDP pela rede: se este SN responder com IP diferente do cadastrado, o cadastro é atualizado. Use quando o aparelho 'sumiu' após reiniciar (DHCP + MAC aleatório)."
+              >
+                {relocating ? "Procurando…" : "Relocalizar por SN"}
+              </button>
+            )}
           </div>
           {testResult && <p>{testResult}</p>}
           {syncStatuses.length > 0 && (
