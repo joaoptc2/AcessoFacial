@@ -340,7 +340,10 @@ Fluxos (`BedsController`, rota `api/beds`):
 (centralizado na horizontal por padrão) e salva `leito-<id>.jpg` em
 `BedManagement:WelcomeOutputDirectory` — servido publicamente em **`/welcome/*`** (fora do
 `wwwroot`, que o build do front pode limpar). A URL enviada ao HA é
-`{PublicBaseUrl}/welcome/leito-<id>.jpg?v=<ticks>` (cache-bust). ⚠️ **Privacidade**: a imagem
+`{PublicBaseUrl}/welcome/leito-<id>.jpg?v=<ticks>` (cache-bust). A arte final (e a prévia) é
+reduzida para caber em **1280×720** quando a base é maior: é o limite documentado do Google
+Cast para imagens — acima disso a TV baixa o arquivo e falha EM SILÊNCIO na exibição, ficando
+no splash do HA (visto em produção com base 1920×1080). ⚠️ **Privacidade**: a imagem
 pública contém o nome do paciente — mantenha o servidor restrito à rede interna.
 
 **Home Assistant** (`HomeAssistantClient`, seção `HomeAssistant` do `appsettings` — desabilitada
