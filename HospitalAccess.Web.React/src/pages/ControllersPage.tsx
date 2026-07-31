@@ -1,6 +1,14 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
-import { api, ApiError, type ControllerConnectionMode, type ControllerDto, type SyncStatusDto } from "../lib/api";
+import {
+  api,
+  ApiError,
+  type ControllerConnectionMode,
+  type ControllerDto,
+  type DiscoveredController,
+  type PersonnelAuditAllResult,
+  type SyncStatusDto,
+} from "../lib/api";
 import { Modal } from "../components/Modal";
 import { useAuth } from "../lib/AuthContext";
 
@@ -62,12 +70,20 @@ export function ControllersPage() {
   const [editingOriginalIp, setEditingOriginalIp] = useState("");
   const [detectingSn, setDetectingSn] = useState(false);
   const [discovering, setDiscovering] = useState(false);
-  const [discovered, setDiscovered] = useState<{ serialNumber: string; ipAddress: string }[] | null>(null);
+  const [discovered, setDiscovered] = useState<DiscoveredController[] | null>(null);
 
   const [modalController, setModalController] = useState<ControllerDto | null>(null);
   const [doorResult, setDoorResult] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<string | null>(null);
   const [syncStatuses, setSyncStatuses] = useState<SyncStatusDto[]>([]);
+  const [relocating, setRelocating] = useState(false);
+
+  // Auditoria de todos os controladores de uma vez (leituras em paralelo no servidor).
+  const [auditAll, setAuditAll] = useState<PersonnelAuditAllResult | null>(null);
+  const [auditing, setAuditing] = useState(false);
+  const [auditBusy, setAuditBusy] = useState(false);
+  const [auditNotice, setAuditNotice] = useState<string | null>(null);
+  const [auditError, setAuditError] = useState<string | null>(null);
 
   const load = async () => setControllers(await api.getControllers());
 
@@ -217,6 +233,52 @@ export function ControllersPage() {
     }
   }
 
+  async function runAuditAll() {
+    setAuditing(true);
+    setAuditError(null);
+    setAuditNotice(null);
+    try {
+      setAuditAll(await api.getPersonnelAuditAll());
+    } catch (err) {
+      setAuditError(err instanceof ApiError ? err.message : "Falha ao auditar os controladores.");
+    } finally {
+      setAuditing(false);
+    }
+  }
+
+  /** Reenvia UM usuário faltante para UM controlador (a divergência típica é linha Synced com o aparelho vazio). */
+  async function resyncFromAudit(controllerId: string, userId: string, name: string) {
+    setAuditBusy(true);
+    setAuditError(null);
+    setAuditNotice(null);
+    try {
+      await api.repairPersonnelAuditUser(controllerId, userId);
+      setAuditNotice(`Reenvio de "${name}" enfileirado. Audite de novo em alguns minutos para confirmar.`);
+    } catch (err) {
+      setAuditError(err instanceof ApiError ? err.message : "Falha ao reenviar o usuário.");
+    } finally {
+      setAuditBusy(false);
+    }
+  }
+
+  /** Reenvia TODOS os faltantes de um controlador (mesmo reparo do botão da página de detalhes). */
+  async function repairFromAudit(controllerId: string, controllerName: string, missingCount: number) {
+    if (!window.confirm(`Re-enviar ${missingCount} usuário(s) faltante(s) para "${controllerName}"?`)) return;
+    setAuditBusy(true);
+    setAuditError(null);
+    setAuditNotice(null);
+    try {
+      const result = await api.repairPersonnelAudit(controllerId);
+      setAuditNotice(
+        `${controllerName}: ${result.repaired} usuário(s) marcados para re-envio (${result.enqueued} na fila). Audite de novo em alguns minutos.`,
+      );
+    } catch (err) {
+      setAuditError(err instanceof ApiError ? err.message : "Falha ao reparar divergências.");
+    } finally {
+      setAuditBusy(false);
+    }
+  }
+
   function openModal(controller: ControllerDto) {
     setModalController(controller);
     setDoorResult(null);
@@ -266,6 +328,27 @@ export function ControllersPage() {
     setSyncStatuses(await api.getSyncStatus(modalController.id));
   }
 
+  /** Varredura UDP pelo SN: aparelho que trocou de IP (DHCP + MAC aleatório) re-encontra o cadastro. */
+  async function runRelocate() {
+    if (!modalController) return;
+    setRelocating(true);
+    setSyncStatuses([]);
+    setDoorResult(null);
+    setTestResult(null);
+    try {
+      const result = await api.relocateController(modalController.id);
+      setTestResult(result.message);
+      if (result.moved) {
+        setModalController({ ...modalController, ipAddress: result.ipAddress });
+        await load();
+      }
+    } catch (err) {
+      setTestResult(`Falha: ${err instanceof ApiError ? err.message : "erro inesperado"}`);
+    } finally {
+      setRelocating(false);
+    }
+  }
+
   async function resolveConflict(userId: string, action: "replace" | "keep") {
     if (!modalController) return;
     try {
@@ -301,17 +384,113 @@ export function ControllersPage() {
 
       {isAdminOrOperator && (
         <>
-          <button className="btn btn-outline btn-sm" onClick={handleDiscover} disabled={discovering}>
-            {discovering ? "Procurando..." : "Descobrir controladores na rede"}
-          </button>
+          <div className="btn-group">
+            <button className="btn btn-outline btn-sm" onClick={handleDiscover} disabled={discovering}>
+              {discovering ? "Procurando..." : "Descobrir controladores na rede"}
+            </button>
+            <button className="btn btn-outline btn-sm" onClick={runAuditAll} disabled={auditing}>
+              {auditing ? "Auditando… (lê cada aparelho)" : "Auditar usuários em todos"}
+            </button>
+          </div>
           {discovered && (
             <p className="text-muted" style={{ marginTop: "0.5rem" }}>
               {discovered.length === 0
                 ? "Nenhum controlador respondeu à varredura (esperado sem hardware real acessível)."
-                : discovered.map((d) => `${d.serialNumber} — ${d.ipAddress}`).join(", ")}
+                : discovered.map((d) => `${d.serialNumber} — ${d.ipAddress}${d.mac ? ` (MAC ${d.mac})` : ""}`).join(", ")}
             </p>
           )}
         </>
+      )}
+
+      {isAdminOrOperator && (auditAll || auditError) && (
+        <div className="card" style={{ marginTop: "1rem" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: "0.75rem", flexWrap: "wrap" }}>
+            <h3 style={{ margin: 0, fontSize: "1.05rem" }}>Auditoria de usuários — todos os controladores</h3>
+            {auditAll && (
+              <span className="text-muted" style={{ fontSize: "0.85rem" }}>
+                {new Date(auditAll.generatedAtUtc).toLocaleString()}
+              </span>
+            )}
+          </div>
+          {auditError && <div className="alert alert-danger" style={{ marginTop: "0.75rem" }}>{auditError}</div>}
+          {auditNotice && <div className="alert alert-success" style={{ marginTop: "0.75rem" }}>{auditNotice}</div>}
+          {auditAll && (() => {
+            const unreachable = auditAll.results.filter((r) => r.error !== null);
+            const diverging = auditAll.results.filter(
+              (r) => r.error === null && ((r.missingOnDevice?.length ?? 0) > 0 || (r.extraOnDevice?.length ?? 0) > 0),
+            );
+            const okCount = auditAll.results.length - unreachable.length - diverging.length;
+            return (
+              <>
+                <p style={{ margin: "0.75rem 0" }}>
+                  {auditAll.results.length} controlador(es): <span className="pill pill-success">{okCount} em dia</span>{" "}
+                  {diverging.length > 0 && <span className="pill pill-warning">{diverging.length} com divergência</span>}{" "}
+                  {unreachable.length > 0 && <span className="pill pill-danger">{unreachable.length} inalcançáveis</span>}
+                </p>
+                {unreachable.map((r) => (
+                  <div key={r.controllerId} className="alert alert-danger" style={{ marginBottom: "0.5rem" }}>
+                    <strong>{r.controllerName}</strong>: {r.error}
+                  </div>
+                ))}
+                {diverging.map((r) => (
+                  <div key={r.controllerId} style={{ borderTop: "1px solid var(--border, #e2e8f0)", paddingTop: "0.75rem", marginTop: "0.75rem" }}>
+                    <p style={{ margin: "0 0 0.5rem" }}>
+                      <Link to={`/controllers/${r.controllerId}`} className="link-strong">
+                        {r.controllerName}
+                      </Link>{" "}
+                      — no aparelho: <strong>{r.deviceCount}</strong> · esperado: <strong>{r.expectedCount}</strong>
+                    </p>
+                    {(r.missingOnDevice?.length ?? 0) > 0 && (
+                      <div style={{ marginBottom: "0.5rem" }}>
+                        <p className="text-muted" style={{ margin: "0 0 0.3rem", fontSize: "0.85rem", textTransform: "uppercase" }}>
+                          Faltando no dispositivo
+                        </p>
+                        <ul style={{ listStyle: "none", paddingLeft: 0, margin: 0 }}>
+                          {r.missingOnDevice!.map((u) => (
+                            <li key={u.userId} style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.3rem" }}>
+                              <span>
+                                {u.name} <span className="text-muted">#{u.userCode}</span>
+                                {u.type === "Visitor" && <span className="pill" style={{ marginLeft: "0.4rem" }}>Visitante</span>}
+                              </span>
+                              <button
+                                className="btn btn-outline btn-sm"
+                                disabled={auditBusy}
+                                onClick={() => resyncFromAudit(r.controllerId, u.userId, u.name)}
+                              >
+                                Resincronizar
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                        {r.missingOnDevice!.length > 1 && (
+                          <button
+                            className="btn btn-primary btn-sm"
+                            style={{ marginTop: "0.3rem" }}
+                            disabled={auditBusy}
+                            onClick={() => repairFromAudit(r.controllerId, r.controllerName, r.missingOnDevice!.length)}
+                          >
+                            Resincronizar todos os faltantes
+                          </button>
+                        )}
+                      </div>
+                    )}
+                    {(r.extraOnDevice?.length ?? 0) > 0 && (
+                      <p className="text-muted" style={{ margin: 0, fontSize: "0.9rem" }}>
+                        Extra no dispositivo (não esperado): {r.extraOnDevice!.join(", ")} — exclua pela página de
+                        detalhes (aba Auditoria).
+                      </p>
+                    )}
+                  </div>
+                ))}
+                {diverging.length === 0 && unreachable.length === 0 && (
+                  <p className="text-muted" style={{ margin: 0 }}>
+                    Nenhuma divergência: todos os aparelhos têm exatamente os usuários esperados.
+                  </p>
+                )}
+              </>
+            );
+          })()}
+        </div>
       )}
 
       {isAdminOrOperator && (
@@ -585,6 +764,16 @@ export function ControllersPage() {
             <button className="btn btn-outline btn-sm" onClick={runSyncStatus}>
               Status de sincronização
             </button>
+            {isAdminOrOperator && (
+              <button
+                className="btn btn-outline btn-sm"
+                onClick={runRelocate}
+                disabled={relocating}
+                title="Varredura UDP pela rede: se este SN responder com IP diferente do cadastrado, o cadastro é atualizado. Use quando o aparelho 'sumiu' após reiniciar (DHCP + MAC aleatório)."
+              >
+                {relocating ? "Procurando…" : "Relocalizar por SN"}
+              </button>
+            )}
           </div>
           {testResult && <p>{testResult}</p>}
           {syncStatuses.length > 0 && (

@@ -119,7 +119,7 @@ public sealed class RuntimeSettingsProvider : IDeviceSecretDefaults, IDeviceHttp
             _bedDefaults.CenterHorizontally,
             row?.WelcomeFontSize ?? _bedDefaults.FontSize,
             Pick(row?.WelcomeFontColorHex, _bedDefaults.FontColorHex),
-            _bedDefaults.FontPath),
+            Pick(row?.WelcomeFontPath, _bedDefaults.FontPath)),
         row?.DeviceDefaultCommunicationPassword ?? string.Empty,
         row?.DeviceDefaultApiPassword ?? string.Empty);
 

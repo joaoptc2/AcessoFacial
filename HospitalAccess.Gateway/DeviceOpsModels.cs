@@ -14,8 +14,12 @@ public sealed record ControllerNetworkInfo(
     int ServerPort,
     bool AutoIp);
 
-/// <summary>Um controlador encontrado por varredura UDP na rede local (Apêndices 3/5).</summary>
-public sealed record DiscoveredController(string SerialNumber, string IpAddress);
+/// <summary>
+/// Um controlador encontrado por varredura UDP na rede local (Apêndices 3/5). O MAC vem no
+/// mesmo bloco de resposta (137 B do "IP Parameter") — atenção: nos 8190H ele é ALEATÓRIO e
+/// muda a cada reinício, então serve para conferência pontual, não para reserva DHCP.
+/// </summary>
+public sealed record DiscoveredController(string SerialNumber, string IpAddress, string Mac);
 
 /// <summary>Um feriado a ser gravado no controlador (Classe V).</summary>
 public sealed record HolidayEntry(byte Index, DateTime Date, bool RepeatsYearly, byte HolidayType);

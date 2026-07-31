@@ -1,47 +1,70 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, ApiError, type ControllerDto, type UserAuditLogEntry, type UserGroupDto, type UserListItemDto } from "../lib/api";
 import { UserForm } from "../components/UserForm";
 import { useAuth } from "../lib/AuthContext";
+
+const PAGE_SIZE = 25;
 
 export function UsersPage() {
   const { role } = useAuth();
   const canEdit = role === "Admin" || role === "Operator";
 
   const [users, setUsers] = useState<UserListItemDto[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
   const [groups, setGroups] = useState<UserGroupDto[]>([]);
   const [controllers, setControllers] = useState<ControllerDto[]>([]);
   const [creating, setCreating] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [groupFilter, setGroupFilter] = useState("");
   const [historyUserId, setHistoryUserId] = useState<string | null>(null);
   const [historyEntries, setHistoryEntries] = useState<UserAuditLogEntry[]>([]);
 
+  // Busca/filtro rodam no SERVIDOR (lista paginada): debounce para não consultar a cada tecla.
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(search.trim()), 400);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch, groupFilter]);
+
   const load = useCallback(async () => {
-    setUsers(await api.getUsers());
-    // Grupos/controladores só para o formulário (endpoints restritos a Admin/Operator); Recepção
-    // (só leitura) não os carrega, evitando 403.
-    if (canEdit) {
-      setGroups(await api.getUserGroups());
-      setControllers(await api.getControllers());
+    const result = await api.getUsers({
+      page,
+      pageSize: PAGE_SIZE,
+      search: debouncedSearch || undefined,
+      groupId: groupFilter || undefined,
+    });
+    // Página esvaziou (ex.: exclusão do último item): volta para a última página existente.
+    if (result.items.length === 0 && result.total > 0 && page > 1) {
+      setPage(Math.max(1, Math.ceil(result.total / PAGE_SIZE)));
+      return;
     }
-  }, [canEdit]);
+    setUsers(result.items);
+    setTotal(result.total);
+  }, [page, debouncedSearch, groupFilter]);
 
   useEffect(() => {
     load();
   }, [load]);
 
-  const filtered = useMemo(
-    () =>
-      users.filter(
-        (u) =>
-          (!search || u.name.toLowerCase().includes(search.toLowerCase()) || String(u.userCode).includes(search)) &&
-          (!groupFilter || u.groupId === groupFilter),
-      ),
-    [users, search, groupFilter],
-  );
+  // Grupos/controladores só para o formulário e o filtro (endpoints restritos a Admin/Operator);
+  // Recepção (só leitura) não os carrega, evitando 403.
+  useEffect(() => {
+    if (!canEdit) return;
+    (async () => {
+      setGroups(await api.getUserGroups());
+      setControllers(await api.getControllers());
+    })();
+  }, [canEdit]);
+
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   function startCreate() {
     setEditingId(null);
@@ -144,7 +167,7 @@ export function UsersPage() {
             </tr>
           </thead>
           <tbody>
-            {filtered.map((u) => (
+            {users.map((u) => (
               <Fragment key={u.id}>
                 <tr className={editingId === u.id ? "row-active" : undefined} style={u.revokedAtUtc ? { background: "var(--surface-alt)" } : undefined}>
                   <td>
@@ -238,8 +261,27 @@ export function UsersPage() {
                 )}
               </Fragment>
             ))}
+            {users.length === 0 && (
+              <tr>
+                <td colSpan={8} className="text-muted">
+                  {total === 0 && !debouncedSearch && !groupFilter ? "Nenhum usuário cadastrado." : "Nenhum usuário encontrado com os filtros atuais."}
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
+      </div>
+
+      <div className="btn-group" style={{ marginTop: "0.75rem", alignItems: "center" }}>
+        <button className="btn btn-outline btn-sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>
+          Anterior
+        </button>
+        <span className="text-muted" style={{ alignSelf: "center" }}>
+          página {page} de {totalPages} · {total} usuário{total === 1 ? "" : "s"}
+        </span>
+        <button className="btn btn-outline btn-sm" disabled={page >= totalPages} onClick={() => setPage(page + 1)}>
+          Próxima
+        </button>
       </div>
     </div>
   );

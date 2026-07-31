@@ -154,6 +154,36 @@ public sealed class WelcomeImageServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Upload_de_fonte_valida_salva_fora_do_publico_e_informa_a_familia()
+    {
+        CreateBaseImage();
+        var service = CreateService();
+
+        await using var ttf = File.OpenRead(FindFont());
+        var (path, familyName) = await service.SaveFontAsync(ttf);
+
+        // Ao lado da imagem base (pai do diretório público), nunca em /welcome/*.
+        Assert.Equal(Path.Combine(_root, "welcome-font.ttf"), path);
+        Assert.False(string.IsNullOrWhiteSpace(familyName));
+
+        // A fonte enviada passa a ser usada na geração (configuração aponta para ela).
+        var withUploaded = CreateService(o => o.FontPath = path);
+        var controllerId = Guid.NewGuid();
+        await withUploaded.GenerateAsync(controllerId, "Maria");
+        Assert.True(File.Exists(Path.Combine(_root, "out", WelcomeImageService.FileNameFor(controllerId))));
+    }
+
+    [Fact]
+    public async Task Upload_de_fonte_invalida_lanca_erro_claro()
+    {
+        var service = CreateService();
+        using var junk = new MemoryStream(new byte[] { 9, 9, 9, 9 });
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => service.SaveFontAsync(junk));
+        Assert.Contains("não é uma fonte", ex.Message);
+    }
+
+    [Fact]
     public async Task Sem_public_base_url_devolve_caminho_relativo()
     {
         CreateBaseImage();
@@ -190,14 +220,18 @@ public sealed class WelcomeImageServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task Fonte_ausente_lanca_erro_citando_a_configuracao()
+    public async Task Fonte_configurada_ausente_cai_no_fallback_de_sistema()
     {
+        // Cenário real de produção: servidor sem fonts-dejavu-core no caminho configurado.
+        // A sondagem deve achar QUALQUER fonte comum do sistema e a geração seguir normal.
         CreateBaseImage();
         var service = CreateService(o => o.FontPath = Path.Combine(_root, "nao-existe.ttf"));
+        var controllerId = Guid.NewGuid();
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => service.GenerateAsync(Guid.NewGuid(), "Maria"));
-        Assert.Contains("FontPath", ex.Message);
+        var url = await service.GenerateAsync(controllerId, "Maria");
+
+        Assert.True(File.Exists(Path.Combine(_root, "out", WelcomeImageService.FileNameFor(controllerId))));
+        Assert.Contains($"/welcome/leito-{controllerId:N}.jpg", url);
     }
 
     public void Dispose()

@@ -88,17 +88,59 @@ export function ControllerDetailPage() {
     if (Object.keys(updates).length > 0) setPhotoImages((prev) => ({ ...prev, ...updates }));
   }
 
-  async function saveNetwork() {
-    if (!id || !network) return;
+  // Mesmas regras do backend/demo oficial: valor errado torna o aparelho INALCANÇÁVEL.
+  function validateNetworkForm(n: ControllerNetworkInfo): string | null {
+    const mac = /^([A-Fa-f0-9]{2}-){5}[A-Fa-f0-9]{2}$/;
+    const ipv4 = /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
+    if (!mac.test(n.mac)) return "MAC inválido — use o formato AA-BB-CC-DD-EE-FF.";
+    if (!ipv4.test(n.ip)) return "IP inválido — informe um endereço IPv4 (ex.: 192.168.19.21).";
+    if (n.ip === "0.0.0.0") return "IP 0.0.0.0 não é permitido: o aparelho interpretaria como reset para 192.168.1.150.";
+    if (!ipv4.test(n.ipMask)) return "Máscara inválida (ex.: 255.255.255.0).";
+    if (!ipv4.test(n.ipGateway)) return "Gateway inválido — informe um endereço IPv4.";
+    if (n.dns && !ipv4.test(n.dns)) return "DNS inválido — informe um IPv4 ou deixe em branco.";
+    if (n.dnsBackup && !ipv4.test(n.dnsBackup)) return "DNS secundário inválido — informe um IPv4 ou deixe em branco.";
+    return null;
+  }
+
+  async function writeNetwork(info: ControllerNetworkInfo, confirmMessage: string) {
+    if (!id) return;
+    const validationError = validateNetworkForm(info);
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
+    if (!window.confirm(confirmMessage)) return;
     setBusy(true);
     setError(null);
+    setNotice(null);
     try {
-      await api.updateNetwork(id, network);
+      await api.updateNetwork(id, info);
+      setNetwork(info);
+      setNotice(
+        controller && info.ip !== controller.ipAddress
+          ? `Configuração gravada no aparelho — o cadastro acompanhou o IP novo (${info.ip}).`
+          : "Configuração de rede gravada no aparelho.",
+      );
+      setController(await api.getController(id));
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Falha ao salvar.");
     } finally {
       setBusy(false);
     }
+  }
+
+  async function saveNetwork() {
+    if (!network) return;
+    await writeNetwork(network, "Gravar esta configuração de rede no aparelho? Valores errados o tornam inalcançável até acesso físico.");
+  }
+
+  // Um clique para o que antes era painel a painel: mantém IP/MAC atuais e desliga o DHCP.
+  async function fixCurrentIp() {
+    if (!network) return;
+    await writeNetwork(
+      { ...network, autoIp: false },
+      `Fixar o IP atual (${network.ip}) neste aparelho, desligando o DHCP? Com o MAC aleatório dos 8190H, esta é a forma de o IP parar de mudar a cada reinício.`,
+    );
   }
 
   async function syncClock() {
@@ -199,6 +241,21 @@ export function ControllerDetailPage() {
       await loadPhotoImages(list);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Falha ao baixar fotos.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function resyncMissingUser(userId: string, name: string) {
+    if (!id) return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await api.repairPersonnelAuditUser(id, userId);
+      setNotice(`Reenvio de "${name}" enfileirado. Compare de novo em alguns minutos.`);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Falha ao reenviar o usuário.");
     } finally {
       setBusy(false);
     }
@@ -337,11 +394,25 @@ export function ControllerDetailPage() {
               </div>
             </div>
             <div className="alert" style={{ background: "#fffbeb", border: "1px solid #fde68a", color: "#92400e" }}>
-              Cuidado: um IP incorreto torna o controlador inacessível pela rede até acesso físico.
+              Cuidado: um IP incorreto torna o controlador inacessível pela rede até acesso físico. MAC no formato
+              AA-BB-CC-DD-EE-FF. Nos 8190H o MAC é <strong>aleatório a cada reinício</strong> — reserva DHCP por MAC não
+              funciona; com DHCP desligado (IP estático) o problema some.
             </div>
-            <button className="btn btn-primary" onClick={saveNetwork} disabled={busy}>
-              Salvar configuração de rede
-            </button>
+            <div className="btn-group">
+              <button className="btn btn-primary" onClick={saveNetwork} disabled={busy}>
+                Salvar configuração de rede
+              </button>
+              {network.autoIp && (
+                <button
+                  className="btn btn-outline"
+                  onClick={fixCurrentIp}
+                  disabled={busy}
+                  title="Mantém o IP e o MAC atuais e desliga o DHCP — o IP para de mudar a cada reinício."
+                >
+                  Fixar IP atual (desligar DHCP)
+                </button>
+              )}
+            </div>
           </div>
         ))}
 
@@ -602,13 +673,21 @@ export function ControllerDetailPage() {
                     <p className="text-muted">Nenhum.</p>
                   ) : (
                     <>
-                      <ul>
-                        {audit.missingOnDevice.map((code) => (
-                          <li key={code}>{code}</li>
+                      <ul style={{ listStyle: "none", paddingLeft: 0 }}>
+                        {audit.missingOnDevice.map((u) => (
+                          <li key={u.userId} style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.3rem" }}>
+                            <span>
+                              {u.name} <span className="text-muted">#{u.userCode}</span>
+                              {u.type === "Visitor" && <span className="pill" style={{ marginLeft: "0.4rem" }}>Visitante</span>}
+                            </span>
+                            <button className="btn btn-outline btn-sm" disabled={busy} onClick={() => resyncMissingUser(u.userId, u.name)}>
+                              Resincronizar
+                            </button>
+                          </li>
                         ))}
                       </ul>
                       <button className="btn btn-primary btn-sm" disabled={busy} onClick={repairAudit}>
-                        Reparar divergências (re-enviar faltantes)
+                        Reparar divergências (re-enviar todos os faltantes)
                       </button>
                     </>
                   )}

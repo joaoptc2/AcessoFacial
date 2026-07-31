@@ -34,7 +34,9 @@ public record UpdateSettingsRequest(
     string? WelcomePublicBaseUrl = null,
     string? WelcomeTextY = null,
     string? WelcomeFontSize = null,
-    string? WelcomeFontColorHex = null);
+    string? WelcomeFontColorHex = null,
+    // Caminho da fonte enviada ("" = voltar à fonte do sistema/appsettings; null = manter).
+    string? WelcomeFontPath = null);
 
 /// <summary>
 /// Configurações globais do sistema (linha única): retenção de dados (LGPD), formato do QR,
@@ -86,6 +88,7 @@ public class SettingsController : ControllerBase
             settings.WelcomeTextY,
             settings.WelcomeFontSize,
             settings.WelcomeFontColorHex,
+            settings.WelcomeFontPath,
             // Efetivo (banco-ou-appsettings), para a tela mostrar o que vale de fato.
             HomeAssistantEffective = new
             {
@@ -174,6 +177,8 @@ public class SettingsController : ControllerBase
             settings.WelcomeFontSize = fontSize;
         if (color is not null)
             settings.WelcomeFontColorHex = color.Length > 0 && !color.StartsWith('#') ? $"#{color}" : color;
+        if (request.WelcomeFontPath is not null)
+            settings.WelcomeFontPath = request.WelcomeFontPath.Trim();
 
         settings.UpdatedAtUtc = DateTime.UtcNow;
         settings.UpdatedByUsername = User.Identity?.Name;
@@ -223,6 +228,38 @@ public class SettingsController : ControllerBase
         _runtime.Invalidate();
 
         return Ok(new { path, width, height });
+    }
+
+    /// <summary>
+    /// Upload da fonte (TTF/OTF) usada para desenhar o nome do paciente: valida com o motor de
+    /// fontes, salva fora do diretório público e passa a valer imediatamente (WelcomeFontPath).
+    /// </summary>
+    [HttpPost("welcome-font")]
+    [RequestSizeLimit(5 * 1024 * 1024)]
+    public async Task<IActionResult> UploadWelcomeFont(IFormFile? file, CancellationToken ct)
+    {
+        if (file is null || file.Length == 0)
+            return BadRequest("Envie um arquivo de fonte (.ttf ou .otf).");
+
+        string path, familyName;
+        try
+        {
+            await using var stream = file.OpenReadStream();
+            (path, familyName) = await _welcome.SaveFontAsync(stream, ct);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ex.Message);
+        }
+
+        var settings = await GetOrCreateAsync(ct);
+        settings.WelcomeFontPath = path;
+        settings.UpdatedAtUtc = DateTime.UtcNow;
+        settings.UpdatedByUsername = User.Identity?.Name;
+        await _db.SaveChangesAsync(ct);
+        _runtime.Invalidate();
+
+        return Ok(new { path, familyName });
     }
 
     /// <summary>Prévia da tela de boas-vindas com um nome de exemplo (usa a configuração EFETIVA — salve antes).</summary>

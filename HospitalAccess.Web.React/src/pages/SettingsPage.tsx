@@ -37,6 +37,9 @@ export function SettingsPage() {
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadInfo, setUploadInfo] = useState<string | null>(null);
+  const [fontFile, setFontFile] = useState<File | null>(null);
+  const [uploadingFont, setUploadingFont] = useState(false);
+  const [fontInfo, setFontInfo] = useState<string | null>(null);
   const [previewName, setPreviewName] = useState("Maria da Silva");
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewing, setPreviewing] = useState(false);
@@ -85,6 +88,7 @@ export function SettingsPage() {
         welcomeTextY: settings.welcomeTextY === null ? "" : String(settings.welcomeTextY),
         welcomeFontSize: settings.welcomeFontSize === null ? "" : String(settings.welcomeFontSize),
         welcomeFontColorHex: settings.welcomeFontColorHex,
+        welcomeFontPath: settings.welcomeFontPath,
       });
       setCommPassword("");
       setClearCommPassword(false);
@@ -128,6 +132,23 @@ export function SettingsPage() {
       setPreviewError(err instanceof ApiError ? err.message : "Falha ao enviar a imagem.");
     } finally {
       setUploading(false);
+    }
+  }
+
+  async function uploadFont() {
+    if (!fontFile) return;
+    setUploadingFont(true);
+    setFontInfo(null);
+    setPreviewError(null);
+    try {
+      const result = await api.uploadWelcomeFont(fontFile);
+      setFontInfo(`Fonte "${result.familyName}" instalada — já vale para as próximas boas-vindas e prévias.`);
+      setFontFile(null);
+      setSettings(await api.getSettings());
+    } catch (err) {
+      setPreviewError(err instanceof ApiError ? err.message : "Falha ao enviar a fonte.");
+    } finally {
+      setUploadingFont(false);
     }
   }
 
@@ -344,6 +365,43 @@ export function SettingsPage() {
             </div>
           </div>
           {uploadInfo && <div className="alert alert-success">{uploadInfo}</div>}
+
+          <h4>
+            Fonte do nome{" "}
+            {settings.welcomeFontPath ? (
+              <span className="pill pill-success">personalizada</span>
+            ) : (
+              <span className="pill">fonte do sistema</span>
+            )}
+          </h4>
+          <div className="form-row">
+            <div className="form-field" style={{ minWidth: 260 }}>
+              <label>Enviar fonte (.ttf ou .otf, até 5 MB)</label>
+              <input
+                type="file"
+                accept=".ttf,.otf,font/ttf,font/otf"
+                onChange={(e) => setFontFile(e.target.files?.[0] ?? null)}
+              />
+            </div>
+            <div className="form-field">
+              <button type="button" className="btn btn-primary btn-sm" onClick={uploadFont} disabled={!fontFile || uploadingFont}>
+                {uploadingFont ? "Enviando…" : "Enviar fonte"}
+              </button>
+            </div>
+            {settings.welcomeFontPath && (
+              <div className="form-field">
+                <button
+                  type="button"
+                  className="btn btn-outline btn-sm"
+                  onClick={() => patch({ welcomeFontPath: "" })}
+                  title="Volta à fonte do sistema — clique em Salvar configurações para aplicar."
+                >
+                  Voltar à fonte do sistema
+                </button>
+              </div>
+            )}
+          </div>
+          {fontInfo && <div className="alert alert-success">{fontInfo}</div>}
 
           <h4>Prévia (como a TV vai mostrar)</h4>
           <div className="form-row">

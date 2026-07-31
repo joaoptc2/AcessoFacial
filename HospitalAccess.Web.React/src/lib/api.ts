@@ -155,6 +155,16 @@ export interface SyncOverviewDto {
 export interface DiscoveredController {
   serialNumber: string;
   ipAddress: string;
+  // MAC reportado na varredura. Nos 8190H é ALEATÓRIO (muda a cada reinício) — serve para
+  // conferência pontual, não para reserva DHCP.
+  mac: string;
+}
+
+export interface RelocateResult {
+  moved: boolean;
+  oldIp?: string;
+  ipAddress: string;
+  message: string;
 }
 
 export interface ControllerNetworkInfo {
@@ -197,11 +207,35 @@ export interface KioskSettings {
   livenessSimilarity: number;
 }
 
+// Usuário "Faltando no dispositivo" — enriquecido para oferecer o reenvio individual.
+export interface AuditMissingUser {
+  userId: string;
+  userCode: number;
+  name: string;
+  type: string; // "Permanent" | "Visitor"
+}
+
 export interface PersonnelAudit {
-  missingOnDevice: number[];
+  missingOnDevice: AuditMissingUser[];
   extraOnDevice: number[];
   deviceCount: number;
   expectedCount: number;
+}
+
+// Auditoria de todos os controladores: falha de um aparelho vem em `error` (demais campos null).
+export interface PersonnelAuditAllItem {
+  controllerId: string;
+  controllerName: string;
+  error: string | null;
+  missingOnDevice: AuditMissingUser[] | null;
+  extraOnDevice: number[] | null;
+  deviceCount: number | null;
+  expectedCount: number | null;
+}
+
+export interface PersonnelAuditAllResult {
+  generatedAtUtc: string;
+  results: PersonnelAuditAllItem[];
 }
 
 export interface EventPhotoListItem {
@@ -281,6 +315,13 @@ export interface UserListItemDto {
   createdAtUtc: string;
   revokedAtUtc: string | null;
   controllers: UserControllerRef[];
+}
+
+export interface UserListPage {
+  total: number;
+  page: number;
+  pageSize: number;
+  items: UserListItemDto[];
 }
 
 /** Campos de perfil opcionais compartilhados por criação/edição. */
@@ -435,6 +476,8 @@ export interface SystemSettingsDto {
   welcomeTextY: number | null;
   welcomeFontSize: number | null;
   welcomeFontColorHex: string;
+  // Fonte enviada pela tela (vazio = fonte do sistema).
+  welcomeFontPath: string;
   homeAssistantEffective: {
     enabled: boolean;
     baseUrl: string;
@@ -469,6 +512,8 @@ export interface UpdateSettingsRequest {
   welcomeTextY?: string;
   welcomeFontSize?: string;
   welcomeFontColorHex?: string;
+  // "" = voltar à fonte do sistema; omitido = manter.
+  welcomeFontPath?: string;
 }
 
 // ---- Usuários do sistema (logins) ----
@@ -695,8 +740,9 @@ export const api = {
     request<void>(`/controllers/${id}`, { method: "PUT", body: JSON.stringify(body) }),
   deleteController: (id: string) => request<void>(`/controllers/${id}`, { method: "DELETE" }),
 
-  discoverControllers: (udpPort = 60000, scanSeconds = 4) =>
-    request<DiscoveredController[]>(`/controllers/discover?udpPort=${udpPort}&scanSeconds=${scanSeconds}`, {
+  // Sem udpPort: o servidor varre as portas padrão (8101 de fábrica + 60000 legado) e mescla.
+  discoverControllers: (udpPort?: number, scanSeconds?: number) =>
+    request<DiscoveredController[]>(`/controllers/discover${buildQuery({ udpPort, scanSeconds })}`, {
       method: "POST",
     }),
 
@@ -732,6 +778,8 @@ export const api = {
   getNetwork: (id: string) => request<ControllerNetworkInfo>(`/controllers/${id}/network`),
   updateNetwork: (id: string, body: ControllerNetworkInfo) =>
     request<void>(`/controllers/${id}/network`, { method: "PUT", body: JSON.stringify(body) }),
+  relocateController: (id: string) =>
+    request<RelocateResult>(`/controllers/${id}/relocate`, { method: "POST" }),
 
   // ---- Relógio ----
   getClock: (id: string) => request<string>(`/controllers/${id}/clock`),
@@ -750,8 +798,11 @@ export const api = {
 
   // ---- Auditoria / leitura reversa ----
   getPersonnelAudit: (id: string) => request<PersonnelAudit>(`/controllers/${id}/personnel-audit`),
+  getPersonnelAuditAll: () => request<PersonnelAuditAllResult>("/controllers/personnel-audit-all"),
   repairPersonnelAudit: (id: string) =>
     request<{ repaired: number; enqueued: number }>(`/controllers/${id}/personnel-audit/repair`, { method: "POST" }),
+  repairPersonnelAuditUser: (id: string, userId: string) =>
+    request<{ message: string }>(`/controllers/${id}/personnel-audit/repair/${userId}`, { method: "POST" }),
 
   // ---- Foto do evento ----
   downloadEventPhotos: (id: string, quantity: number) =>
@@ -775,7 +826,8 @@ export const api = {
     }),
 
   // ---- Usuários permanentes ----
-  getUsers: () => request<UserListItemDto[]>("/users"),
+  getUsers: (params: { page: number; pageSize: number; search?: string; groupId?: string }) =>
+    request<UserListPage>(`/users${buildQuery(params)}`),
   getUser: (id: string) => request<UserDetailDto>(`/users/${id}`),
   createUser: (form: FormData) => request<{ id: string; userCode: number }>("/users", { method: "POST", body: form }),
   updateUser: (id: string, form: FormData) => request<void>(`/users/${id}`, { method: "PUT", body: form }),
@@ -858,6 +910,14 @@ export const api = {
   },
   previewWelcomeImage: (name: string) =>
     requestBlob(`/settings/welcome-image/preview?name=${encodeURIComponent(name)}`),
+  uploadWelcomeFont: (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return request<{ path: string; familyName: string }>("/settings/welcome-font", {
+      method: "POST",
+      body: form,
+    });
+  },
 
   // ---- Usuários do sistema (Admin) ----
   getStaffUsers: () => request<StaffUserDto[]>("/staffusers"),
