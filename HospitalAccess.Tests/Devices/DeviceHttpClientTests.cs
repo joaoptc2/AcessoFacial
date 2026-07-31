@@ -78,4 +78,20 @@ public class DeviceHttpClientTests
         Assert.DoesNotContain("name=\"Photo\"", text);
         Assert.Contains("name=\"PeopleJson\"", text);
     }
+
+    // O firmware sinaliza token morto com HTTP 200 + errCode=10000 (nunca 401) — o cliente
+    // precisa reconhecer esse envelope como falha de AUTENTICAÇÃO para re-logar e repetir.
+    [Theory]
+    [InlineData(10000, "Token is invalid", true)]
+    [InlineData(10000, "qualquer texto", true)] // o código sozinho basta
+    [InlineData(null, "Token is invalid", true)] // a mensagem sozinha basta
+    [InlineData(null, "TOKEN IS INVALID", true)] // case-insensitive
+    [InlineData(2, "Data error", false)]
+    [InlineData(null, "erro qualquer", false)]
+    public void Token_error_detection(int? errCode, string message, bool expected)
+    {
+        var ex = new DeviceHttpException($"[Quarto 14] POST /api/People/GetDetail errCode={errCode} error={message}",
+            status: 200, errCode: errCode);
+        Assert.Equal(expected, DeviceHttpClient.IsTokenError(ex));
+    }
 }

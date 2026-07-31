@@ -110,7 +110,12 @@ public sealed class DeviceHttpClient : IAsyncDisposable
         _logger.LogInformation("[{Controller}] login OK, token cacheado", _controllerLabel);
     }
 
-    /// <summary>Valida o token atual com <c>/api/User/CheckLoginToken</c>. Qualquer 200 = válido.</summary>
+    /// <summary>
+    /// Valida o token atual com <c>/api/User/CheckLoginToken</c>. O firmware devolve HTTP 200
+    /// MESMO com token inválido (a rejeição vem no corpo, <c>result:false</c>) — confiar só no
+    /// status fazia um token morto (aparelho reiniciado) passar na validação e estourar depois
+    /// como errCode=10000 "Token is invalid" no GetDetail.
+    /// </summary>
     public async Task<bool> CheckTokenAsync(CancellationToken ct = default)
     {
         if (string.IsNullOrEmpty(_token)) return false;
@@ -119,9 +124,14 @@ public sealed class DeviceHttpClient : IAsyncDisposable
         try
         {
             var resp = await _http.SendAsync(req, ct);
-            return resp.StatusCode == HttpStatusCode.OK;
+            if (resp.StatusCode != HttpStatusCode.OK) return false;
+            using var doc = await ReadJsonAsync(resp, ct);
+            return !(doc.RootElement.ValueKind == JsonValueKind.Object
+                     && doc.RootElement.TryGetProperty("result", out var r)
+                     && r.ValueKind == JsonValueKind.False);
         }
         catch (HttpRequestException) { return false; }
+        catch (DeviceHttpException) { return false; } // corpo não-JSON = token não confiável
     }
 
     /// <summary>Garante um token válido: sem token → login; com token → valida e re-loga se preciso.</summary>
@@ -166,8 +176,23 @@ public sealed class DeviceHttpClient : IAsyncDisposable
             throw new DeviceHttpException($"[{_controllerLabel}] POST {path} status={(int)resp.StatusCode}", status: (int)resp.StatusCode);
 
         var doc = await ReadJsonAsync(resp, ct);
-        return Unwrap(doc, path);
+        try
+        {
+            return Unwrap(doc, path);
+        }
+        catch (DeviceHttpException ex) when (retryOn401 && IsTokenError(ex))
+        {
+            // Token inválido vem como HTTP 200 + errCode=10000 no corpo (o firmware NÃO usa 401)
+            // — típico após reinício do aparelho matar o token cacheado. Re-loga e repete UMA vez.
+            _logger.LogInformation("[{Controller}] {Path} -> token inválido (errCode {Code}), re-login", _controllerLabel, path, ex.ErrCode);
+            await LoginAsync(ct);
+            return await PostJsonAsync(path, body, ct, retryOn401: false);
+        }
     }
+
+    /// <summary>errCode 10000 / "Token is invalid" no envelope = autenticação, não erro do endpoint.</summary>
+    internal static bool IsTokenError(DeviceHttpException ex) =>
+        ex.ErrCode == 10000 || ex.Message.Contains("Token is invalid", StringComparison.OrdinalIgnoreCase);
 
     // ------------------------------------------------------------------ //
     // Endpoints concretos
@@ -265,7 +290,22 @@ public sealed class DeviceHttpClient : IAsyncDisposable
             throw new DeviceHttpException($"[{_controllerLabel}] POST /api/People/New status={(int)resp.StatusCode}", status: (int)resp.StatusCode);
 
         var doc = await ReadJsonAsync(resp, ct);
-        return Unwrap(doc, "/api/People/New");
+        try
+        {
+            return Unwrap(doc, "/api/People/New");
+        }
+        catch (DeviceHttpException ex) when (IsTokenError(ex))
+        {
+            // Mesmo caso do PostJsonAsync: token morto vem como 200 + errCode=10000, nunca 401.
+            _logger.LogInformation("[{Controller}] /api/People/New -> token inválido, re-login", _controllerLabel);
+            await LoginAsync(ct);
+            try { resp = await Send(); }
+            catch (HttpRequestException ex2) { throw new DeviceHttpException($"[{_controllerLabel}] POST /api/People/New erro: {ex2.Message}", inner: ex2); }
+            if (resp.StatusCode != HttpStatusCode.OK)
+                throw new DeviceHttpException($"[{_controllerLabel}] POST /api/People/New status={(int)resp.StatusCode}", status: (int)resp.StatusCode);
+            var retryDoc = await ReadJsonAsync(resp, ct);
+            return Unwrap(retryDoc, "/api/People/New");
+        }
     }
 
     // ------------------------------------------------------------------ //
