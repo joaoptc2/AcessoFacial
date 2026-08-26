@@ -5,7 +5,18 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <IsPackable>false</IsPackable>
   </PropertyGroup>
+  <!--
+    Testes de integração do UserSyncService precisam de um PostgreSQL DE VERDADE: o código usa
+    ExecuteUpdate/ExecuteDelete, nextval de sequence, índices únicos PARCIAIS (HasFilter) e xmin
+    como token de concorrência — nada disso existe no provider InMemory do EF.
+    A conexão vem da variável de ambiente HOSPITALACCESS_TEST_DB; sem ela os testes são PULADOS
+    (SkippableFact), nunca silenciosamente aprovados. Ver PostgresFixture.
+  -->
   <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Xunit.SkippableFact" Version="1.4.13" />
     <PackageReference Include="xunit" Version="2.9.2" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2">
       <PrivateAssets>all</PrivateAssets>

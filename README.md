@@ -489,6 +489,30 @@ senha pela UI ainda; via banco/nova rota a implementar).
 dotnet test HospitalAccess.Tests/HospitalAccess.Tests.csproj
 ```
 
+A suíte tem dois grupos. Os **testes de unidade** cobrem a lógica pura extraída (política de
+retry, regras de staff, nome de pessoa, heurísticas de sonda, conversão/validação de imagem,
+conferência de IP do callback) e rodam sem nenhuma dependência.
+
+Os **testes de integração** (`HospitalAccess.Tests/Integration/`) exercitam a máquina de estado
+do `UserSyncService` — quem decide se uma credencial fica ativa ou não em cada porta — contra um
+**PostgreSQL de verdade**. Não é preciosismo: o caminho testado usa `ExecuteUpdate`/`ExecuteDelete`,
+`nextval` de sequence, índices únicos **parciais** (`HasFilter`) e `xmin` como token de
+concorrência — o provider InMemory do EF não implementa nenhum dos quatro, então um teste que
+passasse nele não provaria nada sobre produção.
+
+A conexão vem de `HOSPITALACCESS_TEST_DB`. **Sem a variável esses testes são PULADOS** (aparecem
+como `Skipped`, nunca aprovados em silêncio); o CI a define via um service container do Postgres.
+Para rodar localmente:
+
+```bash
+docker run --rm -d -p 5432:5432 -e POSTGRES_PASSWORD=postgres --name ha-test postgres:16
+export HOSPITALACCESS_TEST_DB="Host=127.0.0.1;Port=5432;Username=postgres;Password=postgres;Database=postgres"
+dotnet test HospitalAccess.Tests/HospitalAccess.Tests.csproj
+```
+
+Cada execução cria um banco descartável de nome aleatório e o derruba no fim, então rodar em
+paralelo com outra suíte não gera disputa por tabelas.
+
 ## O que foi verificado de ponta a ponta neste ambiente de desenvolvimento
 
 > Registro **cronológico** das rodadas de verificação. Os itens que citam telas Blazor
