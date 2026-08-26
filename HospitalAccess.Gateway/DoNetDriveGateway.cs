@@ -144,7 +144,14 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
     private static readonly TimeSpan GateWaitCap = TimeSpan.FromMinutes(3);
     private static readonly TimeSpan CommandHardCap = TimeSpan.FromMinutes(3);
 
-    private async Task RunAsync(INCommand cmd, string operation, Controller controller, bool bypassCircuit = false)
+    /// <param name="ct">
+    /// Cancelamento do CHAMADOR (desligamento do host, requisição HTTP abortada). Importante: o
+    /// SDK do fabricante não aceita token, então isto NÃO cancela o comando no aparelho — apenas
+    /// para de esperar por ele e devolve o gate/worker na hora. O comando fica órfão e se resolve
+    /// sozinho, do mesmo jeito que já acontecia ao estourar o teto duro.
+    /// </param>
+    private async Task RunAsync(INCommand cmd, string operation, Controller controller,
+        bool bypassCircuit = false, CancellationToken ct = default)
     {
         // Disjuntor: aparelho em cooldown (falhas consecutivas de protocolo) → falha rápida SEM
         // tocar a rede. O test-connection passa bypassCircuit=true (sonda manual de verdade).
@@ -160,8 +167,10 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
         // Serializa por controlador: nunca dois comandos ao mesmo aparelho ao mesmo tempo. O lock é
         // mantido só durante o comando (que tem timeout próprio = cmdDtl.Timeout), então não trava
         // indefinidamente. Controladores diferentes rodam em paralelo (locks distintos).
+        // Cancelar aqui lança OperationCanceledException SEM adquirir o gate — por isso o
+        // try/finally que solta o gate só começa depois desta linha.
         var gate = _controllerGates.GetOrAdd(controller.Id, static _ => new SemaphoreSlim(1, 1));
-        if (!await gate.WaitAsync(GateWaitCap))
+        if (!await gate.WaitAsync(GateWaitCap, ct))
         {
             // Condição LOCAL (fila ocupada) — não conta como falha do aparelho no disjuntor.
             // Vira Failed + backoff no chamador em vez de pendurar o worker junto.
@@ -174,12 +183,24 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
             try
             {
                 var commandTask = _allocator.AddCommandAsync(cmd);
+
                 // Teto DURO independente do timeout interno do SDK: se a promessa nunca completar,
                 // abandona o comando (órfão inofensivo — o aparelho já não está respondendo) e
                 // libera o gate/worker. Sem isto o await podia ficar pendurado para sempre.
-                var finished = await Task.WhenAny(commandTask, Task.Delay(CommandHardCap));
+                // O CTS é ligado ao token do chamador e CANCELADO no finally: sem isso, cada
+                // comando bem-sucedido deixava um Task.Delay de 3 min vivo até disparar sozinho —
+                // com health-check e fila sobre 30 aparelhos, uma população constante de timers.
+                using var hardCap = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                var timeoutTask = Task.Delay(CommandHardCap, hardCap.Token);
+                var finished = await Task.WhenAny(commandTask, timeoutTask);
+                hardCap.Cancel();
+
                 if (finished != commandTask)
                 {
+                    // Chegou aqui por cancelamento do chamador ou por estouro do teto — são
+                    // situações diferentes e o chamador trata cada uma de um jeito.
+                    ct.ThrowIfCancellationRequested();
+
                     throw new DeviceCommandException(
                         $"{operation} excedeu o teto de {CommandHardCap.TotalSeconds:F0}s sem resposta do SDK no controlador " +
                         $"'{controller.Name}' ({controller.IpAddress}:{controller.Port}) — comando abandonado.");
@@ -188,6 +209,12 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
             }
             catch (DeviceCommandException)
             {
+                throw;
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                // Desligamento/abandono do chamador não é falha do aparelho: não pode contar no
+                // disjuntor nem virar Failed+backoff. Propaga puro.
                 throw;
             }
             catch (Exception ex)
@@ -223,9 +250,10 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
         }
     }
 
-    private async Task<TResult> RunAsync<TResult>(INCommand cmd, string operation, Controller controller, bool bypassCircuit = false) where TResult : class
+    private async Task<TResult> RunAsync<TResult>(INCommand cmd, string operation, Controller controller,
+        bool bypassCircuit = false, CancellationToken ct = default) where TResult : class
     {
-        await RunAsync(cmd, operation, controller, bypassCircuit);
+        await RunAsync(cmd, operation, controller, bypassCircuit, ct);
         return cmd.getResult() as TResult
             ?? throw new DeviceCommandException(
                 $"{operation} não retornou resultado do controlador '{controller.Name}' ({controller.IpAddress}:{controller.Port}).");
@@ -236,7 +264,7 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
         // bypassCircuit: o "Testar conexão" é a sonda MANUAL — precisa alcançar o aparelho mesmo
         // com o disjuntor aberto; um sucesso aqui fecha o circuito (RecordSuccess no RunAsync).
         var cmd = new ReadSN(_connections.CreateCommandDetail(controller));
-        var result = await RunAsync<SN_Result>(cmd, "ReadSN", controller, bypassCircuit: true);
+        var result = await RunAsync<SN_Result>(cmd, "ReadSN", controller, bypassCircuit: true, ct: ct);
         return Encoding.ASCII.GetString(result.SNBuf).TrimEnd('\0');
     }
 
@@ -247,7 +275,20 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
     public async Task<AddFaceResult> AddPersonWithFaceAsync(Controller controller, User user, byte[] faceJpg, CancellationToken ct = default)
     {
         // Requisito de hardware: JPG, 480x640, <= 120KB (Classe 11 / Appendix do protocolo).
-        var converted = FaceImageConverter.ConvertImage(faceJpg, 480, 640, 122880);
+        // Falha aqui é do ARQUIVO, não do aparelho: devolvemos um código permanente em vez de
+        // deixar a exceção subir, senão o chamador classifica como transitória e reenvia a mesma
+        // foto quebrada a cada varredura, para sempre.
+        byte[] converted;
+        try
+        {
+            converted = FaceImageConverter.ConvertImage(faceJpg, 480, 640, 122880);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return new AddFaceResult(false, FaceUploadCode.InvalidImage,
+                $"A foto cadastrada não pôde ser preparada para o aparelho: {ex.Message} " +
+                "Envie uma foto nova pelo cadastro do usuário.");
+        }
 
         var person = new PersonData
         {
@@ -286,7 +327,7 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
         // CommandStatus_Timeout num aparelho degradado.
         cmdDtl.Timeout = Math.Max(controller.TimeoutMs, 15000);
         var cmd = new AddPeosonAndImage(cmdDtl, par); // grafia confirmada no SDK
-        await RunAsync(cmd, "AddPersonAndImage", controller);
+        await RunAsync(cmd, "AddPersonAndImage", controller, ct: ct);
 
         return MapAddFaceResult(cmd.getResult() as AddPersonAndImage_Result);
     }
@@ -355,7 +396,7 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
         var addCmdDtl = _connections.CreateCommandDetail(controller);
         addCmdDtl.Timeout = Math.Max(controller.TimeoutMs, 15000); // demo oficial usa 15 s para escrita de pessoa
         var cmd = new AddPerson(addCmdDtl, par);
-        await RunAsync(cmd, "AddPerson", controller);
+        await RunAsync(cmd, "AddPerson", controller, ct: ct);
 
         if (cmd.getResult() is WritePerson_Result { FailTotal: > 0 })
             throw new DeviceCommandException(
@@ -369,7 +410,7 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
         var cmdDtl = _connections.CreateCommandDetail(controller);
         cmdDtl.Timeout = Math.Max(controller.TimeoutMs, 15000); // demo oficial usa 15 s para delete de pessoa
         var cmd = new DeletePerson(cmdDtl, par);
-        await RunAsync(cmd, "DeletePerson", controller);
+        await RunAsync(cmd, "DeletePerson", controller, ct: ct);
 
         // O aparelho pode responder OK ao comando e ainda assim reportar falha por pessoa
         // (FailTotal) — sem esta checagem, marcávamos 'Revoked' com a pessoa AINDA cadastrada
@@ -389,7 +430,7 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
         var cmdDtl = _connections.CreateCommandDetail(controller);
         cmdDtl.Timeout = Math.Max(controller.TimeoutMs, 15000); // apagar a base pode demorar
         var cmd = new ClearPersonDataBase(cmdDtl);
-        await RunAsync(cmd, "ClearPersonDataBase", controller);
+        await RunAsync(cmd, "ClearPersonDataBase", controller, ct: ct);
     }
 
     /// <summary>
@@ -399,7 +440,7 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
     public async Task TriggerFireAlarmAsync(Controller controller, CancellationToken ct = default)
     {
         var cmd = new AlarmNs.SendFireAlarm.WriteSendFireAlarm(_connections.CreateCommandDetail(controller));
-        await RunAsync(cmd, "SendFireAlarm", controller);
+        await RunAsync(cmd, "SendFireAlarm", controller, ct: ct);
     }
 
     /// <summary>
@@ -423,7 +464,7 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
                 AutoWriteReadIndex = true, // avança o ponteiro de 'não lidos'
             };
             var cmd = new ReadTransactionDatabase(cmdDtl, par);
-            var result = await RunAsync<ReadTxDbResult>(cmd, "ReadTransactionDatabase", controller);
+            var result = await RunAsync<ReadTxDbResult>(cmd, "ReadTransactionDatabase", controller, ct: ct);
 
             var count = 0;
             foreach (var record in result.TransactionList)
@@ -444,37 +485,37 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
         // O 8190H (A33_Face) tem um único relé de porta por controlador; o comando de
         // desbloqueio remoto (Classe 3 / Remote Unlock) não recebe índice de relé.
         var cmd = new OpenDoor(_connections.CreateCommandDetail(controller));
-        await RunAsync(cmd, "OpenDoor", controller);
+        await RunAsync(cmd, "OpenDoor", controller, ct: ct);
     }
 
     public async Task CloseDoorAsync(Controller controller, CancellationToken ct = default)
     {
         var cmd = new CloseDoor(_connections.CreateCommandDetail(controller));
-        await RunAsync(cmd, "CloseDoor", controller);
+        await RunAsync(cmd, "CloseDoor", controller, ct: ct);
     }
 
     public async Task HoldDoorOpenAsync(Controller controller, CancellationToken ct = default)
     {
         var cmd = new HoldDoor(_connections.CreateCommandDetail(controller));
-        await RunAsync(cmd, "HoldDoor", controller);
+        await RunAsync(cmd, "HoldDoor", controller, ct: ct);
     }
 
     public async Task LockDoorAsync(Controller controller, CancellationToken ct = default)
     {
         var cmd = new LockDoor(_connections.CreateCommandDetail(controller));
-        await RunAsync(cmd, "LockDoor", controller);
+        await RunAsync(cmd, "LockDoor", controller, ct: ct);
     }
 
     public async Task UnlockDoorAsync(Controller controller, CancellationToken ct = default)
     {
         var cmd = new UnlockDoor(_connections.CreateCommandDetail(controller));
-        await RunAsync(cmd, "UnlockDoor", controller);
+        await RunAsync(cmd, "UnlockDoor", controller, ct: ct);
     }
 
     public async Task<ControllerNetworkInfo> ReadNetworkSettingsAsync(Controller controller, CancellationToken ct = default)
     {
         var cmd = new ReadTCPSetting(_connections.CreateCommandDetail(controller), false);
-        var result = await RunAsync<ReadTCPSetting_Result>(cmd, "ReadTCPSetting", controller);
+        var result = await RunAsync<ReadTCPSetting_Result>(cmd, "ReadTCPSetting", controller, ct: ct);
 
         var tcp = result.TCP;
         return new ControllerNetworkInfo(tcp.mMAC, tcp.mIP, tcp.mIPMask, tcp.mIPGateway, tcp.mDNS, tcp.mDNSBackup,
@@ -502,7 +543,7 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
 
         var par = new WriteTCPSetting_Parameter(tcp) { UDPBroadcast = false };
         var cmd = new WriteTCPSetting(_connections.CreateCommandDetail(controller), par);
-        await RunAsync(cmd, "WriteTCPSetting", controller);
+        await RunAsync(cmd, "WriteTCPSetting", controller, ct: ct);
     }
 
     /// <summary>
@@ -554,19 +595,19 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
     public async Task<DateTime> ReadControllerTimeAsync(Controller controller, CancellationToken ct = default)
     {
         var cmd = new ReadTime(_connections.CreateCommandDetail(controller));
-        var result = await RunAsync<ReadTime_Result>(cmd, "ReadTime", controller);
+        var result = await RunAsync<ReadTime_Result>(cmd, "ReadTime", controller, ct: ct);
         return result.ControllerDate;
     }
 
     public async Task SyncControllerTimeAsync(Controller controller, CancellationToken ct = default)
     {
         var cmd = new WriteTime(_connections.CreateCommandDetail(controller)); // grava o horário atual deste servidor
-        await RunAsync(cmd, "WriteTime", controller);
+        await RunAsync(cmd, "WriteTime", controller, ct: ct);
     }
 
     public async Task SyncHolidaysAsync(Controller controller, IReadOnlyList<HolidayEntry> holidays, CancellationToken ct = default)
     {
-        await RunAsync(new ClearHoliday(_connections.CreateCommandDetail(controller)), "ClearHoliday", controller);
+        await RunAsync(new ClearHoliday(_connections.CreateCommandDetail(controller)), "ClearHoliday", controller, ct: ct);
 
         if (holidays.Count == 0) return;
 
@@ -579,7 +620,7 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
 
         var par = new AddHoliday_Parameter(list);
         var cmd = new AddHoliday(_connections.CreateCommandDetail(controller), par);
-        await RunAsync(cmd, "AddHoliday", controller);
+        await RunAsync(cmd, "AddHoliday", controller, ct: ct);
     }
 
     /// <summary>
@@ -609,28 +650,28 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
 
         var par = new AddTimeGroup_Parameter(weekGroups);
         var cmd = new AddTimeGroup(_connections.CreateCommandDetail(controller), par);
-        await RunAsync(cmd, "AddTimeGroup", controller);
+        await RunAsync(cmd, "AddTimeGroup", controller, ct: ct);
     }
 
     public async Task<AlarmSettingsSnapshot> ReadAlarmSettingsAsync(Controller controller, CancellationToken ct = default)
     {
         var blacklistCmd = new AlarmNs.BlacklistAlarm.ReadBlacklistAlarm(_connections.CreateCommandDetail(controller));
-        var blacklist = await RunAsync<AlarmNs.BlacklistAlarm.ReadBlacklistAlarm_Result>(blacklistCmd, "ReadBlacklistAlarm", controller);
+        var blacklist = await RunAsync<AlarmNs.BlacklistAlarm.ReadBlacklistAlarm_Result>(blacklistCmd, "ReadBlacklistAlarm", controller, ct: ct);
 
         var tamperCmd = new AlarmNs.AntiDisassemblyAlarm.ReadAntiDisassemblyAlarm(_connections.CreateCommandDetail(controller));
-        var tamper = await RunAsync<AlarmNs.AntiDisassemblyAlarm.ReadAntiDisassemblyAlarm_Result>(tamperCmd, "ReadAntiDisassemblyAlarm", controller);
+        var tamper = await RunAsync<AlarmNs.AntiDisassemblyAlarm.ReadAntiDisassemblyAlarm_Result>(tamperCmd, "ReadAntiDisassemblyAlarm", controller, ct: ct);
 
         var illegalCmd = new AlarmNs.IllegalVerificationAlarm.ReadIllegalVerificationAlarm(_connections.CreateCommandDetail(controller));
-        var illegal = await RunAsync<AlarmNs.IllegalVerificationAlarm.ReadIllegalVerificationAlarm_Result>(illegalCmd, "ReadIllegalVerificationAlarm", controller);
+        var illegal = await RunAsync<AlarmNs.IllegalVerificationAlarm.ReadIllegalVerificationAlarm_Result>(illegalCmd, "ReadIllegalVerificationAlarm", controller, ct: ct);
 
         var duressCmd = new AlarmNs.AlarmPassword.ReadAlarmPassword(_connections.CreateCommandDetail(controller));
-        var duress = await RunAsync<AlarmNs.AlarmPassword.ReadAlarmPassword_Result>(duressCmd, "ReadAlarmPassword", controller);
+        var duress = await RunAsync<AlarmNs.AlarmPassword.ReadAlarmPassword_Result>(duressCmd, "ReadAlarmPassword", controller, ct: ct);
 
         var timeoutCmd = new AlarmNs.OpenDoorTimeoutAlarm.ReadOpenDoorTimeoutAlarm(_connections.CreateCommandDetail(controller));
-        var timeout = await RunAsync<AlarmNs.OpenDoorTimeoutAlarm.ReadOpenDoorTimeoutAlarm_Result>(timeoutCmd, "ReadOpenDoorTimeoutAlarm", controller);
+        var timeout = await RunAsync<AlarmNs.OpenDoorTimeoutAlarm.ReadOpenDoorTimeoutAlarm_Result>(timeoutCmd, "ReadOpenDoorTimeoutAlarm", controller, ct: ct);
 
         var legalCmd = new AlarmNs.LegalVerificationCloseAlarm.ReadLegalVerificationCloseAlarm(_connections.CreateCommandDetail(controller));
-        var legal = await RunAsync<AlarmNs.LegalVerificationCloseAlarm.ReadLegalVerificationCloseAlarm_Result>(legalCmd, "ReadLegalVerificationCloseAlarm", controller);
+        var legal = await RunAsync<AlarmNs.LegalVerificationCloseAlarm.ReadLegalVerificationCloseAlarm_Result>(legalCmd, "ReadLegalVerificationCloseAlarm", controller, ct: ct);
 
         return new AlarmSettingsSnapshot(
             FireAlarmEnabled: false, // SDK não expõe leitura do estado do alarme de incêndio, só escrita (SetFireAlarm).
@@ -649,23 +690,23 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
     public async Task WriteAlarmSettingsAsync(Controller controller, AlarmSettingsSnapshot settings, CancellationToken ct = default)
     {
         await RunAsync(new AlarmNs.SetFireAlarm(_connections.CreateCommandDetail(controller), settings.FireAlarmEnabled),
-            "SetFireAlarm", controller);
+            "SetFireAlarm", controller, ct: ct);
 
         await RunAsync(new AlarmNs.BlacklistAlarm.WriteBlacklistAlarm(
             _connections.CreateCommandDetail(controller),
             new AlarmNs.BlacklistAlarm.WriteBlacklistAlarm_Parameter(settings.BlacklistAlarmEnabled)),
-            "WriteBlacklistAlarm", controller);
+            "WriteBlacklistAlarm", controller, ct: ct);
 
         await RunAsync(new AlarmNs.AntiDisassemblyAlarm.WriteAntiDisassemblyAlarm(
             _connections.CreateCommandDetail(controller),
             new AlarmNs.AntiDisassemblyAlarm.WriteAntiDisassemblyAlarm_Parameter(settings.TamperAlarmEnabled)),
-            "WriteAntiDisassemblyAlarm", controller);
+            "WriteAntiDisassemblyAlarm", controller, ct: ct);
 
         await RunAsync(new AlarmNs.IllegalVerificationAlarm.WriteIllegalVerificationAlarm(
             _connections.CreateCommandDetail(controller),
             new AlarmNs.IllegalVerificationAlarm.WriteIllegalVerificationAlarm_Parameter(
                 settings.IllegalVerificationAlarmEnabled, settings.IllegalVerificationTimes)),
-            "WriteIllegalVerificationAlarm", controller);
+            "WriteIllegalVerificationAlarm", controller, ct: ct);
 
         // Preserva o modo de coação lido (AlarmOption) em vez de fixá-lo em 1.
         var duressMode = settings.DuressMode is >= 1 and <= 3 ? settings.DuressMode : 1;
@@ -673,7 +714,7 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
             _connections.CreateCommandDetail(controller),
             new AlarmNs.AlarmPassword.WriteAlarmPassword_Parameter(
                 settings.DuressAlarmEnabled, settings.DuressPassword ?? string.Empty, duressMode)),
-            "WriteAlarmPassword", controller);
+            "WriteAlarmPassword", controller, ct: ct);
 
         // O protocolo aceita até 65535 s de timeout de porta (AllowTime é ushort) — não clampar a 255.
         var allowTime = (ushort)Math.Clamp(settings.OpenDoorTimeoutSeconds, 0, ushort.MaxValue);
@@ -681,12 +722,12 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
             _connections.CreateCommandDetail(controller),
             new AlarmNs.OpenDoorTimeoutAlarm.WriteOpenDoorTimeoutAlarm_Parameter(
                 settings.OpenDoorTimeoutAlarmEnabled, allowTime, false)),
-            "WriteOpenDoorTimeoutAlarm", controller);
+            "WriteOpenDoorTimeoutAlarm", controller, ct: ct);
 
         await RunAsync(new AlarmNs.LegalVerificationCloseAlarm.WriteLegalVerificationCloseAlarm(
             _connections.CreateCommandDetail(controller),
             new AlarmNs.LegalVerificationCloseAlarm.WriteLegalVerificationCloseAlarm_Parameter(settings.LegalVerificationCloseAlarmEnabled)),
-            "WriteLegalVerificationCloseAlarm", controller);
+            "WriteLegalVerificationCloseAlarm", controller, ct: ct);
     }
 
     /// <summary>Fecha os 7 tipos de alarme configuráveis do controlador (bitmap fixo do SDK — ver frmAlarm.cs).</summary>
@@ -694,7 +735,7 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
     {
         var par = new AlarmNs.CloseAlarm_Parameter([1, 1, 1, 1, 1, 1, 1]);
         var cmd = new AlarmNs.CloseAlarm(_connections.CreateCommandDetail(controller), par);
-        await RunAsync(cmd, "CloseAlarm", controller);
+        await RunAsync(cmd, "CloseAlarm", controller, ct: ct);
     }
 
     /// <summary>
@@ -720,7 +761,7 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
 
         try
         {
-            var result = await RunAsync<ReadTransactionAndImageDatabase_Result>(cmd, "ReadTransactionAndImageDatabase", controller);
+            var result = await RunAsync<ReadTransactionAndImageDatabase_Result>(cmd, "ReadTransactionAndImageDatabase", controller, ct: ct);
 
             var photos = new List<CapturedEventPhoto>();
             foreach (var record in result.TransactionList)
@@ -759,32 +800,32 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
         var cmdDtl = _connections.CreateCommandDetail(controller);
         cmdDtl.Timeout = Math.Max(controller.TimeoutMs, 15000); // banco de pessoas pode ser grande
         var cmd = new ReadPersonDataBase(cmdDtl);
-        var result = await RunAsync<ReadPersonDataBase_Result>(cmd, "ReadPersonDataBase", controller);
+        var result = await RunAsync<ReadPersonDataBase_Result>(cmd, "ReadPersonDataBase", controller, ct: ct);
         return result.PersonList.Select(p => p.UserCode).ToList();
     }
 
     public async Task<KioskSettingsSnapshot> ReadKioskSettingsAsync(Controller controller, CancellationToken ct = default)
     {
         var language = await RunAsync<ReadDriveLanguage_Result>(
-            new ReadDriveLanguage(_connections.CreateCommandDetail(controller)), "ReadDriveLanguage", controller);
+            new ReadDriveLanguage(_connections.CreateCommandDetail(controller)), "ReadDriveLanguage", controller, ct: ct);
         var volume = await RunAsync<ReadDriveVolume_Result>(
-            new ReadDriveVolume(_connections.CreateCommandDetail(controller)), "ReadDriveVolume", controller);
+            new ReadDriveVolume(_connections.CreateCommandDetail(controller)), "ReadDriveVolume", controller, ct: ct);
         var led = await RunAsync<ReadFaceLEDMode_Result>(
-            new ReadFaceLEDMode(_connections.CreateCommandDetail(controller)), "ReadFaceLEDMode", controller);
+            new ReadFaceLEDMode(_connections.CreateCommandDetail(controller)), "ReadFaceLEDMode", controller, ct: ct);
         var mask = await RunAsync<ReadFaceMouthmufflePar_Result>(
-            new ReadFaceMouthmufflePar(_connections.CreateCommandDetail(controller)), "ReadFaceMouthmufflePar", controller);
+            new ReadFaceMouthmufflePar(_connections.CreateCommandDetail(controller)), "ReadFaceMouthmufflePar", controller, ct: ct);
         var temp = await RunAsync<ReadFaceBodyTemperaturePar_Result>(
-            new ReadFaceBodyTemperaturePar(_connections.CreateCommandDetail(controller)), "ReadFaceBodyTemperaturePar", controller);
+            new ReadFaceBodyTemperaturePar(_connections.CreateCommandDetail(controller)), "ReadFaceBodyTemperaturePar", controller, ct: ct);
         var tempAlarm = await RunAsync<ReadFaceBodyTemperatureAlarmPar_Result>(
-            new ReadFaceBodyTemperatureAlarmPar(_connections.CreateCommandDetail(controller)), "ReadFaceBodyTemperatureAlarmPar", controller);
+            new ReadFaceBodyTemperatureAlarmPar(_connections.CreateCommandDetail(controller)), "ReadFaceBodyTemperatureAlarmPar", controller, ct: ct);
         var tempShow = await RunAsync<ReadFaceBodyTemperatureShowPar_Result>(
-            new ReadFaceBodyTemperatureShowPar(_connections.CreateCommandDetail(controller)), "ReadFaceBodyTemperatureShowPar", controller);
+            new ReadFaceBodyTemperatureShowPar(_connections.CreateCommandDetail(controller)), "ReadFaceBodyTemperatureShowPar", controller, ct: ct);
         var range = await RunAsync<ReadFaceIdentifyRange_Result>(
-            new ReadFaceIdentifyRange(_connections.CreateCommandDetail(controller)), "ReadFaceIdentifyRange", controller);
+            new ReadFaceIdentifyRange(_connections.CreateCommandDetail(controller)), "ReadFaceIdentifyRange", controller, ct: ct);
         var liveness = await RunAsync<ReadFaceBioassay_Result>(
-            new ReadFaceBioassay(_connections.CreateCommandDetail(controller)), "ReadFaceBioassay", controller);
+            new ReadFaceBioassay(_connections.CreateCommandDetail(controller)), "ReadFaceBioassay", controller, ct: ct);
         var livenessSim = await RunAsync<ReadFaceBioassaySimilarity_Result>(
-            new ReadFaceBioassaySimilarity(_connections.CreateCommandDetail(controller)), "ReadFaceBioassaySimilarity", controller);
+            new ReadFaceBioassaySimilarity(_connections.CreateCommandDetail(controller)), "ReadFaceBioassaySimilarity", controller, ct: ct);
 
         return new KioskSettingsSnapshot(
             Language: language.Language,
@@ -802,25 +843,25 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
     public async Task WriteKioskSettingsAsync(Controller controller, KioskSettingsSnapshot settings, CancellationToken ct = default)
     {
         await RunAsync(new WriteDriveLanguage(
-            _connections.CreateCommandDetail(controller), new WriteDriveLanguage_Parameter(settings.Language)), "WriteDriveLanguage", controller);
+            _connections.CreateCommandDetail(controller), new WriteDriveLanguage_Parameter(settings.Language)), "WriteDriveLanguage", controller, ct: ct);
         await RunAsync(new WriteDriveVolume(
-            _connections.CreateCommandDetail(controller), new WriteDriveVolume_Parameter(settings.Volume)), "WriteDriveVolume", controller);
+            _connections.CreateCommandDetail(controller), new WriteDriveVolume_Parameter(settings.Volume)), "WriteDriveVolume", controller, ct: ct);
         await RunAsync(new WriteFaceLEDMode(
-            _connections.CreateCommandDetail(controller), new WriteFaceLEDMode_Parameter(settings.FillLightMode)), "WriteFaceLEDMode", controller);
+            _connections.CreateCommandDetail(controller), new WriteFaceLEDMode_Parameter(settings.FillLightMode)), "WriteFaceLEDMode", controller, ct: ct);
         await RunAsync(new WriteFaceMouthmufflePar(
-            _connections.CreateCommandDetail(controller), new WriteFaceMouthmufflePar_Parameter(settings.MaskDetectionMode)), "WriteFaceMouthmufflePar", controller);
+            _connections.CreateCommandDetail(controller), new WriteFaceMouthmufflePar_Parameter(settings.MaskDetectionMode)), "WriteFaceMouthmufflePar", controller, ct: ct);
         await RunAsync(new WriteFaceBodyTemperaturePar(
-            _connections.CreateCommandDetail(controller), new WriteFaceBodyTemperaturePar_Parameter(settings.TemperatureDetectionMode)), "WriteFaceBodyTemperaturePar", controller);
+            _connections.CreateCommandDetail(controller), new WriteFaceBodyTemperaturePar_Parameter(settings.TemperatureDetectionMode)), "WriteFaceBodyTemperaturePar", controller, ct: ct);
         await RunAsync(new WriteFaceBodyTemperatureAlarmPar(
-            _connections.CreateCommandDetail(controller), new WriteFaceBodyTemperatureAlarmPar_Parameter(settings.TemperatureAlarmThresholdX10)), "WriteFaceBodyTemperatureAlarmPar", controller);
+            _connections.CreateCommandDetail(controller), new WriteFaceBodyTemperatureAlarmPar_Parameter(settings.TemperatureAlarmThresholdX10)), "WriteFaceBodyTemperatureAlarmPar", controller, ct: ct);
         await RunAsync(new WriteFaceBodyTemperatureShowPar(
-            _connections.CreateCommandDetail(controller), new WriteFaceBodyTemperatureShowPar_Parameter(settings.TemperatureDisplayMode)), "WriteFaceBodyTemperatureShowPar", controller);
+            _connections.CreateCommandDetail(controller), new WriteFaceBodyTemperatureShowPar_Parameter(settings.TemperatureDisplayMode)), "WriteFaceBodyTemperatureShowPar", controller, ct: ct);
         await RunAsync(new WriteFaceIdentifyRange(
-            _connections.CreateCommandDetail(controller), new WriteFaceIdentifyRange_Parameter(settings.FaceIdentifyRange)), "WriteFaceIdentifyRange", controller);
+            _connections.CreateCommandDetail(controller), new WriteFaceIdentifyRange_Parameter(settings.FaceIdentifyRange)), "WriteFaceIdentifyRange", controller, ct: ct);
         await RunAsync(new WriteFaceBioassay(
-            _connections.CreateCommandDetail(controller), new WriteFaceBioassay_Parameter(settings.LivenessDetectionMode)), "WriteFaceBioassay", controller);
+            _connections.CreateCommandDetail(controller), new WriteFaceBioassay_Parameter(settings.LivenessDetectionMode)), "WriteFaceBioassay", controller, ct: ct);
         await RunAsync(new WriteFaceBioassaySimilarity(
-            _connections.CreateCommandDetail(controller), new WriteFaceBioassaySimilarity_Parameter(settings.LivenessSimilarity)), "WriteFaceBioassaySimilarity", controller);
+            _connections.CreateCommandDetail(controller), new WriteFaceBioassaySimilarity_Parameter(settings.LivenessSimilarity)), "WriteFaceBioassaySimilarity", controller, ct: ct);
     }
 
     // ----------------------------------------------------------------------------------
@@ -835,7 +876,7 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
     public async Task StartMonitoringAsync(Controller controller, CancellationToken ct = default)
     {
         var cmdDtl = EnsurePushChannelCore(controller);
-        await RunAsync(new BeginWatch(cmdDtl), "BeginWatch", controller);
+        await RunAsync(new BeginWatch(cmdDtl), "BeginWatch", controller, ct: ct);
     }
 
     /// <summary>
@@ -870,7 +911,7 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
     public async Task<bool> IsMonitoringActiveAsync(Controller controller, CancellationToken ct = default)
     {
         var cmd = new ReadWatchState(_connections.CreateCommandDetail(controller));
-        await RunAsync(cmd, "ReadWatchState", controller);
+        await RunAsync(cmd, "ReadWatchState", controller, ct: ct);
         return cmd.WatchState == 1;
     }
 
@@ -888,7 +929,7 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
         var cmdDtl = _connections.CreateCommandDetail(controller);
         try
         {
-            await RunAsync(new CloseWatch(cmdDtl), "CloseWatch", controller);
+            await RunAsync(new CloseWatch(cmdDtl), "CloseWatch", controller, ct: ct);
         }
         finally
         {

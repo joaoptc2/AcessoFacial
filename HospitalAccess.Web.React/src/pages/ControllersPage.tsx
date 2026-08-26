@@ -7,10 +7,12 @@ import {
   type ControllerDto,
   type DiscoveredController,
   type PersonnelAuditAllResult,
+  type PersonnelAuditSnapshot,
   type SyncStatusDto,
 } from "../lib/api";
 import { Modal } from "../components/Modal";
 import { useAuth } from "../lib/AuthContext";
+import { PersonnelAuditPanel } from "../components/controllers/PersonnelAuditPanel";
 
 interface FormModel {
   name: string;
@@ -78,8 +80,10 @@ export function ControllersPage() {
   const [syncStatuses, setSyncStatuses] = useState<SyncStatusDto[]>([]);
   const [relocating, setRelocating] = useState(false);
 
-  // Auditoria de todos os controladores de uma vez (leituras em paralelo no servidor).
+  // Auditoria de todos os controladores. Roda em SEGUNDO PLANO no servidor (a varredura passa de
+  // 20 min com aparelhos lentos e era cortada pelo proxy): a tela dispara e acompanha por consulta.
   const [auditAll, setAuditAll] = useState<PersonnelAuditAllResult | null>(null);
+  const [auditProgress, setAuditProgress] = useState<{ done: number; total: number } | null>(null);
   const [auditing, setAuditing] = useState(false);
   const [auditBusy, setAuditBusy] = useState(false);
   const [auditNotice, setAuditNotice] = useState<string | null>(null);
@@ -233,14 +237,40 @@ export function ControllersPage() {
     }
   }
 
+  /**
+   * Aplica um instantâneo do servidor à tela. Devolve true enquanto a varredura estiver rodando,
+   * para o chamador decidir se continua acompanhando.
+   */
+  function applyAuditSnapshot(snap: PersonnelAuditSnapshot): boolean {
+    // Durante "Running" o servidor devolve a auditoria ANTERIOR — a tela mostra o que já sabe em
+    // vez de piscar vazia.
+    if (snap.result) setAuditAll(snap.result);
+    if (snap.phase === "Running") {
+      setAuditProgress({ done: snap.done, total: snap.total });
+      return true;
+    }
+    setAuditProgress(null);
+    if (snap.phase === "Failed" && snap.error) setAuditError(snap.error);
+    return false;
+  }
+
   async function runAuditAll() {
     setAuditing(true);
     setAuditError(null);
     setAuditNotice(null);
     try {
-      setAuditAll(await api.getPersonnelAuditAll());
+      await api.startPersonnelAuditAll();
+
+      // Acompanha até terminar. Cada leitura de aparelho pode levar minutos, então o intervalo é
+      // folgado de propósito — a varredura inteira é lenta por natureza.
+      for (;;) {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        const snap = await api.getPersonnelAuditAll();
+        if (!applyAuditSnapshot(snap)) break;
+      }
     } catch (err) {
       setAuditError(err instanceof ApiError ? err.message : "Falha ao auditar os controladores.");
+      setAuditProgress(null);
     } finally {
       setAuditing(false);
     }
@@ -389,7 +419,11 @@ export function ControllersPage() {
               {discovering ? "Procurando..." : "Descobrir controladores na rede"}
             </button>
             <button className="btn btn-outline btn-sm" onClick={runAuditAll} disabled={auditing}>
-              {auditing ? "Auditando… (lê cada aparelho)" : "Auditar usuários em todos"}
+              {auditing
+                ? auditProgress
+                  ? `Auditando… ${auditProgress.done}/${auditProgress.total} aparelhos`
+                  : "Auditando… (lê cada aparelho)"
+                : "Auditar usuários em todos"}
             </button>
           </div>
           {discovered && (
@@ -402,97 +436,14 @@ export function ControllersPage() {
         </>
       )}
 
-      {isAdminOrOperator && (auditAll || auditError) && (
-        <div className="card" style={{ marginTop: "1rem" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: "0.75rem", flexWrap: "wrap" }}>
-            <h3 style={{ margin: 0, fontSize: "1.05rem" }}>Auditoria de usuários — todos os controladores</h3>
-            {auditAll && (
-              <span className="text-muted" style={{ fontSize: "0.85rem" }}>
-                {new Date(auditAll.generatedAtUtc).toLocaleString()}
-              </span>
-            )}
-          </div>
-          {auditError && <div className="alert alert-danger" style={{ marginTop: "0.75rem" }}>{auditError}</div>}
-          {auditNotice && <div className="alert alert-success" style={{ marginTop: "0.75rem" }}>{auditNotice}</div>}
-          {auditAll && (() => {
-            const unreachable = auditAll.results.filter((r) => r.error !== null);
-            const diverging = auditAll.results.filter(
-              (r) => r.error === null && ((r.missingOnDevice?.length ?? 0) > 0 || (r.extraOnDevice?.length ?? 0) > 0),
-            );
-            const okCount = auditAll.results.length - unreachable.length - diverging.length;
-            return (
-              <>
-                <p style={{ margin: "0.75rem 0" }}>
-                  {auditAll.results.length} controlador(es): <span className="pill pill-success">{okCount} em dia</span>{" "}
-                  {diverging.length > 0 && <span className="pill pill-warning">{diverging.length} com divergência</span>}{" "}
-                  {unreachable.length > 0 && <span className="pill pill-danger">{unreachable.length} inalcançáveis</span>}
-                </p>
-                {unreachable.map((r) => (
-                  <div key={r.controllerId} className="alert alert-danger" style={{ marginBottom: "0.5rem" }}>
-                    <strong>{r.controllerName}</strong>: {r.error}
-                  </div>
-                ))}
-                {diverging.map((r) => (
-                  <div key={r.controllerId} style={{ borderTop: "1px solid var(--border, #e2e8f0)", paddingTop: "0.75rem", marginTop: "0.75rem" }}>
-                    <p style={{ margin: "0 0 0.5rem" }}>
-                      <Link to={`/controllers/${r.controllerId}`} className="link-strong">
-                        {r.controllerName}
-                      </Link>{" "}
-                      — no aparelho: <strong>{r.deviceCount}</strong> · esperado: <strong>{r.expectedCount}</strong>
-                    </p>
-                    {(r.missingOnDevice?.length ?? 0) > 0 && (
-                      <div style={{ marginBottom: "0.5rem" }}>
-                        <p className="text-muted" style={{ margin: "0 0 0.3rem", fontSize: "0.85rem", textTransform: "uppercase" }}>
-                          Faltando no dispositivo
-                        </p>
-                        <ul style={{ listStyle: "none", paddingLeft: 0, margin: 0 }}>
-                          {r.missingOnDevice!.map((u) => (
-                            <li key={u.userId} style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.3rem" }}>
-                              <span>
-                                {u.name} <span className="text-muted">#{u.userCode}</span>
-                                {u.type === "Visitor" && <span className="pill" style={{ marginLeft: "0.4rem" }}>Visitante</span>}
-                              </span>
-                              <button
-                                className="btn btn-outline btn-sm"
-                                disabled={auditBusy}
-                                onClick={() => resyncFromAudit(r.controllerId, u.userId, u.name)}
-                              >
-                                Resincronizar
-                              </button>
-                            </li>
-                          ))}
-                        </ul>
-                        {r.missingOnDevice!.length > 1 && (
-                          <button
-                            className="btn btn-primary btn-sm"
-                            style={{ marginTop: "0.3rem" }}
-                            disabled={auditBusy}
-                            onClick={() => repairFromAudit(r.controllerId, r.controllerName, r.missingOnDevice!.length)}
-                          >
-                            Resincronizar todos os faltantes
-                          </button>
-                        )}
-                      </div>
-                    )}
-                    {(r.extraOnDevice?.length ?? 0) > 0 && (
-                      <p className="text-muted" style={{ margin: 0, fontSize: "0.9rem" }}>
-                        Extra no dispositivo (não esperado): {r.extraOnDevice!.join(", ")} — exclua pela página de
-                        detalhes (aba Auditoria).
-                      </p>
-                    )}
-                  </div>
-                ))}
-                {diverging.length === 0 && unreachable.length === 0 && (
-                  <p className="text-muted" style={{ margin: 0 }}>
-                    Nenhuma divergência: todos os aparelhos têm exatamente os usuários esperados.
-                  </p>
-                )}
-              </>
-            );
-          })()}
-        </div>
-      )}
-
+      <PersonnelAuditPanel
+        result={isAdminOrOperator ? auditAll : null}
+        error={isAdminOrOperator ? auditError : null}
+        notice={auditNotice}
+        busy={auditBusy}
+        onResyncUser={resyncFromAudit}
+        onRepairController={repairFromAudit}
+      />
       {isAdminOrOperator && (
         <form className="card" style={{ marginTop: "1rem", marginBottom: "1.25rem" }} onSubmit={handleSave}>
           <div className="form-row">

@@ -4,7 +4,7 @@ Solução para gerenciar **30 controladores faciais 8190H** conectados por **TCP
 com cadastro de face por upload, QR Code de acesso para visitantes (com gestão de
 leitos/quartos), gestão de portas/permissões, sincronização multi-dispositivo e log
 de acessos auditável.
-Rodando **on-premise** (.NET 8 + PostgreSQL).
+Rodando **on-premise** (.NET 10 + PostgreSQL).
 
 ---
 
@@ -45,6 +45,16 @@ PNG, WebP...) — o conversor sempre re-encoda para **JPEG**, que é o que o apa
 Retornos tratados: `2` (feature code não identificável),
 `3` (sem rosto), `4` (duplicada), `0`/outros (falha de CRC32), resultado nulo (handle 0 =
 usuário inexistente).
+
+**Validação no upload** (`FacePhotoValidator`, chamado por `UsersController`): a foto é conferida
+na hora do cadastro, não na sincronização — antes, um arquivo que nem era imagem era gravado no
+banco, entrava na fila e só falhava no aparelho minutos depois, com mensagem longe de quem
+cadastrou. Não há detecção facial no servidor (isso exigiria um modelo de visão e é o que o
+firmware faz): o que se afirma aqui é que o arquivo é mesmo uma imagem, tem pelo menos 120×160 px
+e sobrevive à conversão para o formato do aparelho. Foto sem rosto continua sendo recusada pelo
+aparelho (código `3`) — e agora **falha de conversão também é permanente** (`FaceUploadCode.InvalidImage`):
+antes a exceção do conversor escapava do gateway e era classificada como transitória, então a
+mesma foto quebrada era reenviada a cada varredura, para sempre.
 
 ### 4. `WaitRepeatMessage`
 Configurável por controlador via `Controller.SupportsWaitRepeatMessage` (só firmware ≥ v4.28).
@@ -246,6 +256,15 @@ e receber eventos. Todo esse código vive em **`HospitalAccess.Infrastructure/De
   `deviceId`, `employeeId`/`employeeNoString`, etc.), casa o controlador por `SerialNumber` e grava
   um `AccessLog`. É um **canal alternativo** ao `TransactionMessage` do SDK (seção 2) — útil se o
   push por TCP não funcionar no hardware real. Responde `{"success":0,"msg":"OK"}` (0 = OK).
+  Como o firmware não envia cabeçalho de autenticação, a rota é anônima e depende de isolamento
+  de rede (VLAN/firewall) — garantia EXTERNA ao software. Por isso três defesas ficam no código:
+  **teto por IP de origem** (`Device:CallbackRateLimitPerMinute`, padrão 120/min — com IP fixo
+  por controlador a partição é por aparelho), **teto de corpo de 4 MB** (o corpo é lido inteiro
+  para memória) e **conferência do IP de origem** contra o `IpAddress` cadastrado do controlador
+  que o evento alega ser (casado por SN). A divergência sempre vira Warning no log; com
+  `Device:RestrictCallbackToKnownIps=true` o evento é recusado com 403. O padrão é só avisar,
+  para não derrubar instalação com NAT/DHCP no meio — ligue depois de confirmar que o aviso não
+  aparece em operação normal.
 - **Mapa de erros** — `DeviceErrorCodes` traduz os `errCode` do painel (ex.: `11` =
   `ExpirationDate` fora da faixa) para mensagens legíveis; as falhas viram `DeviceHttpException`
   e o endpoint devolve 502/422 com a causa.
@@ -390,6 +409,44 @@ TCP, seções 1-9) e o **cliente HTTP** do painel web (`Infrastructure/Devices/`
   os estáticos em `HospitalAccess.Api/wwwroot/`.
 - **HospitalAccess.Tests** — testes unitários (QR, classificador de eventos, conversor de imagem).
 
+## Cópia de segurança (backup)
+
+Rotina automática (`BackupBackgroundService`, ligada por padrão) mais geração sob demanda pela
+tela de **Configurações** → *Cópias de segurança* (Admin): **listar, gerar agora, baixar e
+remover** (`/api/backups`).
+
+Cada cópia é um **zip único** com três partes:
+
+| Item | Para quê |
+|---|---|
+| `database.dump` | Banco completo (`pg_dump --format=custom`). |
+| `dpkeys/` | **Chaveiro da DataProtection.** |
+| `LEIA-ME.txt` | Passo a passo da restauração, gerado junto. |
+
+**Por que o chaveiro vai junto**: as senhas dos controladores (`CommunicationPassword`,
+`ApiPassword`) e o token do Home Assistant são cifrados em repouso com esse chaveiro. Restaurar
+**só o banco** devolve senhas indecifráveis e **nenhum aparelho volta a funcionar** — é o erro
+clássico deste desenho, então as chaves entram no mesmo arquivo em vez de depender de alguém
+lembrar. Verificado em teste: restaurando com o chaveiro da cópia a senha volta em claro;
+com um chaveiro diferente, `CryptographicException`.
+
+**Pré-requisito**: `pg_dump` no servidor (pacote `postgresql-client`). Sem ele a rotina falha com
+mensagem explícita, e a tela mostra o erro em vez de um 500 opaco.
+
+**Onde guardar**: `Backup:Directory` deve apontar para **disco ou volume separado do banco** —
+cópia no mesmo disco não protege contra a falha mais comum. A gravabilidade é sondada na subida:
+diretório sem permissão vira erro destacado no log e um aviso na tela de Configurações, em vez de
+falhar silenciosamente de madrugada.
+
+> ⚠️ **O arquivo contém dados pessoais** (nomes, documentos e **fotos de rosto**) **e as chaves de
+> criptografia**. Baixar uma cópia é levar o sistema inteiro para fora do servidor: o endpoint é
+> restrito a Admin, todo download é registrado em log com usuário e IP, e o destino do arquivo
+> deve ser tão controlado quanto o próprio servidor.
+
+**Teste a restauração periodicamente.** Cópia que nunca foi restaurada é uma esperança, não um
+backup — o `LEIA-ME.txt` traz o procedimento completo, incluindo a conferência final (abrir um
+controlador e usar "Testar conexão": se a senha for aceita, o chaveiro voltou certo).
+
 ## Setup on-premise
 
 > Para um passo a passo completo de instalação em servidor Linux de produção
@@ -402,7 +459,7 @@ TCP, seções 1-9) e o **cliente HTTP** do painel web (`Infrastructure/Devices/`
 > A seção abaixo é o setup rápido para desenvolvimento local.
 
 ### Pré-requisitos
-- .NET 8 SDK
+- .NET 10 SDK
 - PostgreSQL (12+)
 - As DLLs do SDK **DoNetDrive.\*** obtidas do fabricante (não há feed NuGet público):
   `DoNetDrive.Common` (1.17.0), `DoNetDrive.Core` (2.9.0), `DoNetDrive.Protocol` (2.4.0),
@@ -469,6 +526,30 @@ senha pela UI ainda; via banco/nova rota a implementar).
 ```bash
 dotnet test HospitalAccess.Tests/HospitalAccess.Tests.csproj
 ```
+
+A suíte tem dois grupos. Os **testes de unidade** cobrem a lógica pura extraída (política de
+retry, regras de staff, nome de pessoa, heurísticas de sonda, conversão/validação de imagem,
+conferência de IP do callback) e rodam sem nenhuma dependência.
+
+Os **testes de integração** (`HospitalAccess.Tests/Integration/`) exercitam a máquina de estado
+do `UserSyncService` — quem decide se uma credencial fica ativa ou não em cada porta — contra um
+**PostgreSQL de verdade**. Não é preciosismo: o caminho testado usa `ExecuteUpdate`/`ExecuteDelete`,
+`nextval` de sequence, índices únicos **parciais** (`HasFilter`) e `xmin` como token de
+concorrência — o provider InMemory do EF não implementa nenhum dos quatro, então um teste que
+passasse nele não provaria nada sobre produção.
+
+A conexão vem de `HOSPITALACCESS_TEST_DB`. **Sem a variável esses testes são PULADOS** (aparecem
+como `Skipped`, nunca aprovados em silêncio); o CI a define via um service container do Postgres.
+Para rodar localmente:
+
+```bash
+docker run --rm -d -p 5432:5432 -e POSTGRES_PASSWORD=postgres --name ha-test postgres:16
+export HOSPITALACCESS_TEST_DB="Host=127.0.0.1;Port=5432;Username=postgres;Password=postgres;Database=postgres"
+dotnet test HospitalAccess.Tests/HospitalAccess.Tests.csproj
+```
+
+Cada execução cria um banco descartável de nome aleatório e o derruba no fim, então rodar em
+paralelo com outra suíte não gera disputa por tabelas.
 
 ## O que foi verificado de ponta a ponta neste ambiente de desenvolvimento
 
@@ -620,15 +701,21 @@ erro — vira timeout do nosso lado). Cheque nesta ordem:
    próprio aparelho e considere um reboot.
 
 ## Limitações conhecidas / próximos passos
+- **Backup**: a rotina automática cobre banco + chaveiro, mas o destino é um diretório local
+  (`Backup:Directory`) — a cópia para fora do servidor (rsync/objeto/fita) continua sendo
+  responsabilidade da infraestrutura, e a restauração precisa ser TESTADA periodicamente.
 - **Exportação em PDF** do log de acessos: não implementada (só CSV). Toda biblioteca PDF
   popular para .NET tem alguma pegada de licença para uma organização do porte de um
   hospital (QuestPDF Community tem teto de receita, iText é AGPL/comercial); ficou como
   decisão em aberto — ver `AccessLogController.Export`.
 - **Front-end único (React)**: o Blazor foi aposentado. Ainda não há suíte de teste de
-  front-end automatizada para o React (o CI faz build + typecheck; a validação de fluxo é
-  manual). Os arquivos de referência do fabricante ficam em `vendor/` (fora do build).
-- **Troca de senha do StaffUser** e cadastro de novos operadores/recepcionistas: só via
-  banco por enquanto; não há endpoint/tela dedicada.
+  front-end automatizada para o React (o CI faz lint + build + typecheck; a validação de fluxo
+  é manual). Os arquivos de referência do fabricante ficam em `vendor/` (fora do build).
+- **Autoatendimento de senha**: o Admin cadastra operadores, muda cargo e redefine senha pela
+  tela **Usuários do Sistema** (`StaffUsersController` + `SystemUsersPage`, ver a seção
+  "Configurações pela tela e usuários do sistema"), mas o próprio usuário **não** tem como trocar
+  a própria senha — depende de um Admin redefinir. Também não há política de força de senha,
+  bloqueio após N tentativas nem expiração; hoje só existe o rate limit por IP no login.
 - **Integração HIS/AD**: fora de escopo por pedido explícito — não implementada.
 - **Modelo de validação do QR pelo hardware** (item 5): **resolvido na prática** — o QR é
   cunhado e validado pelo próprio controlador (nós só lemos/provisionamos via HTTP) e abre a porta

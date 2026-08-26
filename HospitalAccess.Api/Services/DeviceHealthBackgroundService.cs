@@ -207,6 +207,12 @@ public sealed class DeviceHealthBackgroundService : BackgroundService
                 if (!reachable) error = $"Sem resposta de rede (ping/tcp {controller.IpAddress}).";
             }
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Desligamento não pode marcar o aparelho como offline: isso gravaria LastReachError
+            // e o painel mostraria "sem resposta de rede" para aparelhos saudáveis após o restart.
+            throw;
+        }
         catch (Exception ex)
         {
             reachable = false;

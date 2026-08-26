@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useAuth } from "../lib/AuthContext";
-import { api, ApiError, type SystemSettingsDto } from "../lib/api";
+import { api, ApiError, downloadBlob, type BackupListDto, type SystemSettingsDto } from "../lib/api";
 
 const RETENTION_FIELDS: { key: keyof Pick<SystemSettingsDto,
   "eventPhotoRetentionDays" | "accessLogRetentionDays" | "alarmLogRetentionDays" | "controllerAuditRetentionDays">;
@@ -43,10 +43,17 @@ export function SettingsPage() {
   const [previewName, setPreviewName] = useState("Maria da Silva");
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewing, setPreviewing] = useState(false);
+
+  // Cópias de segurança.
+  const [backups, setBackups] = useState<BackupListDto | null>(null);
+  const [backupBusy, setBackupBusy] = useState(false);
+  const [backupError, setBackupError] = useState<string | null>(null);
+  const [backupInfo, setBackupInfo] = useState<string | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
 
   useEffect(() => {
     api.getSettings().then(setSettings).catch((err) => setError(err instanceof ApiError ? err.message : "Falha ao carregar."));
+    api.getBackups().then(setBackups).catch(() => setBackups(null));
   }, []);
 
   if (role !== "Admin") {
@@ -57,6 +64,50 @@ export function SettingsPage() {
 
   function patch(partial: Partial<SystemSettingsDto>) {
     setSettings((prev) => (prev ? { ...prev, ...partial } : prev));
+  }
+
+  async function refreshBackups() {
+    try {
+      setBackups(await api.getBackups());
+    } catch (err) {
+      setBackupError(err instanceof ApiError ? err.message : "Falha ao listar as cópias.");
+    }
+  }
+
+  async function handleCreateBackup() {
+    setBackupBusy(true);
+    setBackupError(null);
+    setBackupInfo(null);
+    try {
+      const file = await api.createBackup();
+      setBackupInfo(`Cópia "${file.fileName}" gerada (${formatBytes(file.sizeBytes)}).`);
+      await refreshBackups();
+    } catch (err) {
+      setBackupError(err instanceof ApiError ? err.message : "Falha ao gerar a cópia de segurança.");
+    } finally {
+      setBackupBusy(false);
+    }
+  }
+
+  async function handleDownloadBackup(fileName: string) {
+    setBackupError(null);
+    try {
+      downloadBlob(await api.downloadBackup(fileName), fileName);
+    } catch (err) {
+      setBackupError(err instanceof ApiError ? err.message : "Falha ao baixar a cópia.");
+    }
+  }
+
+  async function handleDeleteBackup(fileName: string) {
+    if (!confirm(`Remover a cópia "${fileName}" definitivamente?`)) return;
+    setBackupError(null);
+    setBackupInfo(null);
+    try {
+      await api.deleteBackup(fileName);
+      await refreshBackups();
+    } catch (err) {
+      setBackupError(err instanceof ApiError ? err.message : "Falha ao remover a cópia.");
+    }
   }
 
   async function handleSave(e: FormEvent) {
@@ -455,6 +506,91 @@ export function SettingsPage() {
           Salvar configurações
         </button>
       </form>
+
+      {/* FORA do formulário de propósito: estes botões agem na hora e não podem submeter o form. */}
+      <div className="card" style={{ maxWidth: 620, marginTop: "1.25rem" }}>
+        <h3 style={{ marginTop: 0 }}>Cópias de segurança</h3>
+        <p className="text-muted" style={{ marginTop: 0 }}>
+          Cada cópia traz o banco completo <strong>e</strong> o chaveiro que decifra as senhas dos
+          aparelhos — restaurar só o banco deixaria todos os controladores sem senha válida. A
+          rotina automática roda sozinha; o botão abaixo gera uma na hora.
+        </p>
+        <p className="text-muted" style={{ marginTop: 0, fontSize: "0.85rem" }}>
+          ⚠️ O arquivo contém dados pessoais (nomes, documentos e <strong>fotos de rosto</strong>) e
+          as chaves de criptografia. Baixe apenas para um destino controlado.
+        </p>
+
+        {backups && !backups.writable && (
+          <div className="alert alert-danger">
+            O diretório <code>{backups.directory}</code> não é gravável pelo serviço —{" "}
+            <strong>nenhuma cópia está sendo gerada</strong>. Ajuste as permissões ou aponte
+            <code> Backup:Directory</code> para outro caminho.
+          </div>
+        )}
+
+        <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.75rem" }}>
+          <button type="button" className="btn btn-primary btn-sm" onClick={handleCreateBackup} disabled={backupBusy}>
+            {backupBusy ? "Gerando cópia…" : "Gerar cópia agora"}
+          </button>
+          <button type="button" className="btn btn-outline btn-sm" onClick={refreshBackups} disabled={backupBusy}>
+            Atualizar lista
+          </button>
+        </div>
+
+        {backupError && <div className="alert alert-danger">{backupError}</div>}
+        {backupInfo && <div className="alert alert-success">{backupInfo}</div>}
+
+        {backups && backups.files.length === 0 && (
+          <p className="text-muted" style={{ fontSize: "0.9rem" }}>
+            Nenhuma cópia ainda. A primeira é gerada na subida do serviço; use o botão acima para
+            não esperar.
+          </p>
+        )}
+
+        {backups && backups.files.length > 0 && (
+          <div style={{ overflowX: "auto" }}>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Arquivo</th>
+                  <th>Gerada em</th>
+                  <th>Tamanho</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {backups.files.map((f) => (
+                  <tr key={f.fileName}>
+                    <td style={{ fontFamily: "monospace", fontSize: "0.85rem" }}>{f.fileName}</td>
+                    <td>{new Date(f.createdAtUtc).toLocaleString()}</td>
+                    <td style={{ whiteSpace: "nowrap" }}>{formatBytes(f.sizeBytes)}</td>
+                    <td style={{ whiteSpace: "nowrap" }}>
+                      <button type="button" className="btn btn-outline btn-sm" onClick={() => handleDownloadBackup(f.fileName)}>
+                        Baixar
+                      </button>{" "}
+                      <button type="button" className="btn btn-danger btn-sm" onClick={() => handleDeleteBackup(f.fileName)}>
+                        Remover
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   );
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KB", "MB", "GB"];
+  let value = bytes / 1024;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit++;
+  }
+  return `${value.toFixed(1)} ${units[unit]}`;
 }

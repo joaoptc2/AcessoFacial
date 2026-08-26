@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
@@ -44,7 +44,7 @@
   <ItemGroup>
     <!-- Dependências transitivas do SDK (disponíveis no NuGet público). -->
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
-    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.1" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.11" />
     <!--
       ImageSharp: porta multiplataforma do ImageTool.ConvertImage do fabricante (que usa
       System.Drawing/GDI+, Windows-only). Fixado em 2.x (Apache-2.0) — NÃO subir para 3.x

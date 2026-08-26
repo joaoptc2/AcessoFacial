@@ -10,7 +10,9 @@ using Microsoft.EntityFrameworkCore;
 
 namespace HospitalAccess.Api.Controllers;
 
-public record CreateVisitorRequest(string Name, DateTime ValidUntil, int TimeGroup, Guid[]? ControllerIds = null);
+// Name anulável de propósito — ver a nota em CreateUserRequest: garante que a mensagem de erro
+// venha do PersonNameRules (português, acionável) e não da validação automática do framework.
+public record CreateVisitorRequest(string? Name, DateTime ValidUntil, int TimeGroup, Guid[]? ControllerIds = null);
 
 /// <summary>Texto do QRCode copiado da controladora, para renderizar um PNG imprimível.</summary>
 public record RenderQrRequest(string Text);
@@ -149,12 +151,15 @@ public class VisitorsController : ControllerBase
         if (controllerIds.Count != 1)
             return BadRequest("Selecione exatamente UM quarto (porta): o visitante temporário fica em um leito por vez. Use \"Trocar quarto\" para mudá-lo depois.");
 
+        if (!PersonNameRules.TryNormalize(request.Name, "O nome", out var visitorName, out var nameError))
+            return BadRequest(nameError);
+
         var nextCode = await NextUserCodeAsync(ct);
 
         var visitor = new User
         {
             UserCode = nextCode,
-            Name = request.Name,
+            Name = visitorName,
             Type = UserType.Visitor,
             ValidFrom = DateTime.UtcNow,
             ValidUntil = validUntil,

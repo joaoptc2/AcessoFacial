@@ -1,12 +1,14 @@
 using System.IO.Compression;
 using System.Text;
 using System.Text.Json;
+using HospitalAccess.Api.Services;
 using HospitalAccess.Domain.Entities;
 using HospitalAccess.Domain.Enums;
 using HospitalAccess.Infrastructure.Devices;
 using HospitalAccess.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Net.Http.Headers;
@@ -20,12 +22,30 @@ namespace HospitalAccess.Api.Controllers;
 ///
 /// SEGURANÇA: os aparelhos AI Series NÃO conseguem enviar cabeçalhos HTTP customizados, então não dá
 /// para autenticar por token aqui. Este endpoint é <c>[AllowAnonymous]</c> e deve ser protegido por
-/// REDE (VLAN/firewall) — exponha-o só à sub-rede dos controladores.
+/// REDE (VLAN/firewall) — exponha-o só à sub-rede dos controladores. Como isso é uma garantia
+/// EXTERNA ao software, três defesas ficam aqui dentro:
+/// <list type="bullet">
+/// <item>teto de requisições por IP de origem (política <c>device-callback</c>, ver Program.cs) —
+/// sem ele, qualquer coisa na VLAN podia inflar a tabela de auditoria até esgotar o disco;</item>
+/// <item>teto de tamanho do corpo (<see cref="RequestSizeLimitAttribute"/>) — o corpo é lido
+/// inteiro para memória, então um POST gigante era um jeito barato de derrubar o processo;</item>
+/// <item>conferência do IP de origem contra o IP cadastrado do controlador que o evento ALEGA ser
+/// (casado por número de série). Divergência sempre vira Warning; com
+/// <c>Device:RestrictCallbackToKnownIps=true</c> o evento é recusado. O padrão é só avisar para
+/// não derrubar instalação com NAT/DHCP no meio — ligue depois de conferir os avisos no log.</item>
+/// </list>
 /// </summary>
 [ApiController]
 [AllowAnonymous]
+[EnableRateLimiting("device-callback")]
 public sealed class DeviceCallbackController : ControllerBase
 {
+    /// <summary>
+    /// Teto do corpo do phone-home. O JSON comprimido tem alguns KB; a folga cobre o
+    /// multipart com a foto do evento que alguns firmwares anexam.
+    /// </summary>
+    private const int MaxCallbackBodyBytes = 4 * 1024 * 1024;
+
     private readonly AccessDbContext _db;
     private readonly TimeZoneInfo _deviceTimeZone;
     private readonly IConfiguration _config;
@@ -46,6 +66,7 @@ public sealed class DeviceCallbackController : ControllerBase
     /// outro valor faz o aparelho reenviar).
     /// </summary>
     [HttpPost("/note/insertNoteFace")]
+    [RequestSizeLimit(MaxCallbackBodyBytes)]
     public async Task<IActionResult> InsertNoteFace(CancellationToken ct)
     {
         byte[]? recordBytes = await ReadRecordJsonAsync(ct);
@@ -88,6 +109,26 @@ public sealed class DeviceCallbackController : ControllerBase
             {
                 _logger.LogWarning("[insertNoteFace] deviceKey {Key} não corresponde a nenhum controlador — ignorado", deviceKey);
                 return Ok(new ProtocolOk());
+            }
+
+            // O evento alega vir deste controlador; o IP de origem confere com o cadastrado?
+            if (!DeviceCallbackRules.SourceIpMatches(HttpContext.Connection.RemoteIpAddress, controller.IpAddress))
+            {
+                var remote = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "(desconhecido)";
+                if (_config.GetValue<bool>("Device:RestrictCallbackToKnownIps"))
+                {
+                    _logger.LogWarning(
+                        "[insertNoteFace] RECUSADO: evento alegando ser do controlador {Controller} (SN {Sn}) veio de {Remote}, " +
+                        "mas o IP cadastrado é {Expected}.",
+                        controller.Name, deviceKey, remote, controller.IpAddress);
+                    return StatusCode(StatusCodes.Status403Forbidden);
+                }
+
+                _logger.LogWarning(
+                    "[insertNoteFace] evento do controlador {Controller} (SN {Sn}) veio de {Remote}, mas o IP cadastrado é " +
+                    "{Expected}. Aceito porque Device:RestrictCallbackToKnownIps está desligado — se este aviso não aparecer " +
+                    "em operação normal, ligue a chave para recusar eventos forjados.",
+                    controller.Name, deviceKey, remote, controller.IpAddress);
             }
 
             var employeeNo = GetString(root, "employeeId", "employeeNoString");

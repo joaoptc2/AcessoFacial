@@ -224,6 +224,15 @@ public sealed class UserSyncService : IUserSyncService
                 }
             }
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Desligamento do serviço NÃO é falha do aparelho. Desde que o gateway passou a
+            // observar o token, o cancelamento chega aqui — sem este ramo ele cairia no catch
+            // genérico abaixo e marcaria Failed + backoff com a mensagem "operação cancelada",
+            // sujando o painel a cada restart (e o SaveChanges nem persistiria, porque o mesmo
+            // token já está cancelado). Deixa o status como está: a varredura reprocessa.
+            throw;
+        }
         catch (Exception ex)
         {
             // Exceção = falha transitória (aparelho offline, timeout): re-tenta com backoff.
@@ -321,6 +330,11 @@ public sealed class UserSyncService : IUserSyncService
             status.LastError = null;
             status.RetryCount = 0;
             status.NextRetryAtUtc = null;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Mesmo motivo do SyncToControllerAsync: desligamento não é falha do aparelho.
+            throw;
         }
         catch (Exception ex)
         {

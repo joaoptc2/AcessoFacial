@@ -146,6 +146,11 @@ builder.Services.AddSingleton<SingleFlight>();
 // banco, o startup loga erro destacado e o painel mostra a faixa "banco desatualizado".
 builder.Services.AddSingleton<DatabaseSchemaState>();
 
+// Estado da auditoria de pessoal de TODOS os controladores. A varredura passou a rodar em
+// segundo plano (ver ControllersController.StartPersonnelAuditAll): a versão síncrona podia
+// levar >20 min com aparelhos lentos e era cortada pelo proxy reverso muito antes disso.
+builder.Services.AddSingleton<PersonnelAuditState>();
+
 // Configurações efetivas em runtime: o que a tela de Configurações salvar no banco tem
 // precedência; vazio herda o appsettings. Também é a fonte da senha padrão dos aparelhos
 // (comunicação + painel web) via as interfaces de defaults do Gateway/Infrastructure.
@@ -177,6 +182,13 @@ builder.Services.AddHostedService<DeviceHealthBackgroundService>();
 
 // Expurgo de dados conforme a política de retenção (LGPD, ver tela de Configurações).
 builder.Services.AddHostedService<DataRetentionBackgroundService>();
+
+// Cópia de segurança (pg_dump + chaveiro da DataProtection, num zip só). Era a única lacuna com
+// perda IRREVERSÍVEL: sem cópia, uma falha de disco leva junto o cadastro, as fotos e todo o
+// histórico de acessos. Administrável pela tela (listar/gerar/baixar) em /api/backups.
+builder.Services.Configure<BackupOptions>(builder.Configuration.GetSection(BackupOptions.SectionName));
+builder.Services.AddSingleton<BackupService>();
+builder.Services.AddHostedService<BackupBackgroundService>();
 
 // Escuta de eventos em tempo real -> AccessLog (append-only).
 builder.Services.AddHostedService<AccessEventRecorder>();
@@ -218,6 +230,9 @@ builder.Services.AddAuthorization();
 
 // Rate limiting: protege o login contra brute force de senha de staff. Janela fixa por IP,
 // pequena o suficiente para travar tentativas automatizadas sem atrapalhar o uso normal.
+// A política "device-callback" protege o phone-home dos aparelhos, que é [AllowAnonymous] por
+// limitação do firmware (não sabe enviar cabeçalho de autenticação) — ver DeviceCallbackController.
+var callbackPermitPerMinute = builder.Configuration.GetValue<int?>("Device:CallbackRateLimitPerMinute") ?? 120;
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
@@ -227,6 +242,20 @@ builder.Services.AddRateLimiter(options =>
             factory: _ => new FixedWindowRateLimiterOptions
             {
                 PermitLimit = 10,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+            }));
+
+    // Teto por IP de origem. Com IP fixo por controlador (o cenário on-premise deste sistema),
+    // a partição é efetivamente por aparelho e 120/min é ordens de grandeza acima do tráfego
+    // real de passagens. Se TODOS os controladores saírem por um mesmo IP (NAT), suba
+    // Device:CallbackRateLimitPerMinute proporcionalmente ao número de aparelhos.
+    options.AddPolicy("device-callback", httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = callbackPermitPerMinute,
                 Window = TimeSpan.FromMinutes(1),
                 QueueLimit = 0,
             }));

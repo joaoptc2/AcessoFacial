@@ -18,18 +18,18 @@ equivalente para RHEL/Rocky/Alma quando ele muda.
   controladores 8190H (normalmente a mesma VLAN/rede predial de controle de acesso).
 - Um domínio ou IP interno para o hospital acessar o front-end (ex.: `acesso.hospital.local`).
 
-## 2. Instalar o .NET 8 (ASP.NET Core Runtime)
+## 2. Instalar o .NET 10 (ASP.NET Core Runtime)
 
 Em produção só é necessário o **runtime** (não o SDK completo) — mais leve e com
 menos superfície de ataque:
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y aspnetcore-runtime-8.0
-dotnet --list-runtimes   # confirme Microsoft.AspNetCore.App 8.x e Microsoft.NETCore.App 8.x
+sudo apt-get install -y aspnetcore-runtime-10.0
+dotnet --list-runtimes   # confirme Microsoft.AspNetCore.App 10.x e Microsoft.NETCore.App 10.x
 ```
 
-> **RHEL/Rocky/Alma**: `sudo dnf install aspnetcore-runtime-8.0` (repositório da Microsoft
+> **RHEL/Rocky/Alma**: `sudo dnf install aspnetcore-runtime-10.0` (repositório da Microsoft
 > precisa estar habilitado — veja https://learn.microsoft.com/dotnet/core/install/linux).
 
 Se o pacote não existir no mirror da distribuição, use o script oficial da Microsoft:
@@ -262,12 +262,42 @@ importantes a confirmar com hardware físico.
 
 ## 12. Backups
 
+O sistema **já faz a cópia sozinho** (`BackupBackgroundService`, ligado por padrão): roda na
+subida e a cada `Backup:IntervalHours`, gerando um zip com o `pg_dump` do banco, o **chaveiro da
+DataProtection** e um `LEIA-ME.txt` com o procedimento de restauração. Não é preciso montar cron
+próprio — e não se deve, porque um `pg_dump` avulso **não leva as chaves**.
+
+Pré-requisito e permissões:
+
 ```bash
-# cron diário, por exemplo em /etc/cron.d/hospitalaccess-backup
-0 3 * * * postgres pg_dump hospital_access | gzip > /var/backups/hospital_access-$(date +\%F).sql.gz
+# pg_dump precisa existir no servidor (o guia instala só o runtime do .NET, não o cliente do PG)
+sudo apt-get install -y postgresql-client
+
+# Diretório das cópias, do usuário do serviço. Aponte para disco/volume SEPARADO do banco:
+# cópia no mesmo disco não protege contra a falha mais comum.
+sudo install -d -o hospitalaccess -g hospitalaccess /var/lib/hospitalaccess/backups
 ```
-Guarde os backups fora do próprio servidor (a política de retenção fica a critério
-do hospital — é um sistema de controle de acesso físico, dado sensível).
+
+Ajustes em `/etc/hospitalaccess/appsettings.Production.json` (ou por variável de ambiente):
+`Backup__Directory`, `Backup__IntervalHours`, `Backup__RetentionDays`, `Backup__MaxFiles`.
+
+O Admin lista, **gera na hora, baixa e remove** pela tela **Configurações → Cópias de segurança**.
+
+> ⚠️ **O que o sistema NÃO faz**: levar a cópia para fora do servidor. Um backup que mora no
+> mesmo host não sobrevive à perda do host. Configure a sincronização para destino externo —
+> por exemplo, um cron que só copia o que já foi gerado:
+> ```bash
+> # /etc/cron.d/hospitalaccess-backup-offsite
+> 0 4 * * * root rsync -a --delete /var/lib/hospitalaccess/backups/ backup@nas:/hospitalaccess/
+> ```
+>
+> ⚠️ O arquivo contém **dados pessoais (nomes, documentos, fotos de rosto) e as chaves de
+> criptografia**. O destino externo precisa do mesmo nível de controle de acesso do servidor.
+
+> **TESTE A RESTAURAÇÃO periodicamente** — o `LEIA-ME.txt` dentro do zip traz o passo a passo,
+> incluindo a conferência final: abrir um controlador e usar "Testar conexão". Se a senha do
+> aparelho for aceita, o chaveiro voltou corretamente. Cópia que nunca foi restaurada é uma
+> esperança, não um backup.
 
 ## 13. Atualizando uma versão nova
 

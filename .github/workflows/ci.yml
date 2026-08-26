@@ -9,13 +9,34 @@ jobs:
   backend:
     name: Build & test (.NET)
     runs-on: ubuntu-latest
+
+    # PostgreSQL real para os testes de integração do UserSyncService. O provider InMemory do EF
+    # não implementa ExecuteUpdate/ExecuteDelete, nextval, índices parciais nem xmin — um teste
+    # que passasse nele não provaria nada sobre produção. Sem esta variável os testes são PULADOS
+    # (visíveis como skipped), nunca aprovados em silêncio.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    env:
+      HOSPITALACCESS_TEST_DB: "Host=127.0.0.1;Port=5432;Username=postgres;Password=postgres;Database=postgres"
+
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup .NET 8
+      - name: Setup .NET 10
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: "8.0.x"
+          dotnet-version: "10.0.x"
 
       - name: Restore
         run: dotnet restore HospitalAccess.sln
@@ -27,8 +48,17 @@ jobs:
         run: dotnet test HospitalAccess.Tests/HospitalAccess.Tests.csproj --configuration Release --no-build --verbosity normal
 
       - name: Vulnerabilidades em pacotes NuGet
-        # Informativo: não quebra o build, mas registra pacotes com vulnerabilidade conhecida.
-        run: dotnet list HospitalAccess.sln package --vulnerable --include-transitive || true
+        # QUEBRA o build quando há pacote vulnerável. Antes era informativo (`|| true`), e o
+        # relatório passava despercebido justamente por nunca interromper nada. `dotnet list
+        # package --vulnerable` sai com código 0 mesmo achando algo, então a detecção é pelo texto.
+        run: |
+          dotnet list HospitalAccess.sln package --vulnerable --include-transitive \
+            | tee /tmp/vulnerable.txt
+          if grep -q "has the following vulnerable packages" /tmp/vulnerable.txt; then
+            echo "::error::Pacotes NuGet com vulnerabilidade conhecida (detalhes acima)."
+            exit 1
+          fi
+          echo "Nenhum pacote NuGet vulnerável."
 
   frontend:
     name: Build & typecheck (React)
@@ -49,8 +79,12 @@ jobs:
       - name: Install
         run: npm ci
 
+      - name: Lint (oxlint)
+        run: npm run lint
+
       - name: Build (inclui typecheck do tsc)
         run: npm run build
 
       - name: npm audit (produção)
-        run: npm audit --omit=dev || true
+        # QUEBRA o build a partir de severidade "high" (as menores continuam só relatadas).
+        run: npm audit --omit=dev --audit-level=high
