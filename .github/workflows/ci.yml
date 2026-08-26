@@ -27,8 +27,17 @@ jobs:
         run: dotnet test HospitalAccess.Tests/HospitalAccess.Tests.csproj --configuration Release --no-build --verbosity normal
 
       - name: Vulnerabilidades em pacotes NuGet
-        # Informativo: não quebra o build, mas registra pacotes com vulnerabilidade conhecida.
-        run: dotnet list HospitalAccess.sln package --vulnerable --include-transitive || true
+        # QUEBRA o build quando há pacote vulnerável. Antes era informativo (`|| true`), e o
+        # relatório passava despercebido justamente por nunca interromper nada. `dotnet list
+        # package --vulnerable` sai com código 0 mesmo achando algo, então a detecção é pelo texto.
+        run: |
+          dotnet list HospitalAccess.sln package --vulnerable --include-transitive \
+            | tee /tmp/vulnerable.txt
+          if grep -q "has the following vulnerable packages" /tmp/vulnerable.txt; then
+            echo "::error::Pacotes NuGet com vulnerabilidade conhecida (detalhes acima)."
+            exit 1
+          fi
+          echo "Nenhum pacote NuGet vulnerável."
 
   frontend:
     name: Build & typecheck (React)
@@ -49,8 +58,12 @@ jobs:
       - name: Install
         run: npm ci
 
+      - name: Lint (oxlint)
+        run: npm run lint
+
       - name: Build (inclui typecheck do tsc)
         run: npm run build
 
       - name: npm audit (produção)
-        run: npm audit --omit=dev || true
+        # QUEBRA o build a partir de severidade "high" (as menores continuam só relatadas).
+        run: npm audit --omit=dev --audit-level=high

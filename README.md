@@ -625,10 +625,13 @@ erro — vira timeout do nosso lado). Cheque nesta ordem:
   hospital (QuestPDF Community tem teto de receita, iText é AGPL/comercial); ficou como
   decisão em aberto — ver `AccessLogController.Export`.
 - **Front-end único (React)**: o Blazor foi aposentado. Ainda não há suíte de teste de
-  front-end automatizada para o React (o CI faz build + typecheck; a validação de fluxo é
-  manual). Os arquivos de referência do fabricante ficam em `vendor/` (fora do build).
-- **Troca de senha do StaffUser** e cadastro de novos operadores/recepcionistas: só via
-  banco por enquanto; não há endpoint/tela dedicada.
+  front-end automatizada para o React (o CI faz lint + build + typecheck; a validação de fluxo
+  é manual). Os arquivos de referência do fabricante ficam em `vendor/` (fora do build).
+- **Autoatendimento de senha**: o Admin cadastra operadores, muda cargo e redefine senha pela
+  tela **Usuários do Sistema** (`StaffUsersController` + `SystemUsersPage`, ver a seção
+  "Configurações pela tela e usuários do sistema"), mas o próprio usuário **não** tem como trocar
+  a própria senha — depende de um Admin redefinir. Também não há política de força de senha,
+  bloqueio após N tentativas nem expiração; hoje só existe o rate limit por IP no login.
 - **Integração HIS/AD**: fora de escopo por pedido explícito — não implementada.
 - **Modelo de validação do QR pelo hardware** (item 5): **resolvido na prática** — o QR é
   cunhado e validado pelo próprio controlador (nós só lemos/provisionamos via HTTP) e abre a porta
