@@ -247,7 +247,20 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
     public async Task<AddFaceResult> AddPersonWithFaceAsync(Controller controller, User user, byte[] faceJpg, CancellationToken ct = default)
     {
         // Requisito de hardware: JPG, 480x640, <= 120KB (Classe 11 / Appendix do protocolo).
-        var converted = FaceImageConverter.ConvertImage(faceJpg, 480, 640, 122880);
+        // Falha aqui é do ARQUIVO, não do aparelho: devolvemos um código permanente em vez de
+        // deixar a exceção subir, senão o chamador classifica como transitória e reenvia a mesma
+        // foto quebrada a cada varredura, para sempre.
+        byte[] converted;
+        try
+        {
+            converted = FaceImageConverter.ConvertImage(faceJpg, 480, 640, 122880);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return new AddFaceResult(false, FaceUploadCode.InvalidImage,
+                $"A foto cadastrada não pôde ser preparada para o aparelho: {ex.Message} " +
+                "Envie uma foto nova pelo cadastro do usuário.");
+        }
 
         var person = new PersonData
         {

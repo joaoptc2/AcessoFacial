@@ -132,8 +132,8 @@ public class BedsController : ControllerBase
     [HttpPost("{controllerId:guid}/admit")]
     public async Task<IActionResult> Admit(Guid controllerId, [FromBody] AdmitPatientRequest request, CancellationToken ct)
     {
-        var patientName = (request.PatientName ?? string.Empty).Trim();
-        if (patientName.Length == 0) return BadRequest("Informe o nome do paciente.");
+        if (!PersonNameRules.TryNormalize(request.PatientName, "O nome do paciente", out var patientName, out var nameError))
+            return BadRequest(nameError);
 
         var controller = await _db.Controllers.AsNoTracking().FirstOrDefaultAsync(c => c.Id == controllerId, ct);
         if (controller is null) return NotFound("Leito (controlador) não existe.");

@@ -46,6 +46,16 @@ Retornos tratados: `2` (feature code não identificável),
 `3` (sem rosto), `4` (duplicada), `0`/outros (falha de CRC32), resultado nulo (handle 0 =
 usuário inexistente).
 
+**Validação no upload** (`FacePhotoValidator`, chamado por `UsersController`): a foto é conferida
+na hora do cadastro, não na sincronização — antes, um arquivo que nem era imagem era gravado no
+banco, entrava na fila e só falhava no aparelho minutos depois, com mensagem longe de quem
+cadastrou. Não há detecção facial no servidor (isso exigiria um modelo de visão e é o que o
+firmware faz): o que se afirma aqui é que o arquivo é mesmo uma imagem, tem pelo menos 120×160 px
+e sobrevive à conversão para o formato do aparelho. Foto sem rosto continua sendo recusada pelo
+aparelho (código `3`) — e agora **falha de conversão também é permanente** (`FaceUploadCode.InvalidImage`):
+antes a exceção do conversor escapava do gateway e era classificada como transitória, então a
+mesma foto quebrada era reenviada a cada varredura, para sempre.
+
 ### 4. `WaitRepeatMessage`
 Configurável por controlador via `Controller.SupportsWaitRepeatMessage` (só firmware ≥ v4.28).
 

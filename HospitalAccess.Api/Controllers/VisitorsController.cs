@@ -149,12 +149,15 @@ public class VisitorsController : ControllerBase
         if (controllerIds.Count != 1)
             return BadRequest("Selecione exatamente UM quarto (porta): o visitante temporário fica em um leito por vez. Use \"Trocar quarto\" para mudá-lo depois.");
 
+        if (!PersonNameRules.TryNormalize(request.Name, "O nome", out var visitorName, out var nameError))
+            return BadRequest(nameError);
+
         var nextCode = await NextUserCodeAsync(ct);
 
         var visitor = new User
         {
             UserCode = nextCode,
-            Name = request.Name,
+            Name = visitorName,
             Type = UserType.Visitor,
             ValidFrom = DateTime.UtcNow,
             ValidUntil = validUntil,

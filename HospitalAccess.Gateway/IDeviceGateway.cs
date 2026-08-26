@@ -191,5 +191,14 @@ public enum FaceUploadCode
     NoFaceInPhoto = 3,             // 3 -- personnel photo can not be identified
     Duplicate = 4,                 // 4 -- duplicate personnel photo or feature code
     CrcFailure = 0,                // 0 -- check failure (CRC32 inconsistente)
-    UserNotFound = -1              // handle 0 = usuário inexistente / operação recusada
+    UserNotFound = -1,             // handle 0 = usuário inexistente / operação recusada
+
+    /// <summary>
+    /// A foto guardada não pôde sequer ser convertida para o formato do aparelho (arquivo
+    /// corrompido, formato não suportado, ou impossível de comprimir até o teto). É falha do
+    /// DADO, não da rede: nenhuma tentativa futura com o mesmo arquivo vai funcionar. Antes essa
+    /// exceção escapava do gateway e era classificada como transitória, então a mesma foto
+    /// quebrada era reenviada a cada varredura, para sempre.
+    /// </summary>
+    InvalidImage = -2
 }

@@ -3,6 +3,7 @@ using HospitalAccess.Application.Sync;
 using HospitalAccess.Domain.Entities;
 using HospitalAccess.Domain.Enums;
 using HospitalAccess.Gateway;
+using HospitalAccess.Gateway.Imaging;
 using HospitalAccess.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -139,6 +140,8 @@ public class UsersController : ControllerBase
     {
         if (facePhoto.Length == 0)
             return BadRequest("facePhoto é obrigatório.");
+        if (!PersonNameRules.TryNormalize(request.Name, "O nome", out var name, out var nameError))
+            return BadRequest(nameError);
         if (request.TimeGroup is < 1 or > 64)
             return BadRequest("TimeGroup deve estar entre 1 e 64.");
         if (request.GroupId is { } groupId && !await _db.UserGroups.AnyAsync(g => g.Id == groupId, ct))
@@ -147,12 +150,18 @@ public class UsersController : ControllerBase
         await using var ms = new MemoryStream();
         await facePhoto.CopyToAsync(ms, ct);
 
+        // Valida a foto AQUI, não na sincronização: antes, um arquivo que nem era imagem era
+        // gravado no banco, entrava na fila e só falhava no aparelho minutos depois — com uma
+        // mensagem técnica longe de quem cadastrou.
+        if (!FacePhotoValidator.TryValidate(ms.ToArray(), out var photoError))
+            return BadRequest(photoError);
+
         var nextCode = await NextUserCodeAsync(ct);
 
         var user = new User
         {
             UserCode = nextCode,
-            Name = request.Name,
+            Name = name,
             Type = UserType.Permanent,
             TimeGroup = request.TimeGroup,
             GroupId = request.GroupId,
@@ -196,6 +205,8 @@ public class UsersController : ControllerBase
             .FirstOrDefaultAsync(u => u.Id == id && u.Type == UserType.Permanent, ct);
         if (user is null) return NotFound();
 
+        if (!PersonNameRules.TryNormalize(request.Name, "O nome", out var name, out var nameError))
+            return BadRequest(nameError);
         if (request.TimeGroup is < 1 or > 64)
             return BadRequest("TimeGroup deve estar entre 1 e 64.");
         if (request.GroupId is { } groupId && !await _db.UserGroups.AnyAsync(g => g.Id == groupId, ct))
@@ -203,11 +214,13 @@ public class UsersController : ControllerBase
 
         // Antes de aplicar a edição: algum campo que vai AO DISPOSITIVO mudou? Editar só perfil
         // administrativo (telefone, e-mail, cargo, notas...) não pode custar re-upload de face.
+        // Compara o nome JÁ NORMALIZADO: senão, salvar sem mexer em nada dispara re-upload de
+        // face só porque o valor gravado perdeu um espaço duplicado que veio no formulário.
         var hasNewPhoto = facePhoto is { Length: > 0 };
         var deviceFieldsChanged = UserDeviceFields.Changed(
-            user, request.Name, request.TimeGroup, request.CardNumber, hasNewPhoto);
+            user, name, request.TimeGroup, request.CardNumber, hasNewPhoto);
 
-        user.Name = request.Name;
+        user.Name = name;
         user.TimeGroup = request.TimeGroup;
         user.GroupId = request.GroupId;
         user.CardNumber = request.CardNumber;
@@ -222,7 +235,10 @@ public class UsersController : ControllerBase
         {
             await using var ms = new MemoryStream();
             await facePhoto.CopyToAsync(ms, ct);
-            user.FacePhoto = ms.ToArray();
+            var newPhoto = ms.ToArray();
+            if (!FacePhotoValidator.TryValidate(newPhoto, out var photoError))
+                return BadRequest(photoError);
+            user.FacePhoto = newPhoto;
         }
 
         var desiredControllerIds = (request.ControllerIds ?? []).Distinct().ToHashSet();

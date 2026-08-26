@@ -19,7 +19,12 @@ public static class SyncRetryPolicy
 {
     /// <summary>Falha que nunca terá sucesso com os mesmos dados (não elegível a retry automático).</summary>
     public static bool IsPermanent(FaceUploadCode code) =>
-        code is FaceUploadCode.NoFaceInPhoto or FaceUploadCode.FeatureCodeUnidentifiable or FaceUploadCode.Duplicate;
+        code is FaceUploadCode.NoFaceInPhoto
+             or FaceUploadCode.FeatureCodeUnidentifiable
+             or FaceUploadCode.Duplicate
+             // Foto que nem converte (corrompida/formato não suportado) é falha do DADO: reenviar
+             // o mesmo arquivo é garantia de repetir o erro, então vai para quarentena também.
+             or FaceUploadCode.InvalidImage;
 
     /// <summary>
     /// Espera antes da próxima tentativa após <paramref name="retryCount"/> falhas consecutivas.
