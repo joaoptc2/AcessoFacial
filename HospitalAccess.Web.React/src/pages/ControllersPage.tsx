@@ -7,6 +7,7 @@ import {
   type ControllerDto,
   type DiscoveredController,
   type PersonnelAuditAllResult,
+  type PersonnelAuditSnapshot,
   type SyncStatusDto,
 } from "../lib/api";
 import { Modal } from "../components/Modal";
@@ -78,8 +79,10 @@ export function ControllersPage() {
   const [syncStatuses, setSyncStatuses] = useState<SyncStatusDto[]>([]);
   const [relocating, setRelocating] = useState(false);
 
-  // Auditoria de todos os controladores de uma vez (leituras em paralelo no servidor).
+  // Auditoria de todos os controladores. Roda em SEGUNDO PLANO no servidor (a varredura passa de
+  // 20 min com aparelhos lentos e era cortada pelo proxy): a tela dispara e acompanha por consulta.
   const [auditAll, setAuditAll] = useState<PersonnelAuditAllResult | null>(null);
+  const [auditProgress, setAuditProgress] = useState<{ done: number; total: number } | null>(null);
   const [auditing, setAuditing] = useState(false);
   const [auditBusy, setAuditBusy] = useState(false);
   const [auditNotice, setAuditNotice] = useState<string | null>(null);
@@ -233,14 +236,40 @@ export function ControllersPage() {
     }
   }
 
+  /**
+   * Aplica um instantâneo do servidor à tela. Devolve true enquanto a varredura estiver rodando,
+   * para o chamador decidir se continua acompanhando.
+   */
+  function applyAuditSnapshot(snap: PersonnelAuditSnapshot): boolean {
+    // Durante "Running" o servidor devolve a auditoria ANTERIOR — a tela mostra o que já sabe em
+    // vez de piscar vazia.
+    if (snap.result) setAuditAll(snap.result);
+    if (snap.phase === "Running") {
+      setAuditProgress({ done: snap.done, total: snap.total });
+      return true;
+    }
+    setAuditProgress(null);
+    if (snap.phase === "Failed" && snap.error) setAuditError(snap.error);
+    return false;
+  }
+
   async function runAuditAll() {
     setAuditing(true);
     setAuditError(null);
     setAuditNotice(null);
     try {
-      setAuditAll(await api.getPersonnelAuditAll());
+      await api.startPersonnelAuditAll();
+
+      // Acompanha até terminar. Cada leitura de aparelho pode levar minutos, então o intervalo é
+      // folgado de propósito — a varredura inteira é lenta por natureza.
+      for (;;) {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        const snap = await api.getPersonnelAuditAll();
+        if (!applyAuditSnapshot(snap)) break;
+      }
     } catch (err) {
       setAuditError(err instanceof ApiError ? err.message : "Falha ao auditar os controladores.");
+      setAuditProgress(null);
     } finally {
       setAuditing(false);
     }
@@ -389,7 +418,11 @@ export function ControllersPage() {
               {discovering ? "Procurando..." : "Descobrir controladores na rede"}
             </button>
             <button className="btn btn-outline btn-sm" onClick={runAuditAll} disabled={auditing}>
-              {auditing ? "Auditando… (lê cada aparelho)" : "Auditar usuários em todos"}
+              {auditing
+                ? auditProgress
+                  ? `Auditando… ${auditProgress.done}/${auditProgress.total} aparelhos`
+                  : "Auditando… (lê cada aparelho)"
+                : "Auditar usuários em todos"}
             </button>
           </div>
           {discovered && (

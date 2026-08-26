@@ -238,6 +238,21 @@ export interface PersonnelAuditAllResult {
   results: PersonnelAuditAllItem[];
 }
 
+// A auditoria de todos os aparelhos roda em SEGUNDO PLANO: com controladores lentos a varredura
+// passa de 20 min e era cortada pelo proxy reverso. A tela dispara (POST) e acompanha (GET).
+export type PersonnelAuditPhase = "Idle" | "Running" | "Completed" | "Failed";
+
+export interface PersonnelAuditSnapshot {
+  phase: PersonnelAuditPhase;
+  startedAtUtc: string | null;
+  completedAtUtc: string | null;
+  done: number;
+  total: number;
+  error: string | null;
+  // Durante "Running" traz a auditoria ANTERIOR, para a tela não piscar vazia.
+  result: PersonnelAuditAllResult | null;
+}
+
 export interface EventPhotoListItem {
   id: string;
   userCode: number | null;
@@ -798,7 +813,8 @@ export const api = {
 
   // ---- Auditoria / leitura reversa ----
   getPersonnelAudit: (id: string) => request<PersonnelAudit>(`/controllers/${id}/personnel-audit`),
-  getPersonnelAuditAll: () => request<PersonnelAuditAllResult>("/controllers/personnel-audit-all"),
+  startPersonnelAuditAll: () => request<void>("/controllers/personnel-audit-all", { method: "POST" }),
+  getPersonnelAuditAll: () => request<PersonnelAuditSnapshot>("/controllers/personnel-audit-all"),
   repairPersonnelAudit: (id: string) =>
     request<{ repaired: number; enqueued: number }>(`/controllers/${id}/personnel-audit/repair`, { method: "POST" }),
   repairPersonnelAuditUser: (id: string, userId: string) =>

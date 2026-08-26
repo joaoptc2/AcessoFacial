@@ -12,9 +12,13 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace HospitalAccess.Api.Controllers;
 
-public record CreateUserRequest(string Name, int TimeGroup, Guid? GroupId, Guid[]? ControllerIds = null, uint? CardNumber = null,
+// Name é declarado ANULÁVEL de propósito: com string não-anulável, a validação automática do
+// [ApiController] recusa o campo vazio antes do controller rodar, com a mensagem genérica em
+// inglês "The Name field is required". Deixando anulável, quem responde é o PersonNameRules —
+// mensagem em português, dizendo o que fazer, na língua de quem está na recepção.
+public record CreateUserRequest(string? Name, int TimeGroup, Guid? GroupId, Guid[]? ControllerIds = null, uint? CardNumber = null,
     string? Document = null, string? EmployeeId = null, string? JobTitle = null, string? Phone = null, string? Email = null, string? Notes = null);
-public record UpdateUserRequest(string Name, int TimeGroup, Guid? GroupId, Guid[]? ControllerIds = null, uint? CardNumber = null,
+public record UpdateUserRequest(string? Name, int TimeGroup, Guid? GroupId, Guid[]? ControllerIds = null, uint? CardNumber = null,
     string? Document = null, string? EmployeeId = null, string? JobTitle = null, string? Phone = null, string? Email = null, string? Notes = null);
 
 /// <summary>

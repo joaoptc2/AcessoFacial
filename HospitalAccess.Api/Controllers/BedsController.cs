@@ -10,7 +10,9 @@ using Microsoft.Extensions.Options;
 
 namespace HospitalAccess.Api.Controllers;
 
-public record AdmitPatientRequest(string PatientName, DateTime? ValidUntil = null);
+// PatientName anulável de propósito — ver a nota em CreateUserRequest: garante que a mensagem de
+// erro venha do PersonNameRules (português, acionável) e não da validação automática do framework.
+public record AdmitPatientRequest(string? PatientName, DateTime? ValidUntil = null);
 public record TransferPatientRequest(Guid ToControllerId);
 
 /// <summary>

@@ -10,7 +10,9 @@ using Microsoft.EntityFrameworkCore;
 
 namespace HospitalAccess.Api.Controllers;
 
-public record CreateVisitorRequest(string Name, DateTime ValidUntil, int TimeGroup, Guid[]? ControllerIds = null);
+// Name anulável de propósito — ver a nota em CreateUserRequest: garante que a mensagem de erro
+// venha do PersonNameRules (português, acionável) e não da validação automática do framework.
+public record CreateVisitorRequest(string? Name, DateTime ValidUntil, int TimeGroup, Guid[]? ControllerIds = null);
 
 /// <summary>Texto do QRCode copiado da controladora, para renderizar um PNG imprimível.</summary>
 public record RenderQrRequest(string Text);

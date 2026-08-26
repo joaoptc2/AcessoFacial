@@ -146,6 +146,11 @@ builder.Services.AddSingleton<SingleFlight>();
 // banco, o startup loga erro destacado e o painel mostra a faixa "banco desatualizado".
 builder.Services.AddSingleton<DatabaseSchemaState>();
 
+// Estado da auditoria de pessoal de TODOS os controladores. A varredura passou a rodar em
+// segundo plano (ver ControllersController.StartPersonnelAuditAll): a versão síncrona podia
+// levar >20 min com aparelhos lentos e era cortada pelo proxy reverso muito antes disso.
+builder.Services.AddSingleton<PersonnelAuditState>();
+
 // Configurações efetivas em runtime: o que a tela de Configurações salvar no banco tem
 // precedência; vazio herda o appsettings. Também é a fonte da senha padrão dos aparelhos
 // (comunicação + painel web) via as interfaces de defaults do Gateway/Infrastructure.

@@ -62,12 +62,13 @@ public class ControllersController : ControllerBase
     private readonly SingleFlight _singleFlight;
     private readonly IUserSyncQueue _syncQueue;
     private readonly DatabaseSchemaState _schemaState;
+    private readonly PersonnelAuditState _auditState;
     private readonly ILogger<ControllersController> _logger;
 
     public ControllersController(
         AccessDbContext db, IDeviceGateway gateway, IServiceScopeFactory scopeFactory,
         SingleFlight singleFlight, IUserSyncQueue syncQueue, DatabaseSchemaState schemaState,
-        ILogger<ControllersController> logger)
+        PersonnelAuditState auditState, ILogger<ControllersController> logger)
     {
         _db = db;
         _gateway = gateway;
@@ -75,6 +76,7 @@ public class ControllersController : ControllerBase
         _singleFlight = singleFlight;
         _syncQueue = syncQueue;
         _schemaState = schemaState;
+        _auditState = auditState;
         _logger = logger;
     }
 
@@ -584,9 +586,6 @@ public class ControllersController : ControllerBase
 
     // --- Leitura reversa / auditoria ---
 
-    /// <summary>Usuário apontado como "Faltando no dispositivo" pela auditoria — enriquecido para a tela oferecer o reenvio individual.</summary>
-    public sealed record AuditMissingUser(Guid UserId, uint UserCode, string Name, string Type);
-
     private sealed record AuditReport(
         List<AuditMissingUser> MissingOnDevice, List<uint> ExtraOnDevice, int DeviceCount, int ExpectedCount);
 
@@ -598,10 +597,11 @@ public class ControllersController : ControllerBase
     /// sucesso aparecer como "Faltando no dispositivo" para sempre — e um revogado que FICOU
     /// no aparelho passava despercebido (ele aparece como "Extra", que é o estado verdadeiro).
     /// </summary>
-    private async Task<AuditReport> BuildAuditReportAsync(Guid controllerId, HashSet<uint> onDevice, CancellationToken ct)
+    private static async Task<AuditReport> BuildAuditReportAsync(
+        AccessDbContext db, Guid controllerId, HashSet<uint> onDevice, CancellationToken ct)
     {
         var now = DateTime.UtcNow;
-        var expected = await _db.Permissions.AsNoTracking()
+        var expected = await db.Permissions.AsNoTracking()
             .Where(p => p.ControllerId == controllerId
                         && p.User!.RevokedAtUtc == null
                         && (p.User.ValidUntil == null || p.User.ValidUntil > now))
@@ -634,7 +634,7 @@ public class ControllersController : ControllerBase
         try
         {
             var onDevice = (await _gateway.ReadRegisteredUserCodesAsync(controller, ct)).ToHashSet();
-            return Ok(await BuildAuditReportAsync(id, onDevice, ct));
+            return Ok(await BuildAuditReportAsync(_db, id, onDevice, ct));
         }
         catch (Exception ex)
         {
@@ -643,16 +643,69 @@ public class ControllersController : ControllerBase
     }
 
     /// <summary>
-    /// Auditoria de usuários em TODOS os controladores de uma vez: lê os códigos cadastrados
-    /// de cada aparelho em paralelo (concorrência limitada — cada leitura já é serializada por
-    /// aparelho pelo gate do gateway) e compara com o banco. Falha de um aparelho não derruba
-    /// os demais: o item correspondente sai com <c>error</c> preenchido.
+    /// DISPARA a auditoria de usuários em TODOS os controladores e responde na hora (202).
+    ///
+    /// <para>
+    /// Antes isto era um GET que fazia a varredura DENTRO da requisição. Como a leitura de cada
+    /// aparelho tem teto de 3 minutos e a concorrência é 4, o pior caso com vários controladores
+    /// lentos passa de 20 minutos — muito além do <c>proxy_read_timeout</c> do Nginx (60 s por
+    /// padrão). A tela quebrava justamente quando havia aparelho com problema, que é quando a
+    /// auditoria importa. Agora a varredura roda em segundo plano e a tela consulta o resultado
+    /// pelo GET — mesmo padrão do resync-all.
+    /// </para>
+    /// </summary>
+    [HttpPost("personnel-audit-all")]
+    [Authorize(Roles = "Admin,Operator")]
+    public IActionResult StartPersonnelAuditAll()
+    {
+        const string flightKey = "personnel-audit-all";
+        if (!_singleFlight.TryBegin(flightKey))
+            return Conflict(new { error = "Já existe uma auditoria em andamento." });
+
+        _ = Task.Run(async () =>
+        {
+            // Escopo próprio: a requisição que disparou já terminou e levou o DbContext dela.
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AccessDbContext>();
+            var gateway = scope.ServiceProvider.GetRequiredService<IDeviceGateway>();
+            var state = scope.ServiceProvider.GetRequiredService<PersonnelAuditState>();
+
+            try
+            {
+                await RunPersonnelAuditAsync(db, gateway, state, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Falha na auditoria de pessoal de todos os controladores.");
+                state.MarkFailed(ex.Message);
+            }
+            finally
+            {
+                _singleFlight.End(flightKey);
+            }
+        });
+
+        return Accepted(new { message = "Auditoria iniciada. Acompanhe pelo estado da tela." });
+    }
+
+    /// <summary>
+    /// Estado e resultado da última auditoria de todos os controladores. Enquanto <c>phase</c> é
+    /// <c>Running</c>, <c>result</c> traz a auditoria ANTERIOR (a tela mostra o que já sabe em vez
+    /// de piscar vazia) e <c>done</c>/<c>total</c> dão o progresso.
     /// </summary>
     [HttpGet("personnel-audit-all")]
     [Authorize(Roles = "Admin,Operator")]
-    public async Task<IActionResult> PersonnelAuditAll(CancellationToken ct)
+    public IActionResult PersonnelAuditAll() => Ok(_auditState.Snapshot());
+
+    /// <summary>
+    /// Núcleo da varredura. Falha de um aparelho não derruba os demais: o item correspondente sai
+    /// com <c>error</c> preenchido.
+    /// </summary>
+    private static async Task RunPersonnelAuditAsync(
+        AccessDbContext db, IDeviceGateway gateway, PersonnelAuditState state, CancellationToken ct)
     {
-        var controllers = await _db.Controllers.AsNoTracking().OrderBy(c => c.Name).ToListAsync(ct);
+        var controllers = await db.Controllers.AsNoTracking().OrderBy(c => c.Name).ToListAsync(ct);
+        state.MarkRunning(controllers.Count);
 
         // Só as LEITURAS DE DISPOSITIVO rodam em paralelo (teto de 4 — ~30 aparelhos numa rede
         // sensível a rajadas). O cálculo do "esperado" usa o DbContext, que NÃO é thread-safe,
@@ -663,7 +716,7 @@ public class ControllersController : ControllerBase
             await gate.WaitAsync(ct);
             try
             {
-                var codes = (await _gateway.ReadRegisteredUserCodesAsync(controller, ct)).ToHashSet();
+                var codes = (await gateway.ReadRegisteredUserCodesAsync(controller, ct)).ToHashSet();
                 return (Controller: controller, Codes: (HashSet<uint>?)codes, Error: (string?)null);
             }
             catch (OperationCanceledException) { throw; }
@@ -671,41 +724,30 @@ public class ControllersController : ControllerBase
             {
                 return (Controller: controller, Codes: null, Error: ex.Message);
             }
-            finally { gate.Release(); }
+            finally
+            {
+                gate.Release();
+                state.ReportProgress();
+            }
         }));
 
-        var results = new List<object>(reads.Length);
+        var results = new List<PersonnelAuditItem>(reads.Length);
         foreach (var read in reads)
         {
             if (read.Codes is null)
             {
-                results.Add(new
-                {
-                    ControllerId = read.Controller.Id,
-                    ControllerName = read.Controller.Name,
-                    Error = read.Error,
-                    MissingOnDevice = (List<AuditMissingUser>?)null,
-                    ExtraOnDevice = (List<uint>?)null,
-                    DeviceCount = (int?)null,
-                    ExpectedCount = (int?)null,
-                });
+                results.Add(new PersonnelAuditItem(
+                    read.Controller.Id, read.Controller.Name, read.Error, null, null, null, null));
                 continue;
             }
 
-            var report = await BuildAuditReportAsync(read.Controller.Id, read.Codes, ct);
-            results.Add(new
-            {
-                ControllerId = read.Controller.Id,
-                ControllerName = read.Controller.Name,
-                Error = (string?)null,
-                MissingOnDevice = (List<AuditMissingUser>?)report.MissingOnDevice,
-                ExtraOnDevice = (List<uint>?)report.ExtraOnDevice,
-                DeviceCount = (int?)report.DeviceCount,
-                ExpectedCount = (int?)report.ExpectedCount,
-            });
+            var report = await BuildAuditReportAsync(db, read.Controller.Id, read.Codes, ct);
+            results.Add(new PersonnelAuditItem(
+                read.Controller.Id, read.Controller.Name, null,
+                report.MissingOnDevice, report.ExtraOnDevice, report.DeviceCount, report.ExpectedCount));
         }
 
-        return Ok(new { GeneratedAtUtc = DateTime.UtcNow, Results = results });
+        state.MarkCompleted(new PersonnelAuditReport(DateTime.UtcNow, results));
     }
 
     /// <summary>
