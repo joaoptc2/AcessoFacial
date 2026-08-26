@@ -218,6 +218,9 @@ builder.Services.AddAuthorization();
 
 // Rate limiting: protege o login contra brute force de senha de staff. Janela fixa por IP,
 // pequena o suficiente para travar tentativas automatizadas sem atrapalhar o uso normal.
+// A política "device-callback" protege o phone-home dos aparelhos, que é [AllowAnonymous] por
+// limitação do firmware (não sabe enviar cabeçalho de autenticação) — ver DeviceCallbackController.
+var callbackPermitPerMinute = builder.Configuration.GetValue<int?>("Device:CallbackRateLimitPerMinute") ?? 120;
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
@@ -227,6 +230,20 @@ builder.Services.AddRateLimiter(options =>
             factory: _ => new FixedWindowRateLimiterOptions
             {
                 PermitLimit = 10,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+            }));
+
+    // Teto por IP de origem. Com IP fixo por controlador (o cenário on-premise deste sistema),
+    // a partição é efetivamente por aparelho e 120/min é ordens de grandeza acima do tráfego
+    // real de passagens. Se TODOS os controladores saírem por um mesmo IP (NAT), suba
+    // Device:CallbackRateLimitPerMinute proporcionalmente ao número de aparelhos.
+    options.AddPolicy("device-callback", httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = callbackPermitPerMinute,
                 Window = TimeSpan.FromMinutes(1),
                 QueueLimit = 0,
             }));

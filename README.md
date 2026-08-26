@@ -246,6 +246,15 @@ e receber eventos. Todo esse código vive em **`HospitalAccess.Infrastructure/De
   `deviceId`, `employeeId`/`employeeNoString`, etc.), casa o controlador por `SerialNumber` e grava
   um `AccessLog`. É um **canal alternativo** ao `TransactionMessage` do SDK (seção 2) — útil se o
   push por TCP não funcionar no hardware real. Responde `{"success":0,"msg":"OK"}` (0 = OK).
+  Como o firmware não envia cabeçalho de autenticação, a rota é anônima e depende de isolamento
+  de rede (VLAN/firewall) — garantia EXTERNA ao software. Por isso três defesas ficam no código:
+  **teto por IP de origem** (`Device:CallbackRateLimitPerMinute`, padrão 120/min — com IP fixo
+  por controlador a partição é por aparelho), **teto de corpo de 4 MB** (o corpo é lido inteiro
+  para memória) e **conferência do IP de origem** contra o `IpAddress` cadastrado do controlador
+  que o evento alega ser (casado por SN). A divergência sempre vira Warning no log; com
+  `Device:RestrictCallbackToKnownIps=true` o evento é recusado com 403. O padrão é só avisar,
+  para não derrubar instalação com NAT/DHCP no meio — ligue depois de confirmar que o aviso não
+  aparece em operação normal.
 - **Mapa de erros** — `DeviceErrorCodes` traduz os `errCode` do painel (ex.: `11` =
   `ExpirationDate` fora da faixa) para mensagens legíveis; as falhas viram `DeviceHttpException`
   e o endpoint devolve 502/422 com a causa.

@@ -31,8 +31,16 @@ public sealed class DiagnosticCaptureController : ControllerBase
         _logger = logger;
     }
 
+    /// <summary>
+    /// Teto do corpo capturado. O corpo é lido INTEIRO para memória antes de qualquer decisão,
+    /// então sem este limite um POST gigante nesta rota catch-all anônima derrubava o processo
+    /// enquanto a captura estivesse ligada.
+    /// </summary>
+    private const int MaxCaptureBodyBytes = 4 * 1024 * 1024;
+
     [HttpPost("{**path}")]
     [HttpPut("{**path}")]
+    [RequestSizeLimit(MaxCaptureBodyBytes)]
     public async Task<IActionResult> Capture(CancellationToken ct)
     {
         if (!_config.GetValue<bool>("Diagnostics:CaptureDeviceRequests"))
