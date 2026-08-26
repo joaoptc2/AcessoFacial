@@ -100,6 +100,13 @@ public sealed class DeviceMonitoringBackgroundService : BackgroundService
                 _logger.LogInformation("Monitoramento (re)armado no controlador {Controller} ({Ip}).",
                     controller.Name, controller.IpAddress);
             }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                // Desligamento: o gateway agora observa o token e aborta a espera. Sem este ramo,
+                // o restart do serviço deixava um Warning "não foi possível ativar o monitoramento"
+                // que apontava para um problema de aparelho inexistente.
+                break;
+            }
             catch (Exception ex)
             {
                 // Controlador inacessível não pode derrubar o serviço; será re-tentado no próximo ciclo.

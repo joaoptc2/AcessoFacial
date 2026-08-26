@@ -95,6 +95,12 @@ public sealed class OfflineRecordCollectorBackgroundService : BackgroundService
                 var db = scope.ServiceProvider.GetRequiredService<AccessDbContext>();
                 await PersistAsync(db, controller, events, ct);
             }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                // Desligamento não é falha de coleta: para o laço em silêncio (o backlog fica no
+                // aparelho e é drenado no próximo boot).
+                break;
+            }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Falha ao coletar registros do controlador {Controller} ({Ip}).",
