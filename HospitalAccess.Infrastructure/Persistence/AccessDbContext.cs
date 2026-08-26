@@ -1,6 +1,7 @@
 using HospitalAccess.Domain.Entities;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 namespace HospitalAccess.Infrastructure.Persistence;
@@ -57,19 +58,10 @@ public class AccessDbContext : DbContext
             .WithMany(g => g.Users)
             .HasForeignKey(u => u.GroupId)
             .OnDelete(DeleteBehavior.SetNull);
-        // Concorrência otimista via coluna de sistema xmin do PostgreSQL: edições simultâneas do
-        // mesmo usuário/controlador passam a falhar com DbUpdateConcurrencyException em vez de
-        // last-write-wins silencioso. UseXminAsConcurrencyToken é marcado obsoleto pelo Npgsql
-        // (advisory), mas continua sendo a forma correta de mapear a coluna de sistema xmin — não
-        // gera coluna nova (ver migração). Suprimimos o aviso conscientemente.
-#pragma warning disable CS0618
-        b.Entity<User>().UseXminAsConcurrencyToken();
-#pragma warning restore CS0618
+        UseXminAsConcurrencyToken(b.Entity<User>());
 
         b.Entity<Controller>().HasIndex(c => c.SerialNumber).IsUnique();
-#pragma warning disable CS0618
-        b.Entity<Controller>().UseXminAsConcurrencyToken();
-#pragma warning restore CS0618
+        UseXminAsConcurrencyToken(b.Entity<Controller>());
         b.Entity<Controller>().Property(c => c.ConnectionMode).HasConversion<int>();
 
         // Senha de comunicação criptografada em repouso (não trafega/armazena em claro). O valor
@@ -167,6 +159,28 @@ public class AccessDbContext : DbContext
         ApplyUtcDateTimeConverter(b);
 
         base.OnModelCreating(b);
+    }
+
+    /// <summary>
+    /// Concorrência otimista pela coluna de SISTEMA <c>xmin</c> do PostgreSQL: edições simultâneas
+    /// do mesmo usuário/controlador falham com <c>DbUpdateConcurrencyException</c> em vez de
+    /// last-write-wins silencioso. Não cria coluna nova — <c>xmin</c> já existe em toda tabela.
+    ///
+    /// <para>
+    /// Isto era <c>UseXminAsConcurrencyToken()</c>, um atalho do provider Npgsql que ficou obsoleto
+    /// na linha 8 e foi REMOVIDO na 10. O corpo abaixo é exatamente o que aquele atalho fazia, agora
+    /// explícito: propriedade sombra <c>uint</c> mapeada no tipo <c>xid</c>, gerada pelo banco a cada
+    /// INSERT/UPDATE e marcada como token de concorrência. Mantido num helper para que as duas
+    /// entidades usem a mesma definição e o motivo fique junto do código.
+    /// </para>
+    /// </summary>
+    private static void UseXminAsConcurrencyToken<TEntity>(EntityTypeBuilder<TEntity> entity)
+        where TEntity : class
+    {
+        entity.Property<uint>("xmin")
+            .HasColumnType("xid")
+            .ValueGeneratedOnAddOrUpdate()
+            .IsConcurrencyToken();
     }
 
     private static string Unprotect(IDataProtector protector, string stored)

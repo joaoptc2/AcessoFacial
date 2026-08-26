@@ -4,7 +4,7 @@ Solução para gerenciar **30 controladores faciais 8190H** conectados por **TCP
 com cadastro de face por upload, QR Code de acesso para visitantes (com gestão de
 leitos/quartos), gestão de portas/permissões, sincronização multi-dispositivo e log
 de acessos auditável.
-Rodando **on-premise** (.NET 8 + PostgreSQL).
+Rodando **on-premise** (.NET 10 + PostgreSQL).
 
 ---
 
@@ -459,7 +459,7 @@ controlador e usar "Testar conexão": se a senha for aceita, o chaveiro voltou c
 > A seção abaixo é o setup rápido para desenvolvimento local.
 
 ### Pré-requisitos
-- .NET 8 SDK
+- .NET 10 SDK
 - PostgreSQL (12+)
 - As DLLs do SDK **DoNetDrive.\*** obtidas do fabricante (não há feed NuGet público):
   `DoNetDrive.Common` (1.17.0), `DoNetDrive.Core` (2.9.0), `DoNetDrive.Protocol` (2.4.0),
