@@ -183,6 +183,13 @@ builder.Services.AddHostedService<DeviceHealthBackgroundService>();
 // Expurgo de dados conforme a política de retenção (LGPD, ver tela de Configurações).
 builder.Services.AddHostedService<DataRetentionBackgroundService>();
 
+// Cópia de segurança (pg_dump + chaveiro da DataProtection, num zip só). Era a única lacuna com
+// perda IRREVERSÍVEL: sem cópia, uma falha de disco leva junto o cadastro, as fotos e todo o
+// histórico de acessos. Administrável pela tela (listar/gerar/baixar) em /api/backups.
+builder.Services.Configure<BackupOptions>(builder.Configuration.GetSection(BackupOptions.SectionName));
+builder.Services.AddSingleton<BackupService>();
+builder.Services.AddHostedService<BackupBackgroundService>();
+
 // Escuta de eventos em tempo real -> AccessLog (append-only).
 builder.Services.AddHostedService<AccessEventRecorder>();
 builder.Services.AddHostedService<AlarmEventRecorder>();

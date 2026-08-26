@@ -409,6 +409,44 @@ TCP, seções 1-9) e o **cliente HTTP** do painel web (`Infrastructure/Devices/`
   os estáticos em `HospitalAccess.Api/wwwroot/`.
 - **HospitalAccess.Tests** — testes unitários (QR, classificador de eventos, conversor de imagem).
 
+## Cópia de segurança (backup)
+
+Rotina automática (`BackupBackgroundService`, ligada por padrão) mais geração sob demanda pela
+tela de **Configurações** → *Cópias de segurança* (Admin): **listar, gerar agora, baixar e
+remover** (`/api/backups`).
+
+Cada cópia é um **zip único** com três partes:
+
+| Item | Para quê |
+|---|---|
+| `database.dump` | Banco completo (`pg_dump --format=custom`). |
+| `dpkeys/` | **Chaveiro da DataProtection.** |
+| `LEIA-ME.txt` | Passo a passo da restauração, gerado junto. |
+
+**Por que o chaveiro vai junto**: as senhas dos controladores (`CommunicationPassword`,
+`ApiPassword`) e o token do Home Assistant são cifrados em repouso com esse chaveiro. Restaurar
+**só o banco** devolve senhas indecifráveis e **nenhum aparelho volta a funcionar** — é o erro
+clássico deste desenho, então as chaves entram no mesmo arquivo em vez de depender de alguém
+lembrar. Verificado em teste: restaurando com o chaveiro da cópia a senha volta em claro;
+com um chaveiro diferente, `CryptographicException`.
+
+**Pré-requisito**: `pg_dump` no servidor (pacote `postgresql-client`). Sem ele a rotina falha com
+mensagem explícita, e a tela mostra o erro em vez de um 500 opaco.
+
+**Onde guardar**: `Backup:Directory` deve apontar para **disco ou volume separado do banco** —
+cópia no mesmo disco não protege contra a falha mais comum. A gravabilidade é sondada na subida:
+diretório sem permissão vira erro destacado no log e um aviso na tela de Configurações, em vez de
+falhar silenciosamente de madrugada.
+
+> ⚠️ **O arquivo contém dados pessoais** (nomes, documentos e **fotos de rosto**) **e as chaves de
+> criptografia**. Baixar uma cópia é levar o sistema inteiro para fora do servidor: o endpoint é
+> restrito a Admin, todo download é registrado em log com usuário e IP, e o destino do arquivo
+> deve ser tão controlado quanto o próprio servidor.
+
+**Teste a restauração periodicamente.** Cópia que nunca foi restaurada é uma esperança, não um
+backup — o `LEIA-ME.txt` traz o procedimento completo, incluindo a conferência final (abrir um
+controlador e usar "Testar conexão": se a senha for aceita, o chaveiro voltou certo).
+
 ## Setup on-premise
 
 > Para um passo a passo completo de instalação em servidor Linux de produção
@@ -663,6 +701,9 @@ erro — vira timeout do nosso lado). Cheque nesta ordem:
    próprio aparelho e considere um reboot.
 
 ## Limitações conhecidas / próximos passos
+- **Backup**: a rotina automática cobre banco + chaveiro, mas o destino é um diretório local
+  (`Backup:Directory`) — a cópia para fora do servidor (rsync/objeto/fita) continua sendo
+  responsabilidade da infraestrutura, e a restauração precisa ser TESTADA periodicamente.
 - **Exportação em PDF** do log de acessos: não implementada (só CSV). Toda biblioteca PDF
   popular para .NET tem alguma pegada de licença para uma organização do porte de um
   hospital (QuestPDF Community tem teto de receita, iText é AGPL/comercial); ficou como

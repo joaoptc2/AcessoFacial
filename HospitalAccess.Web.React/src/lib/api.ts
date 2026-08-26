@@ -238,6 +238,20 @@ export interface PersonnelAuditAllResult {
   results: PersonnelAuditAllItem[];
 }
 
+// ---- Cópias de segurança ----
+export interface BackupFileDto {
+  fileName: string;
+  sizeBytes: number;
+  createdAtUtc: string;
+}
+
+export interface BackupListDto {
+  directory: string;
+  // false = o diretório configurado não é gravável; nenhuma cópia será gerada.
+  writable: boolean;
+  files: BackupFileDto[];
+}
+
 // A auditoria de todos os aparelhos roda em SEGUNDO PLANO: com controladores lentos a varredura
 // passa de 20 min e era cortada pelo proxy reverso. A tela dispara (POST) e acompanha (GET).
 export type PersonnelAuditPhase = "Idle" | "Running" | "Completed" | "Failed";
@@ -813,6 +827,14 @@ export const api = {
 
   // ---- Auditoria / leitura reversa ----
   getPersonnelAudit: (id: string) => request<PersonnelAudit>(`/controllers/${id}/personnel-audit`),
+  // ---- Cópias de segurança (só Admin) ----
+  getBackups: () => request<BackupListDto>("/backups"),
+  createBackup: () => request<BackupFileDto>("/backups", { method: "POST" }),
+  downloadBackup: (fileName: string) =>
+    requestBlob(`/backups/${encodeURIComponent(fileName)}/download`),
+  deleteBackup: (fileName: string) =>
+    request<void>(`/backups/${encodeURIComponent(fileName)}`, { method: "DELETE" }),
+
   startPersonnelAuditAll: () => request<void>("/controllers/personnel-audit-all", { method: "POST" }),
   getPersonnelAuditAll: () => request<PersonnelAuditSnapshot>("/controllers/personnel-audit-all"),
   repairPersonnelAudit: (id: string) =>
