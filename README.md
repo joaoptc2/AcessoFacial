@@ -453,6 +453,10 @@ controlador e usar "Testar conexão": se a senha for aceita, o chaveiro voltou c
 > (systemd, Nginx com WebSocket, usuário dedicado, backups), veja
 > [`docs/instalacao-servidor-linux.md`](docs/instalacao-servidor-linux.md).
 >
+> Para **acesso remoto** (fora da rede do hospital) via Cloudflare Tunnel, com os bloqueios de
+> caminho que impedem a publicação do `/welcome/*` (nome de paciente) e do phone-home anônimo,
+> veja [`docs/acesso-remoto-cloudflare.md`](docs/acesso-remoto-cloudflare.md).
+>
 > As migrations NÃO são aplicadas automaticamente no boot (§13 do guia). Se o binário subir na
 > frente do banco, o startup loga "BANCO DESATUALIZADO" com o nome das migrations pendentes e o
 > painel mostra uma faixa vermelha com a instrução — aplique o script idempotente e reinicie.

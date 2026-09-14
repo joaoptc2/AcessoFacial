@@ -186,8 +186,7 @@ builder.Services.AddHostedService<DataRetentionBackgroundService>();
 // Cópia de segurança (pg_dump + chaveiro da DataProtection, num zip só). Era a única lacuna com
 // perda IRREVERSÍVEL: sem cópia, uma falha de disco leva junto o cadastro, as fotos e todo o
 // histórico de acessos. Administrável pela tela (listar/gerar/baixar) em /api/backups.
-builder.Services.Configure<BackupOptions>(builder.Configuration.GetSection(BackupOptions.SectionName));
-builder.Services.AddSingleton<BackupService>();
+builder.Services.Configure<BackupOptions>(builder.Configuration.GetSection(BackupOptions.SectionName));builder.Services.AddSingleton<BackupService>();
 builder.Services.AddHostedService<BackupBackgroundService>();
 
 // Escuta de eventos em tempo real -> AccessLog (append-only).
@@ -227,6 +226,10 @@ builder.Services
         };
     });
 builder.Services.AddAuthorization();
+
+// Proxy reverso / túnel: de quem aceitamos os cabeçalhos que dizem o IP real do cliente.
+// Sem isso, o RemoteIpAddress é sempre o do proxy e o rate limit por IP vira um balde só.
+builder.Services.Configure<NetworkOptions>(builder.Configuration.GetSection(NetworkOptions.SectionName));
 
 // Rate limiting: protege o login contra brute force de senha de staff. Janela fixa por IP,
 // pequena o suficiente para travar tentativas automatizadas sem atrapalhar o uso normal.
@@ -302,6 +305,12 @@ using (var scope = app.Services.CreateScope())
     devLogBuffer.SetEnabled(devMode);
     if (devMode) logger.LogInformation("Modo de desenvolvimento ATIVO (persistido) — logs espelhados em /api/devlogs.");
 }
+
+// PRIMEIRO middleware do pipeline, de propósito: atrás de Nginx e/ou do túnel da Cloudflare, o
+// RemoteIpAddress da conexão é o do PROXY (127.0.0.1), não o do cliente. Rate limiter, trilha de
+// auditoria, conferência de procedência do phone-home e o handler de erro precisam do IP real —
+// então a correção tem de vir antes de todos eles. Ver ClientIpMiddleware/ClientIpResolver.
+app.UseMiddleware<HospitalAccess.Api.Middleware.ClientIpMiddleware>();
 
 if (app.Environment.IsDevelopment())
 {
