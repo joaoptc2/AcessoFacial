@@ -457,6 +457,11 @@ controlador e usar "Testar conexão": se a senha for aceita, o chaveiro voltou c
 > caminho que impedem a publicação do `/welcome/*` (nome de paciente) e do phone-home anônimo,
 > veja [`docs/acesso-remoto-cloudflare.md`](docs/acesso-remoto-cloudflare.md).
 >
+> Para o **painel de TV dos leitos** (ver e operar a TV do quarto por ADB, sem entrar nele —
+> usado para relogar os serviços de streaming), veja
+> [`docs/painel-tv-leitos.md`](docs/painel-tv-leitos.md). Exige `android-tools-adb` no servidor
+> e **VLAN separada para os quartos**.
+>
 > As migrations NÃO são aplicadas automaticamente no boot (§13 do guia). Se o binário subir na
 > frente do banco, o startup loga "BANCO DESATUALIZADO" com o nome das migrations pendentes e o
 > painel mostra uma faixa vermelha com a instrução — aplique o script idempotente e reinicie.

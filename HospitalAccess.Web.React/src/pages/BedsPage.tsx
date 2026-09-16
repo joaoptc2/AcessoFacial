@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, ApiError, downloadBlob, type BedDto, type BedHistoryPage } from "../lib/api";
+import { useAuth } from "../lib/AuthContext";
+import { TvPanel } from "../components/TvPanel";
 
 const HISTORY_PAGE_SIZE = 15;
 
@@ -26,8 +28,14 @@ function syncBadge(state: string | null) {
  * (tela JPG gerada pelo servidor com o nome do paciente).
  */
 export function BedsPage() {
+  // A Recepção não opera TV: a tela do quarto mostra o nome do paciente.
+  const { role } = useAuth();
+  const podeVerTv = role === "Admin" || role === "Operator";
+
   // null = ainda carregando (o cartão de "nenhum quarto" não pode piscar durante o load).
   const [beds, setBeds] = useState<BedDto[] | null>(null);
+  // Leito cuja TV está aberta no painel (null = painel fechado).
+  const [tvBed, setTvBed] = useState<BedDto | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -201,6 +209,16 @@ export function BedsPage() {
                     🏠 {bed.homeAssistantRoomId}
                   </span>
                 )}
+                {podeVerTv && bed.tvIpAddress && (
+                  <button
+                    className="btn btn-outline btn-sm"
+                    style={{ marginLeft: "0.45rem" }}
+                    title={`Ver e operar a TV deste quarto (${bed.tvIpAddress})`}
+                    onClick={() => setTvBed(bed)}
+                  >
+                    📺 TV
+                  </button>
+                )}
               </td>
               <td>
                 {bed.occupied ? <span className="pill pill-warning">Ocupado</span> : <span className="pill pill-success">Livre</span>}{" "}
@@ -290,6 +308,15 @@ export function BedsPage() {
           ))}
         </tbody>
       </table>
+
+      {tvBed && (
+        <TvPanel
+          controllerId={tvBed.controllerId}
+          bedName={tvBed.name}
+          tvIpAddress={tvBed.tvIpAddress}
+          onClose={() => setTvBed(null)}
+        />
+      )}
 
       {qrImage && (
         <div className="card" style={{ marginTop: "1rem", maxWidth: "360px", textAlign: "center" }}>

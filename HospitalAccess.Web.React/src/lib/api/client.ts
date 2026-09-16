@@ -5,7 +5,7 @@
 import { buildQuery, request, requestBlob } from "./http";
 import type { AlarmSettings, ControllerDetailDto, ControllerDto, ControllerNetworkInfo, CreateControllerRequest, DiscoveredController, EventPhotoListItem, KioskSettings, PersonnelAudit, PersonnelAuditSnapshot, RelocateResult, SyncOverviewDto, SyncStatusDto, UpdateControllerRequest } from "./types.controllers";
 import type { CreateVisitorRequest, LoginResponse, StaffRole, StaffUserDto, UserAccessReport, UserAuditLogEntry, UserDetailDto, UserGroupDto, UserGroupRequest, UserListPage, VisitorListItemDto } from "./types.people";
-import type { AccessLogPage, AlarmEventPage, BackupFileDto, BackupListDto, BedActionResult, BedDto, BedHistoryPage, DashboardDto, DevLogsResponse, EmergencyResultDto, HolidayDto, HolidayRequest, SystemSettingsDto, TimeGroupScheduleDto, TimeGroupScheduleRequest, UpdateSettingsRequest } from "./types.operations";
+import type { AccessLogPage, AlarmEventPage, BackupFileDto, BackupListDto, BedActionResult, BedDto, BedHistoryPage, DashboardDto, DevLogsResponse, EmergencyResultDto, HolidayDto, HolidayRequest, SystemSettingsDto, TimeGroupScheduleDto, TimeGroupScheduleRequest, TvStatusDto, UpdateSettingsRequest } from "./types.operations";
 
 export const api = {
   login: (username: string, password: string) =>
@@ -219,6 +219,27 @@ export const api = {
     request<void>(`/staffusers/${id}/reset-password`, { method: "POST", body: JSON.stringify({ newPassword }) }),
 
   // ---- Gestão de leitos ----
+  // ---- TV do quarto (manutenção remota por ADB) ----
+  // A Recepção recebe 403 em todas: a tela da TV mostra o nome do paciente.
+  getTvStatus: (controllerId: string) => request<TvStatusDto>(`/tv/${controllerId}/status`),
+  // Blob, e não uma URL para <img src>: a captura exige o cabeçalho de autenticação.
+  getTvScreen: (controllerId: string) => requestBlob(`/tv/${controllerId}/screen`),
+  getTvApps: (controllerId: string) => request<string[]>(`/tv/${controllerId}/apps`),
+  sendTvKey: (controllerId: string, key: string) =>
+    request<void>(`/tv/${controllerId}/key`, { method: "POST", body: JSON.stringify({ key }) }),
+  sendTvText: (controllerId: string, text: string) =>
+    request<void>(`/tv/${controllerId}/text`, { method: "POST", body: JSON.stringify({ text }) }),
+  launchTvApp: (controllerId: string, pkg: string) =>
+    request<void>(`/tv/${controllerId}/apps/${pkg}/launch`, { method: "POST" }),
+  stopTvApp: (controllerId: string, pkg: string) =>
+    request<void>(`/tv/${controllerId}/apps/${pkg}/stop`, { method: "POST" }),
+  // Admin apenas.
+  rebootTv: (controllerId: string) => request<void>(`/tv/${controllerId}/reboot`, { method: "POST" }),
+  clearTvApp: (controllerId: string, pkg: string) =>
+    request<void>(`/tv/${controllerId}/apps/${pkg}/clear`, { method: "POST" }),
+  suspendTvApp: (controllerId: string, pkg: string, suspended: boolean) =>
+    request<void>(`/tv/${controllerId}/apps/${pkg}/suspend`, { method: "POST", body: JSON.stringify({ suspended }) }),
+
   getBeds: () => request<BedDto[]>("/beds"),
   getBedHistory: (params: { controllerId?: string; page: number; pageSize: number }) =>
     request<BedHistoryPage>(`/beds/history${buildQuery(params)}`),
