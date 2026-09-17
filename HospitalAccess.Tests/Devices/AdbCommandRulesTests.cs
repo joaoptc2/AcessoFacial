@@ -224,13 +224,25 @@ public class AdbCommandRulesTests
     public void ConexaoEhDecididaPeloTexto_NaoPeloCodigoDeSaida(string? saida, bool esperado) =>
         Assert.Equal(esperado, AdbCommandRules.ParseConnectSucceeded(saida));
 
-    [Fact]
-    public void ChaveRecusada_EhDistinguidaDeOffline()
-    {
-        Assert.True(AdbCommandRules.IsUnauthorized("adb.exe: device unauthorized."));
-        Assert.False(AdbCommandRules.IsUnauthorized("error: device '192.168.19.11:5555' not found"));
-        Assert.False(AdbCommandRules.IsUnauthorized(null));
-    }
+    /// <summary>
+    /// As duas frases importam. Visto em produção: um servidor sem chave autorizada recebe
+    /// "failed to authenticate to 192.168.19.11:5555" do <c>connect</c> — e, sem reconhecê-la, o
+    /// painel classificava como offline e mandava conferir a rede, que não era o problema.
+    /// </summary>
+    [Theory]
+    [InlineData("adb.exe: device unauthorized.")]
+    [InlineData("failed to authenticate to 192.168.19.11:5555")]
+    [InlineData("* daemon started successfully | failed to authenticate to 192.168.19.11:5555")]
+    public void ChaveRecusada_EhReconhecidaNasDuasFrases(string saida) =>
+        Assert.True(AdbCommandRules.IsUnauthorized(saida));
+
+    [Theory]
+    [InlineData("error: device '192.168.19.11:5555' not found")]
+    [InlineData("failed to connect to 192.168.19.11:5555")]
+    [InlineData("connected to 192.168.19.11:5555")]
+    [InlineData(null)]
+    public void OutrasSaidas_NaoSaoChaveRecusada(string? saida) =>
+        Assert.False(AdbCommandRules.IsUnauthorized(saida));
 
     // ---------------------------------------------------------------- seções marcadas
 

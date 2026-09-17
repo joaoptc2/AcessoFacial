@@ -88,6 +88,7 @@ export function TvPanel({ controllerId, bedName, tvIpAddress, onClose }: TvPanel
         model: null,
         uptimeSeconds: null,
         focus: null,
+        detail: null,
       }));
     return () => {
       cancelled = true;
@@ -173,6 +174,13 @@ export function TvPanel({ controllerId, bedName, tvIpAddress, onClose }: TvPanel
           <div>
             <span className="pill pill-danger">TV indisponível</span>{" "}
             <span className="text-muted">{status.message}</span>
+            {/* A frase original do adb é o que diferencia "falta instalar", "não alcanço o
+                quarto" e "a chave não foi autorizada" — três correções distintas. */}
+            {status.detail && (
+              <div style={{ marginTop: "0.4rem" }}>
+                <code style={{ fontSize: "0.75rem", overflowWrap: "anywhere" }}>{status.detail}</code>
+              </div>
+            )}
           </div>
         )}
       </div>

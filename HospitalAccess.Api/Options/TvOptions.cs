@@ -14,6 +14,22 @@ public sealed class TvOptions
     /// </summary>
     public string AdbPath { get; set; } = "adb";
 
+    /// <summary>
+    /// Pasta onde o adb guarda a chave deste servidor (ele usa <c>&lt;HOME&gt;/.android/adbkey</c>).
+    ///
+    /// <para>
+    /// Existe por um motivo prático: o guia cria o serviço com <c>--no-create-home</c>, então o
+    /// usuário <c>hospitalaccess</c> não tem HOME e o adb não consegue manter uma chave estável —
+    /// e sem chave estável a TV recusa a autenticação a cada execução. Apontar uma pasta aqui é
+    /// mais simples e mais visível do que editar a unit do systemd.
+    /// </para>
+    /// <para>
+    /// Vazio = usa o HOME do processo (padrão do adb). A pasta precisa existir e pertencer ao
+    /// usuário do serviço.
+    /// </para>
+    /// </summary>
+    public string AdbKeyDirectory { get; set; } = string.Empty;
+
     /// <summary>Timeout de um comando comum (status, tecla, texto). Segundos.</summary>
     public int CommandTimeoutSeconds { get; set; } = 15;
 

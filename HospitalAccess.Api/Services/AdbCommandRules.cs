@@ -302,9 +302,18 @@ public static partial class AdbCommandRules
 
     /// <summary>
     /// O aparelho respondeu mas recusou a chave deste servidor. Vale distinguir de "offline"
-    /// porque a correção é outra: autorizar na bancada, não conferir a rede.
+    /// porque a correção é o oposto: autorizar a chave no aparelho, não conferir a rede.
+    ///
+    /// <para>
+    /// São DUAS frases diferentes, e faltar uma é o que faz o painel dar a instrução errada:
+    /// o <c>connect</c> recusado diz "failed to authenticate to &lt;host&gt;", enquanto um comando
+    /// contra um transporte já recusado diz "device unauthorized". Só a segunda era reconhecida,
+    /// então um servidor sem chave autorizada aparecia como "a TV não respondeu — verifique se
+    /// está ligada e na rede", mandando procurar o problema no lugar errado.
+    /// </para>
     /// </summary>
     public static bool IsUnauthorized(string? adbOutput) =>
         adbOutput is not null
-        && adbOutput.Contains("device unauthorized", StringComparison.OrdinalIgnoreCase);
+        && (adbOutput.Contains("device unauthorized", StringComparison.OrdinalIgnoreCase)
+            || adbOutput.Contains("failed to authenticate", StringComparison.OrdinalIgnoreCase));
 }

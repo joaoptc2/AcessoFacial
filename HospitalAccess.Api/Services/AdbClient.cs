@@ -15,6 +15,9 @@ public sealed record AdbResult(int ExitCode, string StdOut, string StdErr)
     public string Output => string.IsNullOrWhiteSpace(StdOut) ? StdErr.Trim() : StdOut.Trim();
 }
 
+/// <summary>Estado do canal mais a saída bruta do adb — é ela que diz QUAL das causas ocorreu.</summary>
+public sealed record TvReach(TvReachState State, string Detail);
+
 /// <summary>Estado do canal com um stick, para o painel dizer o que fazer em vez de só "erro".</summary>
 public enum TvReachState
 {
@@ -129,13 +132,36 @@ public sealed class AdbClient
         }
     }
 
-    /// <summary>Conecta explicitamente (usado no status, antes de qualquer leitura).</summary>
-    public async Task<TvReachState> ConnectAsync(string address, CancellationToken ct)
+    /// <summary>
+    /// Conecta explicitamente (usado no status, antes de qualquer leitura). Devolve também a
+    /// SAÍDA BRUTA do adb: "a TV não respondeu" não diz se falta instalar o adb, se a rota até o
+    /// quarto está fechada ou se o aparelho recusou a chave deste servidor — e são correções
+    /// completamente diferentes. Quem opera precisa da frase original.
+    /// </summary>
+    public async Task<TvReach> ConnectAsync(string address, CancellationToken ct)
     {
         var result = await RawAsync(["connect", address], CommandTimeout, ct);
-        if (result.ExitCode == AdbNaoEncontrado) return TvReachState.AdbMissing;
-        if (AdbCommandRules.IsUnauthorized(result.Output)) return TvReachState.Unauthorized;
-        return AdbCommandRules.ParseConnectSucceeded(result.Output) ? TvReachState.Online : TvReachState.Offline;
+        var detalhe = Detail(result);
+
+        if (result.ExitCode == AdbNaoEncontrado) return new TvReach(TvReachState.AdbMissing, detalhe);
+        if (AdbCommandRules.IsUnauthorized(detalhe)) return new TvReach(TvReachState.Unauthorized, detalhe);
+
+        return AdbCommandRules.ParseConnectSucceeded(detalhe)
+            ? new TvReach(TvReachState.Online, detalhe)
+            : new TvReach(TvReachState.Offline, detalhe);
+    }
+
+    /// <summary>
+    /// Tudo que o adb escreveu, das duas saídas. O <see cref="AdbResult.Output"/> normal prefere
+    /// uma só; aqui interessam as duas juntas, porque o "connect" manda o sucesso para a saída
+    /// padrão e a falha para a de erro — e a mensagem que falta é sempre a outra.
+    /// </summary>
+    public static string Detail(AdbResult result)
+    {
+        var partes = new[] { result.StdOut, result.StdErr }
+            .Select(p => p?.Trim())
+            .Where(p => !string.IsNullOrEmpty(p));
+        return string.Join(" | ", partes!);
     }
 
     /// <summary>Classifica a saída de um comando para o painel orientar a correção certa.</summary>
@@ -178,6 +204,15 @@ public sealed class AdbClient
             RedirectStandardError = true,
         };
         foreach (var a in args) psi.ArgumentList.Add(a);
+
+        // Sem HOME estável o adb não mantém a chave deste servidor, e a TV recusa a autenticação
+        // a cada execução. O usuário do serviço é criado sem home no guia de instalação, então
+        // esta é a diferença entre "funciona na bancada" e "funciona como serviço".
+        if (!string.IsNullOrWhiteSpace(_options.AdbKeyDirectory))
+        {
+            psi.Environment["HOME"] = _options.AdbKeyDirectory.Trim();
+        }
+
         return psi;
     }
 
@@ -260,7 +295,7 @@ public sealed class AdbClient
     {
         TvReachState.Online => "TV respondendo.",
         TvReachState.Offline => "A TV não respondeu. Verifique se o aparelho está ligado e na rede.",
-        TvReachState.Unauthorized => "A TV recusou a chave deste servidor. Autorize a depuração no aparelho (passo de bancada).",
+        TvReachState.Unauthorized => "A TV recusou a chave DESTE servidor. Aceite o aviso de depuração na tela da TV — a autorização é por servidor e por usuário do sistema, então autorizar de outro computador não vale aqui.",
         TvReachState.AdbMissing => "O programa 'adb' não está instalado no servidor.",
         _ => "Estado desconhecido.",
     };
