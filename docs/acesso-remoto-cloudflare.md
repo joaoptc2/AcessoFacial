@@ -81,15 +81,23 @@ ingress:
     path: ^/note/
     service: http_status:404
 
+  # /api/tv/* opera a TV do quarto: mostra a tela (com o NOME DO PACIENTE), digita e reinicia o
+  # aparelho. É manutenção interna e depende da porta ADB dos sticks, que só existe na rede do
+  # hospital. Exposto, vira uma janela para dentro dos quartos.
+  - hostname: acesso.seuhospital.com.br
+    path: ^/api/tv/
+    service: http_status:404
+
   - hostname: acesso.seuhospital.com.br
     service: http://127.0.0.1:5080
 
   - service: http_status:404
 ```
 
-> ⚠️ **Estes dois `path:` não são opcionais.** Tunelar a aplicação inteira publicaria nomes de
-> pacientes na internet e abriria o caminho de forja de log de acesso. O `path` é uma expressão
-> regular e a **primeira regra que casa vence** — por isso os bloqueios vêm antes da regra geral.
+> ⚠️ **Estes três `path:` não são opcionais.** Tunelar a aplicação inteira publicaria nomes de
+> pacientes na internet, abriria o caminho de forja de log de acesso e deixaria a tela dos
+> quartos acessível de fora. O `path` é uma expressão regular e a **primeira regra que casa
+> vence** — por isso os bloqueios vêm antes da regra geral.
 
 Aponte para `127.0.0.1:5080` (a API) e não para o Nginx: um proxy a menos na cadeia. O Nginx
 continua servindo a rede interna normalmente.
@@ -154,6 +162,8 @@ Só declare explicitamente se algum proxy estiver em **outro host**:
 - [ ] `curl -I https://acesso.seuhospital.com.br/welcome/leito-x.jpg` devolve **404**
       (não a imagem).
 - [ ] `curl -X POST https://acesso.seuhospital.com.br/note/insertNoteFace` devolve **404**.
+- [ ] `curl -I https://acesso.seuhospital.com.br/api/tv/00000000-0000-0000-0000-000000000000/screen`
+      devolve **404** (e não 401 — 401 significaria que a rota está exposta).
 - [ ] A rede interna continua funcionando pelo Nginx, sem passar pela Cloudflare.
 - [ ] Os aparelhos continuam empurrando eventos (a tela de acessos segue recebendo registros).
 - [ ] Erre a senha 11 vezes: a 11ª devolve **429**. De outra máquina/rede, o login ainda

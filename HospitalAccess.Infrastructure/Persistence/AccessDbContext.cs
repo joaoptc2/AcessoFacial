@@ -64,6 +64,11 @@ public class AccessDbContext : DbContext
         UseXminAsConcurrencyToken(b.Entity<Controller>());
         b.Entity<Controller>().Property(c => c.ConnectionMode).HasConversion<int>();
 
+        // Porta do ADB do stick de TV. O padrão fica no BANCO, e não só na entidade, para que as
+        // linhas já existentes recebam 5555 em vez de 0 ao aplicar a migration — 0 é porta
+        // inválida e faria o painel recusar um leito cujo IP de TV fosse preenchido depois.
+        b.Entity<Controller>().Property(c => c.TvPort).HasDefaultValue(5555);
+
         // Senha de comunicação criptografada em repouso (não trafega/armazena em claro). O valor
         // na entidade em memória continua em claro (o gateway usa direto); a conversão só afeta a
         // coluna (o tipo continua text — sem diferença de schema).

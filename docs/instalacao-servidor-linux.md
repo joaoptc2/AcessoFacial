@@ -260,6 +260,25 @@ de conexão (TCP client vs phone-home), a chegada do push em tempo real (`BeginW
 `TransactionMessage`) e o cadastro de visitante com validade nativa — os itens mais
 importantes a confirmar com hardware físico.
 
+## 11b. TV dos quartos (opcional)
+
+Só se o hospital usa o **painel de TV dos leitos** — ver a tela do quarto e relogar os serviços
+de streaming sem entrar nele. Passo a passo completo em
+[`painel-tv-leitos.md`](painel-tv-leitos.md).
+
+```bash
+sudo apt-get install -y android-tools-adb
+adb version
+```
+
+Cada stick precisa **autorizar a chave deste servidor uma vez**, na bancada, antes de subir para
+o quarto — e de novo se o aparelho for resetado de fábrica. Depois disso, cadastre o IP em
+**Controladores → (o leito) → IP da TV do quarto**.
+
+⚠️ **A porta 5555 dos sticks dá controle total do aparelho a qualquer máquina da mesma rede.**
+Se a faixa dos quartos for alcançável pela rede de visitantes, segregue a VLAN antes de colocar
+o painel em uso. Não é melhoria futura: é pré-requisito.
+
 ## 12. Backups
 
 O sistema **já faz a cópia sozinho** (`BackupBackgroundService`, ligado por padrão): roda na

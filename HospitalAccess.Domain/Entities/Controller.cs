@@ -73,6 +73,31 @@ public class Controller
     /// </summary>
     public bool IsRoom { get; set; }
 
+    // ---------------------------------------------------------------------------------------
+    // TV do quarto (stick Android). Aparelho SEPARADO da controladora de porta, no mesmo quarto:
+    // o IpAddress acima é a controladora; este é o stick. Existe para a manutenção remota —
+    // quando a conta de um serviço de streaming cai, o operador vê a tela e loga de novo sem
+    // subir ao quarto. Ver docs/painel-tv-leitos.md.
+    // ---------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// IP do stick de TV deste quarto (ex.: "192.168.19.11"). Vazio = leito sem TV; o botão
+    /// não aparece e os endpoints /api/tv devolvem 404.
+    /// </summary>
+    public string TvIpAddress { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Porta do ADB no stick. 5555 em todo firmware testado — o campo existe para a exceção,
+    /// não para o caso normal.
+    /// </summary>
+    public int TvPort { get; set; } = 5555;
+
+    /// <summary>
+    /// Última vez que o stick respondeu a um comando. Null = nunca visto. Atualizado pelo
+    /// endpoint de status; serve de diagnóstico, não de monitoramento contínuo.
+    /// </summary>
+    public DateTime? TvLastSeenUtc { get; set; }
+
     /// <summary>
     /// Como o servidor se comunica com este controlador. Default <see cref="ControllerConnectionMode.TcpClient"/>
     /// (servidor disca para o controlador). Se o hardware exigir modo "phone home", troque para

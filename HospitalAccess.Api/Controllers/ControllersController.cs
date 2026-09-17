@@ -24,7 +24,10 @@ public record CreateControllerRequest(
     // Slug do quarto no Home Assistant (gestão de leitos). Vazio = sem integração HA.
     string? HomeAssistantRoomId = null,
     // Este controlador é um quarto/leito? Só os marcados aparecem na Gestão de Leitos.
-    bool IsRoom = false);
+    bool IsRoom = false,
+    // IP do stick de TV do quarto (aparelho SEPARADO da controladora). Vazio = leito sem TV.
+    string? TvIpAddress = null,
+    int TvPort = 5555);
 
 // CommunicationPassword é opcional na edição: em branco/nulo mantém a senha atual (não é
 // devolvida pelo GET, então o formulário não a tem para reenviar). ApiPassword segue a mesma
@@ -38,6 +41,8 @@ public record UpdateControllerRequest(
     string? ApiBaseUrl = null, string? ApiPassword = null,
     string? HomeAssistantRoomId = null,
     bool IsRoom = false,
+    string? TvIpAddress = null,
+    int TvPort = 5555,
     bool UseDefaultPasswords = false);
 
 /// <summary>
@@ -161,6 +166,9 @@ public sealed class ControllersController : ControllerEndpointBase
             controller.TimeoutMs, controller.RestartCount, controller.LastClockSyncAtUtc,
             controller.HomeAssistantRoomId,
             controller.IsRoom,
+            controller.TvIpAddress,
+            controller.TvPort,
+            controller.TvLastSeenUtc,
             HasCommunicationPassword = !string.IsNullOrEmpty(controller.CommunicationPassword),
             controller.ApiBaseUrl,
             HasApiPassword = !string.IsNullOrEmpty(controller.ApiPassword),
@@ -209,6 +217,8 @@ public sealed class ControllersController : ControllerEndpointBase
             ApiBaseUrl = string.IsNullOrWhiteSpace(request.ApiBaseUrl) ? $"http://{ip}" : request.ApiBaseUrl.TrimEnd('/'),
             ApiPassword = request.ApiPassword ?? string.Empty,
             HomeAssistantRoomId = (request.HomeAssistantRoomId ?? string.Empty).Trim(),
+            TvIpAddress = (request.TvIpAddress ?? string.Empty).Trim(),
+            TvPort = request.TvPort is < 1 or > 65535 ? 5555 : request.TvPort,
             IsRoom = request.IsRoom,
         };
 
@@ -251,6 +261,8 @@ public sealed class ControllersController : ControllerEndpointBase
         controller.TimeoutMs = request.TimeoutMs;
         controller.RestartCount = request.RestartCount;
         controller.HomeAssistantRoomId = (request.HomeAssistantRoomId ?? string.Empty).Trim();
+        controller.TvIpAddress = (request.TvIpAddress ?? string.Empty).Trim();
+        controller.TvPort = request.TvPort is < 1 or > 65535 ? 5555 : request.TvPort;
         controller.IsRoom = request.IsRoom;
         // API HTTP do painel web. Mudança de URL ou senha invalida o token cacheado (re-loga na
         // próxima chamada). ApiPassword em branco = manter a atual (não é devolvida pelo GET).

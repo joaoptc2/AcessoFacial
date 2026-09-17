@@ -83,6 +83,9 @@ public class BedsController : ControllerBase
                 c.Name,
                 c.IpAddress,
                 c.HomeAssistantRoomId,
+                // Vazio = leito sem TV cadastrada; o botão de TV não aparece no card.
+                c.TvIpAddress,
+                c.TvLastSeenUtc,
                 Occupied = stay is not null,
                 StayId = stay?.Id,
                 stay?.PatientName,

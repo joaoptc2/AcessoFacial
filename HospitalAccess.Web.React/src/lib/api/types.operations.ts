@@ -162,6 +162,10 @@ export interface BedDto {
   name: string;
   ipAddress: string;
   homeAssistantRoomId: string;
+  /** IP do stick de TV do quarto. Vazio = leito sem TV; o botão de TV não aparece. */
+  tvIpAddress: string;
+  /** Última vez que o stick respondeu. Null = nunca visto. */
+  tvLastSeenUtc: string | null;
   occupied: boolean;
   stayId: string | null;
   patientName: string | null;
@@ -251,4 +255,17 @@ export interface AlarmEventPage {
   page: number;
   pageSize: number;
   items: AlarmEventItem[];
+}
+
+/** Estado do stick de TV de um quarto. Model/uptime/focus só vêm quando `online`. */
+export interface TvStatusDto {
+  online: boolean;
+  /** Online | Offline | Unauthorized | AdbMissing — a causa determina a correção. */
+  state: string;
+  /** Texto pronto para o operador, já explicando o que fazer. */
+  message: string;
+  model: string | null;
+  uptimeSeconds: number | null;
+  /** "pacote/atividade" em primeiro plano, ou null com a tela apagada. */
+  focus: string | null;
 }

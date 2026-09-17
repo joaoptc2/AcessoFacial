@@ -28,6 +28,8 @@ interface FormModel {
   apiPassword: string;
   homeAssistantRoomId: string;
   isRoom: boolean;
+  /** IP do stick de TV do quarto. Vazio = leito sem TV; o painel de TV não aparece. */
+  tvIpAddress: string;
   useDefaultPasswords: boolean;
 }
 
@@ -45,6 +47,7 @@ const emptyForm: FormModel = {
   apiPassword: "",
   homeAssistantRoomId: "",
   isRoom: false,
+  tvIpAddress: "",
   useDefaultPasswords: false,
 };
 
@@ -126,6 +129,7 @@ export function ControllersPage() {
           apiBaseUrl: form.apiBaseUrl || undefined,
           apiPassword: form.apiPassword || undefined,
           homeAssistantRoomId: form.homeAssistantRoomId || undefined,
+          tvIpAddress: form.tvIpAddress || undefined,
           isRoom: form.isRoom,
         });
       } else {
@@ -149,6 +153,7 @@ export function ControllersPage() {
           apiBaseUrl: apiBaseUrl || undefined,
           apiPassword: form.apiPassword ? form.apiPassword : undefined,
           homeAssistantRoomId: form.homeAssistantRoomId || undefined,
+          tvIpAddress: form.tvIpAddress || undefined,
           isRoom: form.isRoom,
           useDefaultPasswords: form.useDefaultPasswords,
         });
@@ -204,6 +209,7 @@ export function ControllersPage() {
       apiBaseUrl: detail.apiBaseUrl ?? "",
       apiPassword: "", // não retornada pela API; em branco = manter a atual
       homeAssistantRoomId: detail.homeAssistantRoomId ?? "",
+      tvIpAddress: detail.tvIpAddress ?? "",
       isRoom: detail.isRoom,
       useDefaultPasswords: false,
     });
@@ -492,6 +498,17 @@ export function ControllersPage() {
                   placeholder="quarto_101"
                   value={form.homeAssistantRoomId}
                   onChange={(e) => setForm({ ...form, homeAssistantRoomId: e.target.value })}
+                />
+              </div>
+            )}
+            {form.isRoom && (
+              <div className="form-field" style={{ minWidth: 160 }}>
+                <label>IP da TV do quarto</label>
+                <input
+                  placeholder="192.168.19.11"
+                  title="Stick Android do quarto — aparelho separado da controladora de porta. Vazio = sem TV."
+                  value={form.tvIpAddress}
+                  onChange={(e) => setForm({ ...form, tvIpAddress: e.target.value })}
                 />
               </div>
             )}

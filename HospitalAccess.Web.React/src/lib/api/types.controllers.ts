@@ -37,6 +37,10 @@ export interface ControllerDetailDto {
   homeAssistantRoomId: string;
   // Este controlador é um quarto/leito (aparece na Gestão de Leitos)?
   isRoom: boolean;
+  // IP do stick de TV do quarto (aparelho SEPARADO da controladora). Vazio = sem TV.
+  tvIpAddress: string;
+  tvPort: number;
+  tvLastSeenUtc: string | null;
 }
 
 // Cadastro simplificado: só nome + IP + SN obrigatórios; o resto tem default no servidor
@@ -53,6 +57,8 @@ export interface CreateControllerRequest {
   apiPassword?: string;
   homeAssistantRoomId?: string;
   isRoom?: boolean;
+  tvIpAddress?: string;
+  tvPort?: number;
 }
 
 export interface UpdateControllerRequest {
@@ -71,6 +77,8 @@ export interface UpdateControllerRequest {
   apiPassword?: string;
   homeAssistantRoomId?: string;
   isRoom?: boolean;
+  tvIpAddress?: string;
+  tvPort?: number;
   // true = limpa as senhas próprias do aparelho (volta a usar a senha padrão global).
   useDefaultPasswords?: boolean;
 }

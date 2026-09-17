@@ -164,6 +164,12 @@ builder.Services.Configure<BedManagementOptions>(builder.Configuration.GetSectio
 builder.Services.AddSingleton<HomeAssistantClient>();
 builder.Services.AddSingleton<WelcomeImageService>();
 
+// Painel de TV dos leitos: canal ADB com os sticks Android dos quartos, para manutenção remota
+// (relogar um serviço de streaming que caiu sem entrar no quarto). Singleton porque guarda um
+// semáforo por aparelho — dois comandos simultâneos no mesmo stick disputariam o transporte.
+builder.Services.Configure<TvOptions>(builder.Configuration.GetSection(TvOptions.SectionName));
+builder.Services.AddSingleton<AdbClient>();
+
 // Reprocessa sincronizações pendentes/falhas: reenfileira na fila serial (não processa em paralelo).
 // O heartbeat guarda a última varredura — a tela de Sincronizações usa como prova de vida.
 builder.Services.AddSingleton<SyncScanHeartbeat>();
