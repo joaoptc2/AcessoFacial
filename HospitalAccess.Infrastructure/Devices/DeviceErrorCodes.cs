@@ -17,6 +17,9 @@ public static class DeviceErrorCodes
         [16] = "REG_DUPLICATE", [17] = "MIS_RECOGNIZED", [18] = "LATEST_VERSION", [19] = "INVALID_FIRMWARE",
         [20] = "NO_SPACE", [21] = "NOT_LOGIN", [22] = "NO_MEMORY", [23] = "PWD_ERROR",
         [24] = "SSID_LONG", [25] = "PSK_LONG", [26] = "DOOR_TOO_OFTEN",
+        // Observado em produção (fora da tabela 3.1): token de login expirado/invalidado —
+        // acontece após reinício do aparelho; o cliente re-loga sozinho ao detectar.
+        [10000] = "TOKEN_INVALID",
     };
 
     /// <summary>

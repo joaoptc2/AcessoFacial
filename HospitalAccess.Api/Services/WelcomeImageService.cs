@@ -16,6 +16,14 @@ namespace HospitalAccess.Api.Services;
 /// </summary>
 public sealed class WelcomeImageService
 {
+    // Limite DOCUMENTADO do Google Cast para exibição de imagens: 1280x720. Acima disso o
+    // receptor BAIXA o arquivo normalmente e falha em silêncio na renderização (a TV fica no
+    // splash do HA) — visto em produção com a base 1920x1080 e confirmado por tcpdump (200 OK,
+    // download completo, nada na tela). A arte final é reduzida para caber no limite; como o
+    // texto já foi desenhado, a composição inteira escala proporcionalmente.
+    internal const int CastMaxWidth = 1280;
+    internal const int CastMaxHeight = 720;
+
     private readonly RuntimeSettingsProvider _settings;
     private readonly ILogger<WelcomeImageService> _logger;
     private readonly object _fontLock = new();
@@ -133,6 +141,15 @@ public sealed class WelcomeImageService
                 : cfg.TextX;
 
             image.Mutate(ctx => ctx.DrawText(patientName, font, color, new PointF(x, cfg.TextY)));
+
+            if (image.Width > CastMaxWidth || image.Height > CastMaxHeight)
+            {
+                var scale = Math.Min((double)CastMaxWidth / image.Width, (double)CastMaxHeight / image.Height);
+                var width = Math.Max(1, (int)Math.Round(image.Width * scale));
+                var height = Math.Max(1, (int)Math.Round(image.Height * scale));
+                image.Mutate(ctx => ctx.Resize(width, height));
+            }
+
             return image;
         }
         catch

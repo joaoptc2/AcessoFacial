@@ -83,6 +83,37 @@ public sealed class WelcomeImageServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Base_full_hd_e_reduzida_para_o_limite_de_imagem_do_cast()
+    {
+        // O Google Cast baixa mas NÃO exibe imagens acima de 1280x720 (fica no splash) —
+        // visto em produção com base 1920x1080. A arte final deve caber no limite.
+        CreateBaseImage(1920, 1080);
+        var service = CreateService();
+        var controllerId = Guid.NewGuid();
+
+        await service.GenerateAsync(controllerId, "Maria da Silva");
+
+        using var generated = Image.Load(Path.Combine(_root, "out", WelcomeImageService.FileNameFor(controllerId)));
+        Assert.Equal(1280, generated.Width);
+        Assert.Equal(720, generated.Height);
+    }
+
+    [Fact]
+    public async Task Preview_tambem_respeita_o_limite_do_cast()
+    {
+        // A prévia precisa mostrar EXATAMENTE o que a TV vai receber — mesma redução.
+        CreateBaseImage(2560, 1440);
+        var service = CreateService();
+
+        var bytes = await service.RenderPreviewAsync("Nome de Exemplo");
+
+        using var ms = new MemoryStream(bytes);
+        using var generated = Image.Load(ms);
+        Assert.Equal(1280, generated.Width);
+        Assert.Equal(720, generated.Height);
+    }
+
+    [Fact]
     public async Task Sobrescrita_e_idempotente_e_nao_deixa_temporario()
     {
         CreateBaseImage();
