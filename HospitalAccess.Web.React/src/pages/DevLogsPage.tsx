@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, ApiError, type DevLogEntry } from "../lib/api";
+import { useFeedback } from "../lib/feedback";
 
 const POLL_INTERVAL_MS = 3000;
 const MAX_LOCAL_ENTRIES = 2000; // espelha a capacidade do buffer do servidor
@@ -19,6 +20,7 @@ const LEVEL_STYLE: Record<string, { background: string; color: string }> = {
  * (só o que ainda não temos) a cada 3s. Só Admin — a rota da API exige o papel.
  */
 export function DevLogsPage() {
+  const { confirm } = useFeedback();
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [entries, setEntries] = useState<DevLogEntry[]>([]);
   const [levelFilter, setLevelFilter] = useState("");
@@ -73,7 +75,12 @@ export function DevLogsPage() {
   }
 
   async function clearLogs() {
-    if (!window.confirm("Limpar todos os logs capturados? (não afeta o log normal do serviço)")) return;
+    if (!(await confirm({
+      title: "Limpar os logs capturados?",
+      text: "Só esvazia o buffer desta tela. O log normal do serviço não é afetado.",
+      confirmLabel: "Limpar",
+    })))
+      return;
     setBusy(true);
     try {
       await api.clearDevLogs();

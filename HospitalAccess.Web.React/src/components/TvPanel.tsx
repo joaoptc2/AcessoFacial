@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError, type TvStatusDto } from "../lib/api";
 import { Modal } from "./Modal";
 import { useAuth } from "../lib/AuthContext";
+import { useFeedback } from "../lib/feedback";
 
 /** Intervalo entre capturas. Não é vídeo: o aparelho leva ~0,5s só para comprimir o PNG. */
 const REFRESH_MS = 1000;
@@ -52,6 +53,7 @@ interface TvPanelProps {
  * do paciente, então o intervalo só roda com o painel aberto — fechar interrompe de imediato.
  */
 export function TvPanel({ controllerId, bedName, tvIpAddress, onClose }: TvPanelProps) {
+  const { confirm, toastSuccess, toastError } = useFeedback();
   const { role } = useAuth();
   const isAdmin = role === "Admin";
 
@@ -60,7 +62,6 @@ export function TvPanel({ controllerId, bedName, tvIpAddress, onClose }: TvPanel
   const [screenError, setScreenError] = useState<string | null>(null);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
   const [apps, setApps] = useState<string[] | null>(null);
   const [showMaintenance, setShowMaintenance] = useState(false);
 
@@ -88,6 +89,7 @@ export function TvPanel({ controllerId, bedName, tvIpAddress, onClose }: TvPanel
         model: null,
         uptimeSeconds: null,
         focus: null,
+        detail: null,
       }));
     return () => {
       cancelled = true;
@@ -125,12 +127,11 @@ export function TvPanel({ controllerId, bedName, tvIpAddress, onClose }: TvPanel
 
   const run = async (acao: () => Promise<void>, sucesso?: string) => {
     setBusy(true);
-    setNotice(null);
     try {
       await acao();
-      if (sucesso) setNotice(sucesso);
+      if (sucesso) toastSuccess(sucesso);
     } catch (e) {
-      setNotice(e instanceof ApiError ? e.message : "Falha ao enviar o comando.");
+      toastError(e instanceof ApiError ? e.message : "Falha ao enviar o comando.");
     } finally {
       setBusy(false);
     }
@@ -173,11 +174,16 @@ export function TvPanel({ controllerId, bedName, tvIpAddress, onClose }: TvPanel
           <div>
             <span className="pill pill-danger">TV indisponível</span>{" "}
             <span className="text-muted">{status.message}</span>
+            {/* A frase original do adb é o que diferencia "falta instalar", "não alcanço o
+                quarto" e "a chave não foi autorizada" — três correções distintas. */}
+            {status.detail && (
+              <div style={{ marginTop: "0.4rem" }}>
+                <code style={{ fontSize: "0.75rem", overflowWrap: "anywhere" }}>{status.detail}</code>
+              </div>
+            )}
           </div>
         )}
       </div>
-
-      {notice && <div className="card text-muted" style={{ marginBottom: "0.75rem" }}>{notice}</div>}
 
       <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap", alignItems: "flex-start" }}>
         {/* Tela do quarto */}
@@ -337,8 +343,14 @@ export function TvPanel({ controllerId, bedName, tvIpAddress, onClose }: TvPanel
                 <button
                   className="btn btn-danger-outline btn-sm"
                   disabled={busy}
-                  onClick={() => {
-                    if (!window.confirm(`Reiniciar a TV do ${bedName}? O quarto fica sem imagem por cerca de 40 segundos.`)) return;
+                  onClick={async () => {
+                    if (!(await confirm({
+                      title: `Reiniciar a TV do ${bedName}?`,
+                      text: "O quarto fica sem imagem por cerca de 40 segundos.",
+                      confirmLabel: "Reiniciar",
+                      danger: true,
+                    })))
+                      return;
                     void run(() => api.rebootTv(controllerId), "Reiniciando — a TV volta em ~40s.");
                   }}
                 >

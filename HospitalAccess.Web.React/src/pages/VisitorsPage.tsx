@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { api, ApiError, downloadBlob, type ControllerDto, type VisitorListItemDto } from "../lib/api";
+import { useFeedback } from "../lib/feedback";
 
 function toLocalInputValue(date: Date): string {
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -15,6 +16,7 @@ function statusClass(v: VisitorListItemDto): string {
 }
 
 export function VisitorsPage() {
+  const { confirm } = useFeedback();
   const [visitors, setVisitors] = useState<VisitorListItemDto[]>([]);
   const [controllers, setControllers] = useState<ControllerDto[]>([]);
   const [name, setName] = useState("");
@@ -130,7 +132,13 @@ export function VisitorsPage() {
 
   async function handleDelete(id: string, visitorName: string) {
     setError(null);
-    if (!window.confirm(`Excluir definitivamente o visitante "${visitorName}" e o QR? Remove a pessoa dos controladores e apaga o cadastro (não é reversível).`)) return;
+    if (!(await confirm({
+      title: `Excluir o visitante "${visitorName}"?`,
+      text: "Remove a pessoa dos controladores e apaga o cadastro junto com o QR. Não é reversível.",
+      confirmLabel: "Excluir",
+      danger: true,
+    })))
+      return;
     try {
       await api.deleteVisitor(id);
       await load();

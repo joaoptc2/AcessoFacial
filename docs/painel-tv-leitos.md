@@ -65,9 +65,62 @@ Se o serviço rodar com um PATH enxuto, aponte o caminho completo:
 | Chave | Padrão | Para quê |
 |---|---|---|
 | `Tv:AdbPath` | `adb` | Caminho do executável |
+| `Tv:AdbKeyDirectory` | (vazio) | HOME do adb — onde fica a chave deste servidor. Ver §3b |
 | `Tv:CommandTimeoutSeconds` | `15` | Comando comum (status, tecla, texto) |
 | `Tv:ScreenshotTimeoutSeconds` | `25` | Captura de tela |
 | `Tv:LongCommandTimeoutSeconds` | `120` | Instalar APK, limpar dados |
+
+---
+
+## 3b. A chave do adb é do USUÁRIO do serviço, não do servidor
+
+**É aqui que a instalação falha na primeira vez.** O adb guarda a chave deste servidor em
+`~/.android/adbkey` — por usuário. O guia cria o serviço com `--no-create-home`, então o usuário
+`hospitalaccess` não tem HOME e não consegue manter chave estável: a TV recusa a autenticação a
+cada execução, e o painel reporta a TV como indisponível mesmo com o aparelho ligado.
+
+Autorizar a chave do SEU usuário (`premier`, por exemplo) **não resolve** — é outra chave.
+
+```bash
+# 1. Casa estável para a chave do serviço
+sudo mkdir -p /var/lib/hospitalaccess/.android
+sudo chown -R hospitalaccess:hospitalaccess /var/lib/hospitalaccess
+```
+
+```json
+"Tv": {
+  "AdbKeyDirectory": "/var/lib/hospitalaccess"
+}
+```
+
+```bash
+# 2. Derrubar qualquer servidor adb de outro usuário — quem sobe o servidor define a chave em uso
+adb kill-server 2>/dev/null; sudo pkill -f 'adb.*fork-server' 2>/dev/null
+
+# 3. Gerar a chave DO SERVIÇO e disparar o pedido de autorização na TV
+sudo -u hospitalaccess env HOME=/var/lib/hospitalaccess adb connect 192.168.19.11:5555
+```
+
+Se a TV mostrar **"Permitir depuração?"**, marque *Sempre permitir* e aceite. Se em vez disso o
+comando devolver `failed to authenticate` sem diálogo nenhum, o aparelho exige o pareamento do
+Android 11+: na TV, **Opções do desenvolvedor → Depuração por Wi-Fi → Parear dispositivo com
+código**, e então (com a porta e o código que aparecem ali, **a porta do pareamento é diferente
+da 5555**):
+
+```bash
+sudo -u hospitalaccess env HOME=/var/lib/hospitalaccess adb pair 192.168.19.11:PORTA_DO_PAREAMENTO
+sudo -u hospitalaccess env HOME=/var/lib/hospitalaccess adb connect 192.168.19.11:5555
+```
+
+```bash
+# 4. Conferir — tem que sair "device", nunca "unauthorized"
+sudo -u hospitalaccess env HOME=/var/lib/hospitalaccess adb devices -l
+sudo systemctl restart hospitalaccess-api
+```
+
+> ⚠️ O **servidor do adb** é um só na máquina, na porta 5037, e as chaves ficam com ele. Se outro
+> usuário já tiver subido um servidor, o serviço vai usar a chave DELE — funciona por acidente e
+> quebra no próximo reboot. Por isso o passo 2 derruba tudo antes.
 
 ---
 

@@ -268,4 +268,6 @@ export interface TvStatusDto {
   uptimeSeconds: number | null;
   /** "pacote/atividade" em primeiro plano, ou null com a tela apagada. */
   focus: string | null;
+  /** Saída literal do adb quando algo falha — é ela que aponta a correção certa. */
+  detail: string | null;
 }

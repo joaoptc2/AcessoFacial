@@ -4,7 +4,6 @@ import type { PersonnelAuditAllResult } from "../../lib/api";
 interface Props {
   result: PersonnelAuditAllResult | null;
   error: string | null;
-  notice: string | null;
   /** Trava os botões enquanto um reparo está em voo. */
   busy: boolean;
   onResyncUser: (controllerId: string, userId: string, name: string) => void;
@@ -18,7 +17,7 @@ interface Props {
  * Extraído da ControllersPage, que passava de 800 linhas. É puramente apresentacional: recebe o
  * resultado já pronto e devolve as ações por callback, sem falar com a API.
  */
-export function PersonnelAuditPanel({ result, error, notice, busy, onResyncUser, onRepairController }: Props) {
+export function PersonnelAuditPanel({ result, error, busy, onResyncUser, onRepairController }: Props) {
   if (!result && !error) return null;
 
   return (
@@ -32,7 +31,6 @@ export function PersonnelAuditPanel({ result, error, notice, busy, onResyncUser,
           )}
         </div>
         {error && <div className="alert alert-danger" style={{ marginTop: "0.75rem" }}>{error}</div>}
-        {notice && <div className="alert alert-success" style={{ marginTop: "0.75rem" }}>{notice}</div>}
         {result && (() => {
           const unreachable = result.results.filter((r) => r.error !== null);
           const diverging = result.results.filter(

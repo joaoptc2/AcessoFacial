@@ -7,6 +7,7 @@ import {
   type SyncPendingCategory,
   type SyncPendingItemDto,
 } from "../lib/api";
+import { useFeedback } from "../lib/feedback";
 import { useAuth } from "../lib/AuthContext";
 
 const POLL_INTERVAL_MS = 5000;
@@ -53,12 +54,12 @@ function truncate(text: string, max: number): string {
  * Botões de forçar reusam os endpoints existentes (Admin/Operator).
  */
 export function SyncPage() {
+  const { confirm, toastSuccess } = useFeedback();
   const { role } = useAuth();
   const canEdit = role === "Admin" || role === "Operator";
 
   const [overview, setOverview] = useState<SyncOverviewDto | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
   const [busyUserId, setBusyUserId] = useState<string | null>(null);
   const [busyAll, setBusyAll] = useState(false);
   const [categoryFilter, setCategoryFilter] = useState<"" | SyncPendingCategory>("");
@@ -86,10 +87,9 @@ export function SyncPage() {
 
   async function forceAll() {
     setBusyAll(true);
-    setNotice(null);
     try {
       const result = await api.syncFailedUsers();
-      setNotice(`${result.enqueued} usuário(s) reenfileirado(s) para sincronização imediata.`);
+      toastSuccess(`${result.enqueued} usuário(s) reenfileirado(s) para sincronização imediata.`);
       setError(null);
       await fetchOverview();
     } catch (err) {
@@ -101,10 +101,9 @@ export function SyncPage() {
 
   async function forceUser(item: SyncPendingItemDto) {
     setBusyUserId(item.userId);
-    setNotice(null);
     try {
       await api.resyncUser(item.userId);
-      setNotice(`Sincronização de "${item.userName}" reenfileirada (todas as portas pendentes).`);
+      toastSuccess(`Sincronização de "${item.userName}" reenfileirada — todas as portas pendentes.`);
       setError(null);
       await fetchOverview();
     } catch (err) {
@@ -115,16 +114,25 @@ export function SyncPage() {
   }
 
   async function resolveConflict(item: SyncPendingItemDto, replace: boolean) {
-    const question = replace
-      ? `Substituir o cadastro existente no aparelho (código ${item.conflictUserCode}) pela face de "${item.userName}"?`
-      : `Manter o cadastro existente no aparelho e REMOVER a permissão de "${item.userName}" nesta porta?`;
-    if (!window.confirm(question)) return;
+    const pergunta = replace
+      ? {
+          title: `Substituir o cadastro do aparelho pela face de "${item.userName}"?`,
+          text: `O código ${item.conflictUserCode} que está hoje no aparelho é sobrescrito.`,
+          confirmLabel: "Substituir",
+          danger: true,
+        }
+      : {
+          title: `Manter o cadastro do aparelho e remover "${item.userName}" desta porta?`,
+          text: "A permissão desta pessoa nesta porta é revogada; o cadastro do aparelho fica como está.",
+          confirmLabel: "Remover permissão",
+          danger: true,
+        };
+    if (!(await confirm(pergunta))) return;
     setBusyUserId(item.userId);
-    setNotice(null);
     try {
       if (replace) await api.resolveConflictReplace(item.userId, item.controllerId);
       else await api.resolveConflictKeepExisting(item.userId, item.controllerId);
-      setNotice("Conflito encaminhado para resolução.");
+      toastSuccess("Conflito encaminhado para resolução.");
       setError(null);
       await fetchOverview();
     } catch (err) {
@@ -160,7 +168,6 @@ export function SyncPage() {
       </p>
 
       {error && <div className="alert alert-danger">{error}</div>}
-      {notice && <div className="alert alert-success">{notice}</div>}
 
       <div className="card" style={{ marginBottom: "1rem", display: "flex", gap: "0.75rem", alignItems: "center", flexWrap: "wrap" }}>
         {scan === null ? (

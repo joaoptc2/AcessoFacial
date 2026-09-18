@@ -1,78 +1,81 @@
 import { NavLink } from "react-router-dom";
 import { useAuth } from "../lib/AuthContext";
+import { Icon, type IconName } from "./Icon";
 
 function navClass({ isActive }: { isActive: boolean }) {
   return `sidebar-link${isActive ? " active" : ""}`;
 }
 
+/** Um item da navegação. `end` só no "Início", que casaria com tudo. */
+interface NavItem {
+  to: string;
+  label: string;
+  icon: IconName;
+  end?: boolean;
+}
+
+/**
+ * Agrupamento da navegação. É o mesmo de antes, com os rótulos de grupo agora
+ * visíveis o tempo todo — eles são o que diz ao operador onde ele está no
+ * sistema antes de ele clicar em qualquer coisa.
+ */
+const GRUPOS: { titulo: string | null; adminOnly?: boolean; itens: NavItem[] }[] = [
+  {
+    titulo: null,
+    itens: [{ to: "/", label: "Início", icon: "dashboard", end: true }],
+  },
+  {
+    titulo: "Dispositivos",
+    itens: [
+      { to: "/controllers", label: "Controladores / Portas", icon: "device" },
+      { to: "/sync", label: "Sincronizações", icon: "sync" },
+    ],
+  },
+  {
+    titulo: "Acesso",
+    itens: [
+      { to: "/users", label: "Usuários", icon: "users" },
+      { to: "/usergroups", label: "Grupos de Usuários", icon: "group" },
+      { to: "/visitors", label: "Visitantes / Temporários", icon: "visitor" },
+      { to: "/beds", label: "Gestão de Leitos", icon: "bed" },
+      { to: "/timegroups", label: "Grade Horária", icon: "clock" },
+    ],
+  },
+  {
+    titulo: "Auditoria",
+    itens: [
+      { to: "/accesslog", label: "Log de Acessos", icon: "accessLog" },
+      { to: "/alarmevents", label: "Log de Alarmes", icon: "alarm" },
+    ],
+  },
+  {
+    titulo: "Administração",
+    adminOnly: true,
+    itens: [
+      { to: "/staff", label: "Usuários do Sistema", icon: "staff" },
+      { to: "/settings", label: "Configurações", icon: "settings" },
+      { to: "/devlogs", label: "Logs (Dev)", icon: "devLogs" },
+    ],
+  },
+];
+
 export function Sidebar() {
-  const { username, role, signOut } = useAuth();
+  const { role } = useAuth();
   const isAdmin = role === "Admin";
 
   return (
-    <nav className="sidebar">
-      <div className="sidebar-brand">Controle de Acesso Hospitalar</div>
-
-      <NavLink to="/" end className={navClass}>
-        Início
-      </NavLink>
-
-      <div className="sidebar-section">Dispositivos</div>
-      <NavLink to="/controllers" className={navClass}>
-        Controladores / Portas
-      </NavLink>
-      <NavLink to="/sync" className={navClass}>
-        Sincronizações
-      </NavLink>
-
-      <div className="sidebar-section">Acesso</div>
-      <NavLink to="/users" className={navClass}>
-        Usuários
-      </NavLink>
-      <NavLink to="/usergroups" className={navClass}>
-        Grupos de Usuários
-      </NavLink>
-      <NavLink to="/visitors" className={navClass}>
-        Visitantes / Temporários
-      </NavLink>
-      <NavLink to="/beds" className={navClass}>
-        Gestão de Leitos
-      </NavLink>
-      <NavLink to="/timegroups" className={navClass}>
-        Grade Horária
-      </NavLink>
-
-      <div className="sidebar-section">Auditoria</div>
-      <NavLink to="/accesslog" className={navClass}>
-        Log de Acessos
-      </NavLink>
-      <NavLink to="/alarmevents" className={navClass}>
-        Log de Alarmes
-      </NavLink>
-
-      {isAdmin && (
-        <>
-          <div className="sidebar-section">Administração</div>
-          <NavLink to="/staff" className={navClass}>
-            Usuários do Sistema
-          </NavLink>
-          <NavLink to="/settings" className={navClass}>
-            Configurações
-          </NavLink>
-          <NavLink to="/devlogs" className={navClass}>
-            Logs (Dev)
-          </NavLink>
-        </>
-      )}
-
-      <div className="sidebar-footer">
-        <span>
-          {username} <span className="badge-role">{role}</span>
-        </span>
-        <button className="btn btn-sm btn-outline" onClick={signOut} style={{ color: "#fff", borderColor: "rgba(255,255,255,0.3)" }}>
-          Sair
-        </button>
-      </div>
+    <nav className="sidebar" aria-label="Navegação principal">
+      {GRUPOS.filter((g) => !g.adminOnly || isAdmin).map((grupo) => (
+        <div key={grupo.titulo ?? "principal"}>
+          {grupo.titulo && <div className="sidebar-section">{grupo.titulo}</div>}
+          {grupo.itens.map((item) => (
+            <NavLink key={item.to} to={item.to} end={item.end} className={navClass}>
+              <Icon name={item.icon} size={17} />
+              {item.label}
+            </NavLink>
+          ))}
+        </div>
+      ))}
     </nav>
   );
 }

@@ -52,10 +52,11 @@ public sealed class TvController : ControllerBase
         var (controller, address) = (alvo.Controller!, alvo.Address);
 
         var alcance = await _adb.ConnectAsync(address, ct);
-        if (alcance is not TvReachState.Online)
+        if (alcance.State is not TvReachState.Online)
         {
-            await Auditar(controller, "AbrirPainelTV", success: false, AdbClient.Describe(alcance), ct);
-            return Ok(new TvStatusDto(false, alcance.ToString(), AdbClient.Describe(alcance), null, null, null));
+            var motivo = AdbClient.Describe(alcance.State);
+            await Auditar(controller, "AbrirPainelTV", success: false, alcance.Detail is { Length: > 0 } d ? d : motivo, ct);
+            return Ok(new TvStatusDto(false, alcance.State.ToString(), motivo, null, null, null, alcance.Detail));
         }
 
         // Um único ida-e-volta com marcadores: modelo, uptime e foco. Comando constante — nada
@@ -70,8 +71,10 @@ public sealed class TvController : ControllerBase
         var estado = AdbClient.Classify(result);
         if (estado is not TvReachState.Online)
         {
-            await Auditar(controller, "AbrirPainelTV", success: false, AdbClient.Describe(estado), ct);
-            return Ok(new TvStatusDto(false, estado.ToString(), AdbClient.Describe(estado), null, null, null));
+            var detalhe = AdbClient.Detail(result);
+            var motivo = AdbClient.Describe(estado);
+            await Auditar(controller, "AbrirPainelTV", success: false, detalhe is { Length: > 0 } ? detalhe : motivo, ct);
+            return Ok(new TvStatusDto(false, estado.ToString(), motivo, null, null, null, detalhe));
         }
 
         var secoes = AdbCommandRules.ParseMarkedSections(result.StdOut, "__MODELO__", "__UPTIME__", "__FOCO__");
@@ -316,14 +319,19 @@ public sealed class TvController : ControllerBase
     }
 }
 
-/// <summary>Estado do stick para o painel. Model/Uptime/Focus só vêm quando <paramref name="Online"/>.</summary>
+/// <summary>
+/// Estado do stick para o painel. Model/Uptime/Focus só vêm quando <paramref name="Online"/>.
+/// <paramref name="Detail"/> é a saída literal do adb, mostrada quando algo falha: sem ela,
+/// "a TV não respondeu" some com a única informação capaz de apontar a correção.
+/// </summary>
 public sealed record TvStatusDto(
     bool Online,
     string State,
     string Message,
     string? Model,
     double? UptimeSeconds,
-    string? Focus);
+    string? Focus,
+    string? Detail = null);
 
 public sealed record TvKeyRequest(string Key);
 

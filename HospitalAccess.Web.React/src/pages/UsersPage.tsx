@@ -3,10 +3,12 @@ import { Link } from "react-router-dom";
 import { api, ApiError, type ControllerDto, type UserAuditLogEntry, type UserGroupDto, type UserListItemDto } from "../lib/api";
 import { UserForm } from "../components/UserForm";
 import { useAuth } from "../lib/AuthContext";
+import { useFeedback } from "../lib/feedback";
 
 const PAGE_SIZE = 25;
 
 export function UsersPage() {
+  const { confirm } = useFeedback();
   const { role } = useAuth();
   const canEdit = role === "Admin" || role === "Operator";
 
@@ -209,8 +211,14 @@ export function UsersPage() {
                           )}
                           <button
                             className="btn btn-danger-outline btn-sm"
-                            onClick={() => {
-                              if (!window.confirm(`Excluir o usuário "${u.name}"? O cadastro será removido dos controladores e do sistema.`)) return;
+                            onClick={async () => {
+                              if (!(await confirm({
+                                title: `Excluir o usuário "${u.name}"?`,
+                                text: "O cadastro é removido dos controladores e do sistema.",
+                                confirmLabel: "Excluir",
+                                danger: true,
+                              })))
+                                return;
                               withReload(() => api.deleteUser(u.id), "Falha ao excluir.");
                             }}
                           >
