@@ -18,7 +18,7 @@ const TABS = ["Rede", "Relógio", "Alarmes", "Ajustes Locais", "Auditoria", "Fot
 type Tab = (typeof TABS)[number];
 
 export function ControllerDetailPage() {
-  const { confirm } = useFeedback();
+  const { confirm, toastSuccess, toastError } = useFeedback();
   const { id } = useParams<{ id: string }>();
   const [controller, setController] = useState<ControllerDetailDto | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>("Rede");
@@ -36,9 +36,7 @@ export function ControllerDetailPage() {
   const [photos, setPhotos] = useState<EventPhotoListItem[]>([]);
   const [photoImages, setPhotoImages] = useState<Record<string, string>>({});
   const [accessLog, setAccessLog] = useState<AccessLogItem[]>([]);
-  const [notice, setNotice] = useState<string | null>(null);
   // Feedback local da aba Manutenção (fica ADJACENTE aos botões, não no topo da página).
-  const [maintResult, setMaintResult] = useState<{ ok: boolean; message: string } | null>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -120,11 +118,10 @@ export function ControllerDetailPage() {
       return;
     setBusy(true);
     setError(null);
-    setNotice(null);
     try {
       await api.updateNetwork(id, info);
       setNetwork(info);
-      setNotice(
+      toastSuccess(
         controller && info.ip !== controller.ipAddress
           ? `Configuração gravada no aparelho — o cadastro acompanhou o IP novo (${info.ip}).`
           : "Configuração de rede gravada no aparelho.",
@@ -228,10 +225,9 @@ export function ControllerDetailPage() {
       return;
     setBusy(true);
     setError(null);
-    setNotice(null);
     try {
       const result = await api.repairPersonnelAudit(id);
-      setNotice(`${result.repaired} usuário(s) marcados para re-envio (${result.enqueued} na fila). Compare de novo em alguns minutos.`);
+      toastSuccess(`${result.repaired} usuário(s) marcados para re-envio (${result.enqueued} na fila). Compare de novo em alguns minutos.`);
       setAudit(await api.getPersonnelAudit(id));
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Falha ao reparar divergências.");
@@ -260,10 +256,9 @@ export function ControllerDetailPage() {
     if (!id) return;
     setBusy(true);
     setError(null);
-    setNotice(null);
     try {
       await api.repairPersonnelAuditUser(id, userId);
-      setNotice(`Reenvio de "${name}" enfileirado. Compare de novo em alguns minutos.`);
+      toastSuccess(`Reenvio de "${name}" enfileirado. Compare de novo em alguns minutos.`);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Falha ao reenviar o usuário.");
     } finally {
@@ -282,10 +277,9 @@ export function ControllerDetailPage() {
       return;
     setBusy(true);
     setError(null);
-    setNotice(null);
     try {
       await api.deletePersonFromDevice(id, code);
-      setNotice(`Usuário ${code} excluído do dispositivo.`);
+      toastSuccess(`Usuário ${code} excluído do dispositivo.`);
       setAudit(await api.getPersonnelAudit(id));
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Falha ao excluir.");
@@ -304,12 +298,11 @@ export function ControllerDetailPage() {
     })))
       return;
     setBusy(true);
-    setMaintResult(null);
     try {
       await api.triggerFireAlarm(id);
-      setMaintResult({ ok: true, message: "✓ Alarme de incêndio disparado no controlador." });
+      toastSuccess("Alarme de incêndio disparado no controlador.");
     } catch (err) {
-      setMaintResult({ ok: false, message: `✗ Falha ao disparar: ${err instanceof ApiError ? err.message : "erro inesperado"}` });
+      toastError(`Falha ao disparar o alarme: ${err instanceof ApiError ? err.message : "erro inesperado"}`);
     } finally {
       setBusy(false);
     }
@@ -325,12 +318,11 @@ export function ControllerDetailPage() {
     })))
       return;
     setBusy(true);
-    setMaintResult(null);
     try {
       const r = await api.resyncAllController(id);
-      setMaintResult({ ok: true, message: `✓ ${r.message ?? "Resincronização iniciada em segundo plano."}` });
+      toastSuccess(r.message ?? "Resincronização iniciada em segundo plano.");
     } catch (err) {
-      setMaintResult({ ok: false, message: `✗ Falha ao resincronizar: ${err instanceof ApiError ? err.message : "erro inesperado"}` });
+      toastError(`Falha ao resincronizar: ${err instanceof ApiError ? err.message : "erro inesperado"}`);
     } finally {
       setBusy(false);
     }
@@ -366,7 +358,6 @@ export function ControllerDetailPage() {
       </div>
 
       {error && <div className="alert alert-danger">{error}</div>}
-      {notice && <div className="alert alert-success">{notice}</div>}
 
       {activeTab === "Rede" &&
         (network === null ? (
@@ -810,10 +801,6 @@ export function ControllerDetailPage() {
 
       {activeTab === "Manutenção" && (
         <div className="card" style={{ maxWidth: 640 }}>
-          {maintResult && (
-            <div className={maintResult.ok ? "alert alert-success" : "alert alert-danger"}>{maintResult.message}</div>
-          )}
-
           <h4 style={{ marginTop: 0 }}>Resincronização forçada</h4>
           <p className="text-muted" style={{ marginTop: 0 }}>
             Apaga <strong>todas</strong> as pessoas deste controlador e reenvia os usuários cadastrados no

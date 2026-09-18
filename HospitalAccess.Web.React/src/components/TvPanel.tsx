@@ -53,7 +53,7 @@ interface TvPanelProps {
  * do paciente, então o intervalo só roda com o painel aberto — fechar interrompe de imediato.
  */
 export function TvPanel({ controllerId, bedName, tvIpAddress, onClose }: TvPanelProps) {
-  const { confirm } = useFeedback();
+  const { confirm, toastSuccess, toastError } = useFeedback();
   const { role } = useAuth();
   const isAdmin = role === "Admin";
 
@@ -62,7 +62,6 @@ export function TvPanel({ controllerId, bedName, tvIpAddress, onClose }: TvPanel
   const [screenError, setScreenError] = useState<string | null>(null);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
   const [apps, setApps] = useState<string[] | null>(null);
   const [showMaintenance, setShowMaintenance] = useState(false);
 
@@ -128,12 +127,11 @@ export function TvPanel({ controllerId, bedName, tvIpAddress, onClose }: TvPanel
 
   const run = async (acao: () => Promise<void>, sucesso?: string) => {
     setBusy(true);
-    setNotice(null);
     try {
       await acao();
-      if (sucesso) setNotice(sucesso);
+      if (sucesso) toastSuccess(sucesso);
     } catch (e) {
-      setNotice(e instanceof ApiError ? e.message : "Falha ao enviar o comando.");
+      toastError(e instanceof ApiError ? e.message : "Falha ao enviar o comando.");
     } finally {
       setBusy(false);
     }
@@ -186,8 +184,6 @@ export function TvPanel({ controllerId, bedName, tvIpAddress, onClose }: TvPanel
           </div>
         )}
       </div>
-
-      {notice && <div className="card text-muted" style={{ marginBottom: "0.75rem" }}>{notice}</div>}
 
       <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap", alignItems: "flex-start" }}>
         {/* Tela do quarto */}

@@ -29,7 +29,7 @@ function syncBadge(state: string | null) {
  * (tela JPG gerada pelo servidor com o nome do paciente).
  */
 export function BedsPage() {
-  const { confirm } = useFeedback();
+  const { confirm, toastSuccess } = useFeedback();
   // A Recepção não opera TV: a tela do quarto mostra o nome do paciente.
   const { role } = useAuth();
   const podeVerTv = role === "Admin" || role === "Operator";
@@ -39,7 +39,6 @@ export function BedsPage() {
   // Leito cuja TV está aberta no painel (null = painel fechado).
   const [tvBed, setTvBed] = useState<BedDto | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   // Formulário de internação (inline, por leito)
@@ -88,7 +87,6 @@ export function BedsPage() {
   async function run(action: () => Promise<void>, failMsg: string) {
     setBusy(true);
     setError(null);
-    setNotice(null);
     try {
       await action();
       await load();
@@ -114,7 +112,7 @@ export function BedsPage() {
       setAdmitBedId(null);
       setAdmitName("");
       setAdmitValidUntil("");
-      setNotice(
+      toastSuccess(
         `${name} internado(a) em ${bed.name}. Acesso em sincronização.` +
           (result.homeAssistantCalled ? " Boas-vindas enviadas à TV." : ""),
       );
@@ -131,7 +129,7 @@ export function BedsPage() {
       const result = await api.transferPatient(bed.controllerId, transferTarget);
       setTransferBedId(null);
       setTransferTarget("");
-      setNotice(
+      toastSuccess(
         `${bed.patientName} transferido(a) para ${target?.name ?? "novo leito"}.` +
           (result.homeAssistantCalled ? " Boas-vindas enviadas à TV." : ""),
       );
@@ -148,14 +146,14 @@ export function BedsPage() {
       return;
     run(async () => {
       await api.dischargePatient(bed.controllerId);
-      setNotice(`Alta registrada — acesso de ${bed.patientName} revogado.`);
+      toastSuccess(`Alta registrada — acesso de ${bed.patientName} revogado.`);
     }, "Falha ao registrar a alta.");
   }
 
   function replayWelcome(bed: BedDto) {
     run(async () => {
       const result = await api.replayWelcome(bed.controllerId);
-      setNotice(
+      toastSuccess(
         result.homeAssistantCalled
           ? `Boas-vindas reenviadas para a TV de ${bed.name}.`
           : `Imagem regenerada${result.welcomeImageUrl ? "" : " (verifique a configuração da imagem base)"} — HA não foi chamado (verifique HomeAssistantRoomId/HomeAssistant:Enabled).`,
@@ -187,7 +185,6 @@ export function BedsPage() {
       </p>
 
       {error && <div className="alert alert-danger">{error}</div>}
-      {notice && <div className="alert alert-success">{notice}</div>}
 
       {beds !== null && beds.length === 0 && (
         <div className="card text-muted" style={{ marginBottom: "1rem" }}>

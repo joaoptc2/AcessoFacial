@@ -9,6 +9,7 @@ import {
   type UserDetailDto,
   type UserGroupDto,
 } from "../lib/api";
+import { useFeedback } from "../lib/feedback";
 import { UserForm } from "../components/UserForm";
 import { useAuth } from "../lib/AuthContext";
 
@@ -24,6 +25,7 @@ function directionLabel(direction: number | null) {
 
 /** Perfil completo do usuário: dados, foto, relatório de portas acessadas e histórico administrativo. */
 export function UserProfilePage() {
+  const { toastSuccess } = useFeedback();
   const { id = "" } = useParams();
   const navigate = useNavigate();
   const { role } = useAuth();
@@ -38,7 +40,6 @@ export function UserProfilePage() {
   const [controllers, setControllers] = useState<ControllerDto[]>([]);
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [range, setRange] = useState<{ from: string; to: string }>({ from: "", to: "" });
 
@@ -120,10 +121,10 @@ export function UserProfilePage() {
 
   async function handleResync() {
     setError(null);
-    setNotice(null);
+
     try {
       await api.resyncUser(id);
-      setNotice("Sincronização reenfileirada (roda em segundo plano).");
+      toastSuccess("Sincronização reenfileirada — roda em segundo plano.");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Falha ao reenfileirar sincronização.");
     }
@@ -186,7 +187,6 @@ export function UserProfilePage() {
       </div>
 
       {error && <div className="alert alert-danger">{error}</div>}
-      {notice && <div className="alert alert-success">{notice}</div>}
 
       {editing && canEdit && (
         <div className="card" style={{ marginBottom: "1.25rem" }}>

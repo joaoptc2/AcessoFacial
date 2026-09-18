@@ -18,11 +18,10 @@ const RETENTION_FIELDS: { key: keyof Pick<SystemSettingsDto,
  * voltam do servidor: em branco = manter o atual.
  */
 export function SettingsPage() {
-  const { confirm } = useFeedback();
+  const { confirm, toastSuccess } = useFeedback();
   const { role } = useAuth();
   const [settings, setSettings] = useState<SystemSettingsDto | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [savedAt, setSavedAt] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   // Segredos digitados nesta sessão (nunca vêm do GET — write-only) + flags de limpeza.
@@ -38,10 +37,8 @@ export function SettingsPage() {
   // Upload/prévia da imagem de boas-vindas.
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
-  const [uploadInfo, setUploadInfo] = useState<string | null>(null);
   const [fontFile, setFontFile] = useState<File | null>(null);
   const [uploadingFont, setUploadingFont] = useState(false);
-  const [fontInfo, setFontInfo] = useState<string | null>(null);
   const [previewName, setPreviewName] = useState("Maria da Silva");
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewing, setPreviewing] = useState(false);
@@ -50,7 +47,6 @@ export function SettingsPage() {
   const [backups, setBackups] = useState<BackupListDto | null>(null);
   const [backupBusy, setBackupBusy] = useState(false);
   const [backupError, setBackupError] = useState<string | null>(null);
-  const [backupInfo, setBackupInfo] = useState<string | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -79,10 +75,9 @@ export function SettingsPage() {
   async function handleCreateBackup() {
     setBackupBusy(true);
     setBackupError(null);
-    setBackupInfo(null);
     try {
       const file = await api.createBackup();
-      setBackupInfo(`Cópia "${file.fileName}" gerada (${formatBytes(file.sizeBytes)}).`);
+      toastSuccess(`Cópia "${file.fileName}" gerada (${formatBytes(file.sizeBytes)}).`);
       await refreshBackups();
     } catch (err) {
       setBackupError(err instanceof ApiError ? err.message : "Falha ao gerar a cópia de segurança.");
@@ -109,7 +104,6 @@ export function SettingsPage() {
     })))
       return;
     setBackupError(null);
-    setBackupInfo(null);
     try {
       await api.deleteBackup(fileName);
       await refreshBackups();
@@ -122,7 +116,6 @@ export function SettingsPage() {
     e.preventDefault();
     if (!settings) return;
     setError(null);
-    setSavedAt(null);
     setBusy(true);
     try {
       await api.updateSettings({
@@ -155,7 +148,7 @@ export function SettingsPage() {
       setClearApiPassword(false);
       setHaToken("");
       setClearHaToken(false);
-      setSavedAt(new Date().toLocaleString());
+      toastSuccess("Configurações salvas — já valem para todo o sistema, sem reiniciar.");
       // Recarrega os indicadores (hasToken/hasPassword/efetivo).
       setSettings(await api.getSettings());
     } catch (err) {
@@ -180,11 +173,10 @@ export function SettingsPage() {
   async function uploadWelcome() {
     if (!uploadFile) return;
     setUploading(true);
-    setUploadInfo(null);
     setPreviewError(null);
     try {
       const result = await api.uploadWelcomeImage(uploadFile);
-      setUploadInfo(`Imagem base atualizada (${result.width}×${result.height}) — já vale para as próximas boas-vindas.`);
+      toastSuccess(`Imagem base atualizada (${result.width}×${result.height}) — já vale para as próximas boas-vindas.`);
       setUploadFile(null);
       setSettings(await api.getSettings()); // o caminho da base foi gravado no servidor
     } catch (err) {
@@ -197,11 +189,10 @@ export function SettingsPage() {
   async function uploadFont() {
     if (!fontFile) return;
     setUploadingFont(true);
-    setFontInfo(null);
     setPreviewError(null);
     try {
       const result = await api.uploadWelcomeFont(fontFile);
-      setFontInfo(`Fonte "${result.familyName}" instalada — já vale para as próximas boas-vindas e prévias.`);
+      toastSuccess(`Fonte "${result.familyName}" instalada — já vale para as próximas boas-vindas e prévias.`);
       setFontFile(null);
       setSettings(await api.getSettings());
     } catch (err) {
@@ -423,7 +414,6 @@ export function SettingsPage() {
               </button>
             </div>
           </div>
-          {uploadInfo && <div className="alert alert-success">{uploadInfo}</div>}
 
           <h4>
             Fonte do nome{" "}
@@ -460,7 +450,6 @@ export function SettingsPage() {
               </div>
             )}
           </div>
-          {fontInfo && <div className="alert alert-success">{fontInfo}</div>}
 
           <h4>Prévia (como a TV vai mostrar)</h4>
           <div className="form-row">
@@ -509,7 +498,6 @@ export function SettingsPage() {
         </div>
 
         {error && <div className="alert alert-danger">{error}</div>}
-        {savedAt && <div className="alert alert-success">Configurações salvas em {savedAt} — já valem para todo o sistema, sem reiniciar.</div>}
         <button type="submit" className="btn btn-primary" disabled={busy}>
           Salvar configurações
         </button>
@@ -546,7 +534,6 @@ export function SettingsPage() {
         </div>
 
         {backupError && <div className="alert alert-danger">{backupError}</div>}
-        {backupInfo && <div className="alert alert-success">{backupInfo}</div>}
 
         {backups && backups.files.length === 0 && (
           <p className="text-muted" style={{ fontSize: "0.9rem" }}>

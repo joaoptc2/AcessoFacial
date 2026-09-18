@@ -21,12 +21,11 @@ const ROLE_HINT: Record<StaffRole, string> = {
  * login (o cargo viaja no token JWT). Só Admin.
  */
 export function SystemUsersPage() {
-  const { confirm } = useFeedback();
+  const { confirm, toastSuccess } = useFeedback();
   const { username: myUsername, role } = useAuth();
 
   const [users, setUsers] = useState<StaffUserDto[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
 
   const [newUsername, setNewUsername] = useState("");
@@ -56,11 +55,10 @@ export function SystemUsersPage() {
   async function handleCreate(e: FormEvent) {
     e.preventDefault();
     setError(null);
-    setNotice(null);
     setCreating(true);
     try {
       await api.createStaffUser({ username: newUsername.trim(), password: newPassword, role: newRole });
-      setNotice(`Usuário "${newUsername.trim()}" criado (${ROLE_LABEL[newRole]}).`);
+      toastSuccess(`Usuário "${newUsername.trim()}" criado (${ROLE_LABEL[newRole]}).`);
       setNewUsername("");
       setNewPassword("");
       setNewRole("Reception");
@@ -76,10 +74,9 @@ export function SystemUsersPage() {
     if (role === u.role) return;
     setBusyId(u.id);
     setError(null);
-    setNotice(null);
     try {
       await api.updateStaffUser(u.id, { role, active: u.active });
-      setNotice(`Cargo de "${u.username}" alterado para ${ROLE_LABEL[role]} — vale no próximo login.`);
+      toastSuccess(`Cargo de "${u.username}" alterado para ${ROLE_LABEL[role]} — vale no próximo login.`);
       await load();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Falha ao alterar o cargo.");
@@ -100,10 +97,10 @@ export function SystemUsersPage() {
     if (!(await confirm(pergunta))) return;
     setBusyId(u.id);
     setError(null);
-    setNotice(null);
     try {
       await api.updateStaffUser(u.id, { role: u.role, active: !u.active });
       await load();
+      toastSuccess(`"${u.username}" ${u.active ? "desativado" : "reativado"}.`);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Falha ao alterar o usuário.");
     } finally {
@@ -116,10 +113,9 @@ export function SystemUsersPage() {
     if (password === null) return;
     setBusyId(u.id);
     setError(null);
-    setNotice(null);
     try {
       await api.resetStaffPassword(u.id, password);
-      setNotice(`Senha de "${u.username}" redefinida.`);
+      toastSuccess(`Senha de "${u.username}" redefinida.`);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Falha ao redefinir a senha.");
     } finally {
@@ -135,7 +131,6 @@ export function SystemUsersPage() {
       </p>
 
       {error && <div className="alert alert-danger">{error}</div>}
-      {notice && <div className="alert alert-success">{notice}</div>}
 
       <form className="card" style={{ marginBottom: "1.25rem" }} onSubmit={handleCreate}>
         <h3 style={{ marginTop: 0, fontSize: "1.05rem" }}>Novo usuário</h3>

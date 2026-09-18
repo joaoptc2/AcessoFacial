@@ -64,7 +64,7 @@ function normalizeIp(input: string): string {
 }
 
 export function ControllersPage() {
-  const { confirm } = useFeedback();
+  const { confirm, toastSuccess } = useFeedback();
   const { role } = useAuth();
   const isAdminOrOperator = role === "Admin" || role === "Operator";
 
@@ -91,7 +91,6 @@ export function ControllersPage() {
   const [auditProgress, setAuditProgress] = useState<{ done: number; total: number } | null>(null);
   const [auditing, setAuditing] = useState(false);
   const [auditBusy, setAuditBusy] = useState(false);
-  const [auditNotice, setAuditNotice] = useState<string | null>(null);
   const [auditError, setAuditError] = useState<string | null>(null);
 
   const load = async () => setControllers(await api.getControllers());
@@ -271,7 +270,6 @@ export function ControllersPage() {
   async function runAuditAll() {
     setAuditing(true);
     setAuditError(null);
-    setAuditNotice(null);
     try {
       await api.startPersonnelAuditAll();
 
@@ -294,10 +292,9 @@ export function ControllersPage() {
   async function resyncFromAudit(controllerId: string, userId: string, name: string) {
     setAuditBusy(true);
     setAuditError(null);
-    setAuditNotice(null);
     try {
       await api.repairPersonnelAuditUser(controllerId, userId);
-      setAuditNotice(`Reenvio de "${name}" enfileirado. Audite de novo em alguns minutos para confirmar.`);
+      toastSuccess(`Reenvio de "${name}" enfileirado. Audite de novo em alguns minutos para confirmar.`);
     } catch (err) {
       setAuditError(err instanceof ApiError ? err.message : "Falha ao reenviar o usuário.");
     } finally {
@@ -315,10 +312,9 @@ export function ControllersPage() {
       return;
     setAuditBusy(true);
     setAuditError(null);
-    setAuditNotice(null);
     try {
       const result = await api.repairPersonnelAudit(controllerId);
-      setAuditNotice(
+      toastSuccess(
         `${controllerName}: ${result.repaired} usuário(s) marcados para re-envio (${result.enqueued} na fila). Audite de novo em alguns minutos.`,
       );
     } catch (err) {
@@ -458,7 +454,6 @@ export function ControllersPage() {
       <PersonnelAuditPanel
         result={isAdminOrOperator ? auditAll : null}
         error={isAdminOrOperator ? auditError : null}
-        notice={auditNotice}
         busy={auditBusy}
         onResyncUser={resyncFromAudit}
         onRepairController={repairFromAudit}
