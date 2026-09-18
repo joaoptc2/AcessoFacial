@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useAuth } from "../lib/AuthContext";
 import { api, ApiError, downloadBlob, type BackupListDto, type SystemSettingsDto } from "../lib/api";
+import { useFeedback } from "../lib/feedback";
 
 const RETENTION_FIELDS: { key: keyof Pick<SystemSettingsDto,
   "eventPhotoRetentionDays" | "accessLogRetentionDays" | "alarmLogRetentionDays" | "controllerAuditRetentionDays">;
@@ -17,6 +18,7 @@ const RETENTION_FIELDS: { key: keyof Pick<SystemSettingsDto,
  * voltam do servidor: em branco = manter o atual.
  */
 export function SettingsPage() {
+  const { confirm } = useFeedback();
   const { role } = useAuth();
   const [settings, setSettings] = useState<SystemSettingsDto | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -99,7 +101,13 @@ export function SettingsPage() {
   }
 
   async function handleDeleteBackup(fileName: string) {
-    if (!confirm(`Remover a cópia "${fileName}" definitivamente?`)) return;
+    if (!(await confirm({
+      title: "Remover esta cópia de segurança?",
+      text: `${fileName} — o arquivo é apagado do servidor e não há como recuperá-lo por aqui.`,
+      confirmLabel: "Remover",
+      danger: true,
+    })))
+      return;
     setBackupError(null);
     setBackupInfo(null);
     try {

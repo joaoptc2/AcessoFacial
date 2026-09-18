@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, ApiError, downloadBlob, type BedDto, type BedHistoryPage } from "../lib/api";
 import { useAuth } from "../lib/AuthContext";
 import { TvPanel } from "../components/TvPanel";
+import { useFeedback } from "../lib/feedback";
 
 const HISTORY_PAGE_SIZE = 15;
 
@@ -28,6 +29,7 @@ function syncBadge(state: string | null) {
  * (tela JPG gerada pelo servidor com o nome do paciente).
  */
 export function BedsPage() {
+  const { confirm } = useFeedback();
   // A Recepção não opera TV: a tela do quarto mostra o nome do paciente.
   const { role } = useAuth();
   const podeVerTv = role === "Admin" || role === "Operator";
@@ -136,8 +138,14 @@ export function BedsPage() {
     }, "Falha ao transferir.");
   }
 
-  function discharge(bed: BedDto) {
-    if (!window.confirm(`Dar ALTA a ${bed.patientName} (leito ${bed.name})? O acesso será revogado.`)) return;
+  async function discharge(bed: BedDto) {
+    if (!(await confirm({
+      title: `Dar alta a ${bed.patientName}?`,
+      text: `Leito ${bed.name} — o acesso do paciente é revogado nos controladores e o leito volta a ficar livre.`,
+      confirmLabel: "Dar alta",
+      danger: true,
+    })))
+      return;
     run(async () => {
       await api.dischargePatient(bed.controllerId);
       setNotice(`Alta registrada — acesso de ${bed.patientName} revogado.`);

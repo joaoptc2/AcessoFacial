@@ -7,6 +7,7 @@ import {
   type SyncPendingCategory,
   type SyncPendingItemDto,
 } from "../lib/api";
+import { useFeedback } from "../lib/feedback";
 import { useAuth } from "../lib/AuthContext";
 
 const POLL_INTERVAL_MS = 5000;
@@ -53,6 +54,7 @@ function truncate(text: string, max: number): string {
  * Botões de forçar reusam os endpoints existentes (Admin/Operator).
  */
 export function SyncPage() {
+  const { confirm } = useFeedback();
   const { role } = useAuth();
   const canEdit = role === "Admin" || role === "Operator";
 
@@ -115,10 +117,20 @@ export function SyncPage() {
   }
 
   async function resolveConflict(item: SyncPendingItemDto, replace: boolean) {
-    const question = replace
-      ? `Substituir o cadastro existente no aparelho (código ${item.conflictUserCode}) pela face de "${item.userName}"?`
-      : `Manter o cadastro existente no aparelho e REMOVER a permissão de "${item.userName}" nesta porta?`;
-    if (!window.confirm(question)) return;
+    const pergunta = replace
+      ? {
+          title: `Substituir o cadastro do aparelho pela face de "${item.userName}"?`,
+          text: `O código ${item.conflictUserCode} que está hoje no aparelho é sobrescrito.`,
+          confirmLabel: "Substituir",
+          danger: true,
+        }
+      : {
+          title: `Manter o cadastro do aparelho e remover "${item.userName}" desta porta?`,
+          text: "A permissão desta pessoa nesta porta é revogada; o cadastro do aparelho fica como está.",
+          confirmLabel: "Remover permissão",
+          danger: true,
+        };
+    if (!(await confirm(pergunta))) return;
     setBusyUserId(item.userId);
     setNotice(null);
     try {

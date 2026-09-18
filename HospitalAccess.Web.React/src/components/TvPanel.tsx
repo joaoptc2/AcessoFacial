@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError, type TvStatusDto } from "../lib/api";
 import { Modal } from "./Modal";
 import { useAuth } from "../lib/AuthContext";
+import { useFeedback } from "../lib/feedback";
 
 /** Intervalo entre capturas. Não é vídeo: o aparelho leva ~0,5s só para comprimir o PNG. */
 const REFRESH_MS = 1000;
@@ -52,6 +53,7 @@ interface TvPanelProps {
  * do paciente, então o intervalo só roda com o painel aberto — fechar interrompe de imediato.
  */
 export function TvPanel({ controllerId, bedName, tvIpAddress, onClose }: TvPanelProps) {
+  const { confirm } = useFeedback();
   const { role } = useAuth();
   const isAdmin = role === "Admin";
 
@@ -345,8 +347,14 @@ export function TvPanel({ controllerId, bedName, tvIpAddress, onClose }: TvPanel
                 <button
                   className="btn btn-danger-outline btn-sm"
                   disabled={busy}
-                  onClick={() => {
-                    if (!window.confirm(`Reiniciar a TV do ${bedName}? O quarto fica sem imagem por cerca de 40 segundos.`)) return;
+                  onClick={async () => {
+                    if (!(await confirm({
+                      title: `Reiniciar a TV do ${bedName}?`,
+                      text: "O quarto fica sem imagem por cerca de 40 segundos.",
+                      confirmLabel: "Reiniciar",
+                      danger: true,
+                    })))
+                      return;
                     void run(() => api.rebootTv(controllerId), "Reiniciando — a TV volta em ~40s.");
                   }}
                 >

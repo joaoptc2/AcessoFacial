@@ -12,11 +12,13 @@ import {
   type KioskSettings,
   type PersonnelAudit,
 } from "../lib/api";
+import { useFeedback } from "../lib/feedback";
 
 const TABS = ["Rede", "Relógio", "Alarmes", "Ajustes Locais", "Auditoria", "Fotos de Evento", "Log de Acessos", "Manutenção"] as const;
 type Tab = (typeof TABS)[number];
 
 export function ControllerDetailPage() {
+  const { confirm } = useFeedback();
   const { id } = useParams<{ id: string }>();
   const [controller, setController] = useState<ControllerDetailDto | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>("Rede");
@@ -109,7 +111,13 @@ export function ControllerDetailPage() {
       setError(validationError);
       return;
     }
-    if (!window.confirm(confirmMessage)) return;
+    if (!(await confirm({
+      title: "Gravar a configuração de rede neste controlador?",
+      text: confirmMessage,
+      confirmLabel: "Gravar rede",
+      danger: true,
+    })))
+      return;
     setBusy(true);
     setError(null);
     setNotice(null);
@@ -212,9 +220,11 @@ export function ControllerDetailPage() {
 
   async function repairAudit() {
     if (!id || !audit) return;
-    if (!window.confirm(
-      `Re-enviar ${audit.missingOnDevice.length} usuário(s) que constam como sincronizados mas estão ausentes neste controlador?`,
-    ))
+    if (!(await confirm({
+      title: `Reenviar ${audit.missingOnDevice.length} usuário(s) a este controlador?`,
+      text: "Eles constam como sincronizados no sistema mas não estão no aparelho.",
+      confirmLabel: "Reenviar",
+    })))
       return;
     setBusy(true);
     setError(null);
@@ -263,7 +273,13 @@ export function ControllerDetailPage() {
 
   async function deleteExtraFromDevice(code: number) {
     if (!id) return;
-    if (!window.confirm(`Excluir o usuário ${code} diretamente deste controlador?`)) return;
+    if (!(await confirm({
+      title: `Excluir o usuário ${code} deste controlador?`,
+      text: "Remove a pessoa direto do aparelho. O cadastro no sistema não é alterado.",
+      confirmLabel: "Excluir do aparelho",
+      danger: true,
+    })))
+      return;
     setBusy(true);
     setError(null);
     setNotice(null);
@@ -280,7 +296,13 @@ export function ControllerDetailPage() {
 
   async function triggerFire() {
     if (!id) return;
-    if (!window.confirm("Disparar o alarme de INCÊNDIO neste controlador?")) return;
+    if (!(await confirm({
+      title: "Disparar o alarme de incêndio neste controlador?",
+      text: "O alarme sonoro é acionado. As portas não são abertas.",
+      confirmLabel: "Disparar alarme",
+      danger: true,
+    })))
+      return;
     setBusy(true);
     setMaintResult(null);
     try {
@@ -295,7 +317,13 @@ export function ControllerDetailPage() {
 
   async function resyncAll() {
     if (!id) return;
-    if (!window.confirm("Resincronizar FORÇADO: apaga TODAS as pessoas deste controlador e reenvia os cadastros do sistema. Confirmar?")) return;
+    if (!(await confirm({
+      title: "Resincronizar este controlador do zero?",
+      text: "Apaga TODAS as pessoas do aparelho e reenvia os cadastros do sistema. Durante o processo o controlador fica sem cadastro nenhum.",
+      confirmLabel: "Apagar e reenviar",
+      danger: true,
+    })))
+      return;
     setBusy(true);
     setMaintResult(null);
     try {

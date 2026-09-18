@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api, ApiError, type StaffRole, type StaffUserDto } from "../lib/api";
 import { useAuth } from "../lib/AuthContext";
+import { useFeedback } from "../lib/feedback";
 
 const ROLE_LABEL: Record<StaffRole, string> = {
   Admin: "Administrador",
@@ -20,6 +21,7 @@ const ROLE_HINT: Record<StaffRole, string> = {
  * login (o cargo viaja no token JWT). Só Admin.
  */
 export function SystemUsersPage() {
+  const { confirm } = useFeedback();
   const { username: myUsername, role } = useAuth();
 
   const [users, setUsers] = useState<StaffUserDto[]>([]);
@@ -87,10 +89,15 @@ export function SystemUsersPage() {
   }
 
   async function toggleActive(u: StaffUserDto) {
-    const question = u.active
-      ? `Desativar "${u.username}"? O usuário não conseguirá mais entrar no sistema.`
-      : `Reativar "${u.username}"?`;
-    if (!window.confirm(question)) return;
+    const pergunta = u.active
+      ? {
+          title: `Desativar "${u.username}"?`,
+          text: "O usuário deixa de conseguir entrar no sistema. O histórico de ações dele é preservado.",
+          confirmLabel: "Desativar",
+          danger: true,
+        }
+      : { title: `Reativar "${u.username}"?`, confirmLabel: "Reativar" };
+    if (!(await confirm(pergunta))) return;
     setBusyId(u.id);
     setError(null);
     setNotice(null);
