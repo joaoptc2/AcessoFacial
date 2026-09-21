@@ -61,11 +61,22 @@ public sealed class DataRetentionBackgroundService : BackgroundService
         var alarms = await PurgeOlderThanAsync(db.AlarmEvents, a => a.TimestampUtc, settings.AlarmLogRetentionDays, now, ct);
         var audits = await PurgeOlderThanAsync(db.ControllerAuditLogs, a => a.TimestampUtc, settings.ControllerAuditRetentionDays, now, ct);
 
-        if (photos + access + alarms + audits > 0)
+        // Internações: só as ENCERRADAS entram. A ativa é o estado do leito hoje — expurgá-la
+        // apagaria quem está internado, não o histórico.
+        var stays = 0;
+        if (settings.BedStayHistoryRetentionDays > 0)
+        {
+            var cutoff = now.AddDays(-settings.BedStayHistoryRetentionDays);
+            stays = await db.BedStays
+                .Where(b => b.EndedAtUtc != null && b.EndedAtUtc < cutoff)
+                .ExecuteDeleteAsync(ct);
+        }
+
+        if (photos + access + alarms + audits + stays > 0)
         {
             _logger.LogInformation(
-                "Expurgo por retenção: {Photos} fotos, {Access} acessos, {Alarms} alarmes, {Audits} auditorias.",
-                photos, access, alarms, audits);
+                "Expurgo por retenção: {Photos} fotos, {Access} acessos, {Alarms} alarmes, {Audits} auditorias, {Stays} internações encerradas.",
+                photos, access, alarms, audits, stays);
         }
     }
 

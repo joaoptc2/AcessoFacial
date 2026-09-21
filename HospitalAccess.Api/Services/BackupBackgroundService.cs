@@ -14,13 +14,15 @@ public sealed class BackupBackgroundService : BackgroundService
 {
     private readonly BackupService _backup;
     private readonly BackupOptions _options;
+    private readonly RuntimeSettingsProvider _settings;
     private readonly ILogger<BackupBackgroundService> _logger;
 
     public BackupBackgroundService(BackupService backup, IOptions<BackupOptions> options,
-        ILogger<BackupBackgroundService> logger)
+        RuntimeSettingsProvider settings, ILogger<BackupBackgroundService> logger)
     {
         _backup = backup;
         _options = options.Value;
+        _settings = settings;
         _logger = logger;
     }
 
@@ -46,13 +48,15 @@ public sealed class BackupBackgroundService : BackgroundService
             return;
         }
 
-        using var timer = new PeriodicTimer(TimeSpan.FromHours(Math.Max(1, _options.IntervalHours)));
-        do
+        // O intervalo é lido A CADA VOLTA, e não uma vez na subida: mudar o valor na tela de
+        // Configurações passa a valer na próxima cópia, sem reiniciar o serviço.
+        while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
                 var file = await _backup.CreateAsync(stoppingToken);
-                var removed = _backup.ApplyRetention();
+                var politica = _settings.Backup;
+                var removed = _backup.ApplyRetention(politica.MaxFiles, politica.RetentionDays);
                 if (removed > 0)
                     _logger.LogInformation("Retenção de cópias: {Removed} arquivo(s) antigo(s) removido(s).", removed);
 
@@ -69,6 +73,16 @@ public sealed class BackupBackgroundService : BackgroundService
                 // do sistema cuja ausência causa perda irreversível.
                 _logger.LogError(ex, "FALHA NA CÓPIA DE SEGURANÇA automática — os dados estão sem cópia nova.");
             }
-        } while (await timer.WaitForNextTickAsync(stoppingToken));
+
+            var horas = Math.Max(1, _settings.Backup.IntervalHours);
+            try
+            {
+                await Task.Delay(TimeSpan.FromHours(horas), stoppingToken);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+        }
     }
 }

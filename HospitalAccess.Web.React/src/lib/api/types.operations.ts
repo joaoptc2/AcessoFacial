@@ -101,6 +101,9 @@ export interface SystemSettingsDto {
   accessLogRetentionDays: number;
   alarmLogRetentionDays: number;
   controllerAuditRetentionDays: number;
+  bedStayHistoryRetentionDays: number;
+  backupIntervalHours: number;
+  backupMaxFiles: number;
   qrFormat: QrFormat;
   // Segredos nunca são devolvidos — só o indicador de presença.
   hasDeviceDefaultCommunicationPassword: boolean;
@@ -135,6 +138,9 @@ export interface UpdateSettingsRequest {
   accessLogRetentionDays: number;
   alarmLogRetentionDays: number;
   controllerAuditRetentionDays: number;
+  bedStayHistoryRetentionDays: number;
+  backupIntervalHours: number;
+  backupMaxFiles: number;
   qrFormat: QrFormat;
   deviceDefaultCommunicationPassword?: string;
   clearDeviceDefaultCommunicationPassword?: boolean;

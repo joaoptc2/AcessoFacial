@@ -4,12 +4,17 @@ import { api, ApiError, downloadBlob, type BackupListDto, type SystemSettingsDto
 import { useFeedback } from "../lib/feedback";
 
 const RETENTION_FIELDS: { key: keyof Pick<SystemSettingsDto,
-  "eventPhotoRetentionDays" | "accessLogRetentionDays" | "alarmLogRetentionDays" | "controllerAuditRetentionDays">;
+  "eventPhotoRetentionDays" | "accessLogRetentionDays" | "alarmLogRetentionDays" | "controllerAuditRetentionDays" | "bedStayHistoryRetentionDays">;
   label: string; help: string }[] = [
   { key: "eventPhotoRetentionDays", label: "Fotos de evento (dias)", help: "Fotos capturadas pelos controladores nos acessos." },
   { key: "accessLogRetentionDays", label: "Log de acessos (dias)", help: "Registros de entrada/saída. Auditoria hospitalar costuma exigir guarda longa." },
   { key: "alarmLogRetentionDays", label: "Log de alarmes (dias)", help: "Incêndio, coação, sabotagem, arrombamento etc." },
   { key: "controllerAuditRetentionDays", label: "Auditoria de comandos de porta (dias)", help: "Quem abriu/trancou cada porta." },
+  {
+    key: "bedStayHistoryRetentionDays",
+    label: "Histórico de leitos (dias)",
+    help: "Internações já encerradas — altas e mudanças de leito. A internação ativa nunca é apagada.",
+  },
 ];
 
 /**
@@ -123,6 +128,9 @@ export function SettingsPage() {
         accessLogRetentionDays: settings.accessLogRetentionDays,
         alarmLogRetentionDays: settings.alarmLogRetentionDays,
         controllerAuditRetentionDays: settings.controllerAuditRetentionDays,
+        bedStayHistoryRetentionDays: settings.bedStayHistoryRetentionDays,
+        backupIntervalHours: settings.backupIntervalHours,
+        backupMaxFiles: settings.backupMaxFiles,
         qrFormat: settings.qrFormat,
         deviceDefaultCommunicationPassword: commPassword || undefined,
         clearDeviceDefaultCommunicationPassword: clearCommPassword,
@@ -495,6 +503,40 @@ export function SettingsPage() {
               <span className="text-muted" style={{ fontSize: "0.85rem" }}>{f.help}</span>
             </div>
           ))}
+        </div>
+
+        <div className="card" style={{ maxWidth: 620, marginBottom: "1.25rem" }}>
+          <h3 style={{ marginTop: 0 }}>Política de cópias de segurança</h3>
+          <p className="text-muted" style={{ marginTop: 0 }}>
+            Padrão: <strong>3 cópias, uma por dia</strong>. Cada cópia carrega o banco inteiro com
+            as fotos de rosto — guardar dezenas enche o disco sem acrescentar proteção, porque o
+            que salva uma restauração é a cópia mais recente que ainda presta.
+          </p>
+          <div className="form-row">
+            <div className="form-field">
+              <label htmlFor="backupIntervalHours">Horas entre cópias</label>
+              <input
+                id="backupIntervalHours"
+                type="number"
+                min={1}
+                style={{ width: "8rem" }}
+                value={settings.backupIntervalHours}
+                onChange={(e) => patch({ backupIntervalHours: Math.max(1, Number(e.target.value)) })}
+              />
+            </div>
+            <div className="form-field">
+              <label htmlFor="backupMaxFiles">Cópias a manter</label>
+              <input
+                id="backupMaxFiles"
+                type="number"
+                min={0}
+                style={{ width: "8rem" }}
+                value={settings.backupMaxFiles}
+                onChange={(e) => patch({ backupMaxFiles: Math.max(0, Number(e.target.value)) })}
+              />
+              <span className="text-muted" style={{ fontSize: "0.85rem" }}>0 = sem teto.</span>
+            </div>
+          </div>
         </div>
 
         {error && <div className="alert alert-danger">{error}</div>}

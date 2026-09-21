@@ -18,6 +18,10 @@ public record UpdateSettingsRequest(
     int AccessLogRetentionDays,
     int AlarmLogRetentionDays,
     int ControllerAuditRetentionDays,
+    int BedStayHistoryRetentionDays,
+    // Cópias de segurança: horas entre cópias e quantas manter (0 = sem teto).
+    int BackupIntervalHours,
+    int BackupMaxFiles,
     string QrFormat,
     // Senhas padrão dos aparelhos: comunicação (fábrica FFFFFFFF) e painel web (fábrica 1409).
     string? DeviceDefaultCommunicationPassword = null,
@@ -74,6 +78,9 @@ public class SettingsController : ControllerBase
             settings.AccessLogRetentionDays,
             settings.AlarmLogRetentionDays,
             settings.ControllerAuditRetentionDays,
+            settings.BedStayHistoryRetentionDays,
+            _runtime.Backup.IntervalHours,
+            _runtime.Backup.MaxFiles,
             settings.QrFormat,
             // Segredos: só o indicador de presença (o valor nunca sai do servidor).
             HasDeviceDefaultCommunicationPassword = !string.IsNullOrEmpty(settings.DeviceDefaultCommunicationPassword),
@@ -107,8 +114,13 @@ public class SettingsController : ControllerBase
     public async Task<IActionResult> Update([FromBody] UpdateSettingsRequest request, CancellationToken ct)
     {
         if (request.EventPhotoRetentionDays < 0 || request.AccessLogRetentionDays < 0
-            || request.AlarmLogRetentionDays < 0 || request.ControllerAuditRetentionDays < 0)
+            || request.AlarmLogRetentionDays < 0 || request.ControllerAuditRetentionDays < 0
+            || request.BedStayHistoryRetentionDays < 0)
             return BadRequest("Os prazos de retenção não podem ser negativos (0 = reter indefinidamente).");
+        if (request.BackupIntervalHours < 1)
+            return BadRequest("O intervalo entre cópias deve ser de pelo menos 1 hora.");
+        if (request.BackupMaxFiles < 0)
+            return BadRequest("O número de cópias a manter não pode ser negativo (0 = sem teto).");
         if (request.QrFormat is not ("Appendix8Rc4" or "PlainText"))
             return BadRequest("QrFormat deve ser 'Appendix8Rc4' ou 'PlainText'.");
         if (request.HomeAssistantEnabled is not (null or "" or "on" or "off"))
@@ -137,6 +149,9 @@ public class SettingsController : ControllerBase
         settings.AccessLogRetentionDays = request.AccessLogRetentionDays;
         settings.AlarmLogRetentionDays = request.AlarmLogRetentionDays;
         settings.ControllerAuditRetentionDays = request.ControllerAuditRetentionDays;
+        settings.BedStayHistoryRetentionDays = request.BedStayHistoryRetentionDays;
+        settings.BackupIntervalHours = request.BackupIntervalHours;
+        settings.BackupMaxFiles = request.BackupMaxFiles;
         settings.QrFormat = request.QrFormat;
 
         // Segredos: novo valor = trocar; Clear* = apagar (volta a herdar/fábrica); omitido = manter.

@@ -23,11 +23,17 @@ public sealed class RuntimeSettingsProvider : IDeviceSecretDefaults, IDeviceHttp
         public bool Ready => Enabled && !string.IsNullOrWhiteSpace(BaseUrl) && !string.IsNullOrWhiteSpace(Token);
     }
 
+    /// <summary>
+    /// Política de cópias de segurança. Lida POR CICLO pela rotina automática, então mudar na
+    /// tela vale na próxima cópia — sem reiniciar o serviço.
+    /// </summary>
+    public sealed record BackupSettings(int IntervalHours, int MaxFiles, int RetentionDays);
+
     public sealed record WelcomeSettings(string BaseImagePath, string OutputDirectory, string PublicBaseUrl,
         int TextX, int TextY, bool CenterHorizontally, float FontSize, string FontColorHex, string FontPath);
 
     private sealed record Snapshot(HomeAssistantSettings HomeAssistant, WelcomeSettings Welcome,
-        string DeviceDefaultCommunicationPassword, string DeviceDefaultApiPassword);
+        BackupSettings Backup, string DeviceDefaultCommunicationPassword, string DeviceDefaultApiPassword);
 
     /// <summary>Padrões de FÁBRICA do 8190H — último recurso quando nem o banco nem o appsettings definem.</summary>
     public const string FactoryCommunicationPassword = "FFFFFFFF";
@@ -36,6 +42,7 @@ public sealed class RuntimeSettingsProvider : IDeviceSecretDefaults, IDeviceHttp
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly HomeAssistantOptions _haDefaults;
     private readonly BedManagementOptions _bedDefaults;
+    private readonly BackupOptions _backupDefaults;
     private readonly DeviceHttpOptions _deviceHttpDefaults;
     private readonly ILogger<RuntimeSettingsProvider> _logger;
     private volatile Snapshot? _current;
@@ -45,17 +52,19 @@ public sealed class RuntimeSettingsProvider : IDeviceSecretDefaults, IDeviceHttp
 
     public RuntimeSettingsProvider(IServiceScopeFactory scopeFactory, IOptions<HomeAssistantOptions> haDefaults,
         IOptions<BedManagementOptions> bedDefaults, IOptions<DeviceHttpOptions> deviceHttpDefaults,
-        ILogger<RuntimeSettingsProvider> logger)
+        IOptions<BackupOptions> backupDefaults, ILogger<RuntimeSettingsProvider> logger)
     {
         _scopeFactory = scopeFactory;
         _haDefaults = haDefaults.Value;
         _bedDefaults = bedDefaults.Value;
+        _backupDefaults = backupDefaults.Value;
         _deviceHttpDefaults = deviceHttpDefaults.Value;
         _logger = logger;
     }
 
     public HomeAssistantSettings HomeAssistant => Current.HomeAssistant;
     public WelcomeSettings Welcome => Current.Welcome;
+    public BackupSettings Backup => Current.Backup;
 
     /// <summary>Senha de comunicação padrão: Configurações → padrão de fábrica (FFFFFFFF).</summary>
     public string? DefaultCommunicationPassword =>
@@ -120,6 +129,11 @@ public sealed class RuntimeSettingsProvider : IDeviceSecretDefaults, IDeviceHttp
             row?.WelcomeFontSize ?? _bedDefaults.FontSize,
             Pick(row?.WelcomeFontColorHex, _bedDefaults.FontColorHex),
             Pick(row?.WelcomeFontPath, _bedDefaults.FontPath)),
+        new BackupSettings(
+            // Piso de 1h: um intervalo 0 no banco faria a rotina girar em laço fechado.
+            Math.Max(1, row?.BackupIntervalHours ?? _backupDefaults.IntervalHours),
+            Math.Max(0, row?.BackupMaxFiles ?? _backupDefaults.MaxFiles),
+            _backupDefaults.RetentionDays),
         row?.DeviceDefaultCommunicationPassword ?? string.Empty,
         row?.DeviceDefaultApiPassword ?? string.Empty);
 
