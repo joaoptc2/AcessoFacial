@@ -12,6 +12,7 @@ import {
 import { useFeedback } from "../lib/feedback";
 import { UserForm } from "../components/UserForm";
 import { useAuth } from "../lib/AuthContext";
+import { DoorSchedules } from "../components/DoorSchedules";
 
 function fmt(iso: string | null | undefined) {
   return iso ? new Date(iso).toLocaleString() : "—";
@@ -232,8 +233,6 @@ export function UserProfilePage() {
               <dd>{user.email || "—"}</dd>
               <dt>Grupo</dt>
               <dd>{user.groupName || "—"}</dd>
-              <dt>Grupo de horário</dt>
-              <dd>{user.timeGroup}</dd>
               <dt>Cartão</dt>
               <dd>{user.cardNumber ?? "—"}</dd>
               <dt>Portas</dt>
@@ -272,6 +271,11 @@ export function UserProfilePage() {
         </div>
 
         <div className="profile-col">
+          <div className="card">
+            <h4 className="section-title">Horário por porta</h4>
+            <DoorSchedules userId={id!} />
+          </div>
+
           <div className="card">
             <div className="section-head">
               <h4 className="section-title" style={{ margin: 0 }}>

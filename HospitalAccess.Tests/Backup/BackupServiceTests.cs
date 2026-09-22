@@ -129,7 +129,7 @@ public sealed class BackupServiceTests : IDisposable
             ["ConnectionStrings:Postgres"] = "Host=localhost;Database=x;Username=u;Password=p",
         }).Build();
         var service = new BackupService(
-            Options.Create(new BackupOptions { Directory = _dir, RetentionDays = 0, MaxFiles = 2 }),
+            Options.Create(new BackupOptions { Directory = _dir }),
             config, NullLogger<BackupService>.Instance);
 
         // Datas de criação distintas para a ordenação ser determinística.
@@ -145,7 +145,7 @@ public sealed class BackupServiceTests : IDisposable
             File.SetCreationTimeUtc(path, DateTime.UtcNow.AddMinutes(minutes));
         }
 
-        var removed = service.ApplyRetention();
+        var removed = service.ApplyRetention(maxFiles: 2, retentionDays: 0);
 
         Assert.Equal(2, removed);
         var remaining = service.List();
@@ -163,7 +163,7 @@ public sealed class BackupServiceTests : IDisposable
             ["ConnectionStrings:Postgres"] = "Host=localhost;Database=x;Username=u;Password=p",
         }).Build();
         var service = new BackupService(
-            Options.Create(new BackupOptions { Directory = _dir, RetentionDays = 7, MaxFiles = 0 }),
+            Options.Create(new BackupOptions { Directory = _dir }),
             config, NullLogger<BackupService>.Instance);
 
         var velho = CreateBackupFile("hospitalaccess-20260101-000000.zip");
@@ -171,7 +171,7 @@ public sealed class BackupServiceTests : IDisposable
         var novo = CreateBackupFile("hospitalaccess-20260826-120000.zip");
         File.SetCreationTimeUtc(novo, DateTime.UtcNow.AddDays(-1));
 
-        var removed = service.ApplyRetention();
+        var removed = service.ApplyRetention(maxFiles: 0, retentionDays: 7);
 
         Assert.Equal(1, removed);
         var remaining = Assert.Single(service.List());
@@ -186,13 +186,13 @@ public sealed class BackupServiceTests : IDisposable
             ["ConnectionStrings:Postgres"] = "Host=localhost;Database=x;Username=u;Password=p",
         }).Build();
         var service = new BackupService(
-            Options.Create(new BackupOptions { Directory = _dir, RetentionDays = 0, MaxFiles = 0 }),
+            Options.Create(new BackupOptions { Directory = _dir }),
             config, NullLogger<BackupService>.Instance);
 
         var antigo = CreateBackupFile("hospitalaccess-20200101-000000.zip");
         File.SetCreationTimeUtc(antigo, DateTime.UtcNow.AddYears(-5));
 
-        Assert.Equal(0, service.ApplyRetention());
+        Assert.Equal(0, service.ApplyRetention(maxFiles: 0, retentionDays: 0));
         Assert.Single(service.List());
     }
 }

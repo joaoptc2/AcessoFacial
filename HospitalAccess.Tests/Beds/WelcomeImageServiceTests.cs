@@ -58,6 +58,7 @@ public sealed class WelcomeImageServiceTests : IDisposable
             Options.Create(new HomeAssistantOptions()),
             Options.Create(options),
             Options.Create(new DeviceHttpOptions()),
+            Options.Create(new BackupOptions()),
             NullLogger<RuntimeSettingsProvider>.Instance);
         return new WelcomeImageService(runtime, NullLogger<WelcomeImageService>.Instance);
     }

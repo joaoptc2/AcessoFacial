@@ -43,7 +43,7 @@ public sealed class GroupAccessService
     /// Usado ao criar/editar usuário (cobre também entrar/trocar/sair de grupo, pois usa o
     /// <c>user.GroupId</c> atual). Requer que os controladores já tenham sido validados pelo chamador.
     /// </summary>
-    public async Task ReconcileUserPermissionsAsync(User user, IEnumerable<Guid> desiredControllerIds, int timeGroup, CancellationToken ct)
+    public async Task ReconcileUserPermissionsAsync(User user, IEnumerable<Guid> desiredControllerIds, CancellationToken ct)
     {
         var groupDoors = await GetGroupDoorsAsync(user.GroupId, ct);
         var effective = ComputeEffectivePermissions(desiredControllerIds, groupDoors, user.GroupId);
@@ -63,13 +63,15 @@ public sealed class GroupAccessService
                 {
                     UserId = user.Id,
                     ControllerId = controllerId,
-                    TimeGroup = timeGroup,
+                    TimeGroup = TimeGroupAllocation.ReservedUnrestricted,
                     GrantedByGroupId = source,
                 });
             }
             else
             {
-                existing.TimeGroup = timeGroup;
+                // A grade NÃO é tocada aqui de propósito. Ela passou a ser por porta, definida na
+                // tela do usuário, e sobrescrevê-la a cada edição de cadastro apagaria em silêncio
+                // todo horário configurado — o usuário mexeria no nome e perderia os horários.
                 existing.GrantedByGroupId = source;
             }
         }
@@ -121,7 +123,9 @@ public sealed class GroupAccessService
                 {
                     UserId = user.Id,
                     ControllerId = controllerId,
-                    TimeGroup = user.TimeGroup,
+                    // Porta nova herdada do grupo nasce SEM restrição; o horário por porta é
+                    // definido depois, na tela do usuário.
+                    TimeGroup = TimeGroupAllocation.ReservedUnrestricted,
                     GrantedByGroupId = groupId,
                 });
             }

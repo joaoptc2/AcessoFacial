@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { api, ApiError, downloadBlob, type ControllerDto, type VisitorListItemDto } from "../lib/api";
+import { api, ApiError, downloadBlob, type ControllerDto, type UserGroupDto, type VisitorListItemDto } from "../lib/api";
 import { useFeedback } from "../lib/feedback";
 
 function toLocalInputValue(date: Date): string {
@@ -16,12 +16,11 @@ function statusClass(v: VisitorListItemDto): string {
 }
 
 export function VisitorsPage() {
-  const { confirm } = useFeedback();
+  const { confirm, toastSuccess } = useFeedback();
   const [visitors, setVisitors] = useState<VisitorListItemDto[]>([]);
   const [controllers, setControllers] = useState<ControllerDto[]>([]);
   const [name, setName] = useState("");
   const [validUntil, setValidUntil] = useState(() => toLocalInputValue(new Date(Date.now() + 24 * 60 * 60 * 1000)));
-  const [timeGroup, setTimeGroup] = useState(1);
   const [selectedRoom, setSelectedRoom] = useState<string>("");
   const [changingRoomId, setChangingRoomId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -32,11 +31,22 @@ export function VisitorsPage() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
 
+  // Visitante de grupo: recebe as portas padrão do grupo e NÃO tem QR.
+  const [groups, setGroups] = useState<UserGroupDto[]>([]);
+  const [groupId, setGroupId] = useState("");
+  const [groupName, setGroupName] = useState("");
+  const [groupValidUntil, setGroupValidUntil] = useState(() =>
+    toLocalInputValue(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)),
+  );
+  const [groupCard, setGroupCard] = useState("");
+  const [groupBusy, setGroupBusy] = useState(false);
+
   const load = async () => setVisitors(await api.getVisitors());
 
   useEffect(() => {
     load();
     api.getControllers().then(setControllers).catch(() => setControllers([]));
+    api.getUserGroups().then(setGroups).catch(() => setGroups([]));
   }, []);
 
 
@@ -69,6 +79,31 @@ export function VisitorsPage() {
     downloadBlob(qrBlob, `qr-${safeName}.png`);
   }
 
+  async function handleCreateGroup(e: FormEvent) {
+    e.preventDefault();
+    setGroupBusy(true);
+    setError(null);
+    try {
+      const r = await api.createGroupVisitor({
+        name: groupName,
+        validUntil: new Date(groupValidUntil).toISOString(),
+        groupId,
+        cardNumber: groupCard ? Number(groupCard) : undefined,
+      });
+      toastSuccess(
+        `${groupName} criado no grupo ${r.groupName} com ${r.doorCount} porta(s).` +
+          (r.hasCard ? "" : " Sem cartão: a pessoa ainda não consegue abrir porta nenhuma."),
+      );
+      setGroupName("");
+      setGroupCard("");
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Falha ao criar o visitante de grupo.");
+    } finally {
+      setGroupBusy(false);
+    }
+  }
+
   async function handleCreate(e: FormEvent) {
     e.preventDefault();
     setError(null);
@@ -77,10 +112,6 @@ export function VisitorsPage() {
     const validUntilDate = new Date(validUntil);
     if (validUntilDate <= new Date()) {
       setError("Validade deve ser no futuro.");
-      return;
-    }
-    if (timeGroup < 1 || timeGroup > 64) {
-      setError("Grupo de horário deve estar entre 1 e 64.");
       return;
     }
     if (!selectedRoom) {
@@ -93,7 +124,6 @@ export function VisitorsPage() {
       const created = await api.createVisitor({
         name,
         validUntil: validUntilDate.toISOString(),
-        timeGroup,
         controllerIds: [selectedRoom],
       });
       await showQr(created.id, name);
@@ -149,9 +179,17 @@ export function VisitorsPage() {
 
   return (
     <div>
-      <h2>Visitantes / temporários (acesso por QR)</h2>
+      <h2>Visitantes / temporários</h2>
+      <p className="text-muted" style={{ marginTop: 0 }}>
+        São dois tipos, e o que os separa é como a pessoa se identifica no leitor.
+      </p>
 
       <form className="card" style={{ marginBottom: "1.25rem", maxWidth: 480 }} onSubmit={handleCreate}>
+        <h3 style={{ marginTop: 0, fontSize: "1.02rem" }}>Visitante com QR — uma porta</h3>
+        <p className="text-muted" style={{ marginTop: 0, fontSize: "0.85rem" }}>
+          Abre por QR, que é cunhado pela controladora e só vale nela. Por isso fica em{" "}
+          <strong>uma porta por vez</strong> — use “Trocar quarto” para mudá-la.
+        </p>
         <div className="form-field" style={{ marginBottom: "0.75rem" }}>
           <label>Nome</label>
           <input value={name} onChange={(e) => setName(e.target.value)} required />
@@ -159,10 +197,6 @@ export function VisitorsPage() {
         <div className="form-field" style={{ marginBottom: "0.75rem" }}>
           <label>Válido até</label>
           <input type="datetime-local" value={validUntil} onChange={(e) => setValidUntil(e.target.value)} required />
-        </div>
-        <div className="form-field" style={{ marginBottom: "0.75rem" }}>
-          <label>Grupo de horário (1-64)</label>
-          <input type="number" value={timeGroup} onChange={(e) => setTimeGroup(Number(e.target.value))} />
         </div>
         <div className="form-field" style={{ marginBottom: "0.75rem" }}>
           <label>Quarto (porta)</label>
@@ -188,6 +222,61 @@ export function VisitorsPage() {
             Selecione o quarto para habilitar o cadastro.
           </p>
         )}
+      </form>
+
+      <form className="card" style={{ marginBottom: "1.25rem", maxWidth: 480 }} onSubmit={handleCreateGroup}>
+        <h3 style={{ marginTop: 0, fontSize: "1.02rem" }}>Visitante com cartão — várias portas</h3>
+        <p className="text-muted" style={{ marginTop: 0, fontSize: "0.85rem" }}>
+          Recebe de uma vez todas as portas padrão de um grupo — um prestador de serviço, por
+          exemplo. <strong>Não tem QR</strong>, porque um QR só vale na porta que o cunhou; a
+          identificação é pelo <strong>cartão</strong>.
+        </p>
+        <div className="form-field" style={{ marginBottom: "0.75rem" }}>
+          <label htmlFor="gvName">Nome</label>
+          <input id="gvName" value={groupName} onChange={(e) => setGroupName(e.target.value)} required />
+        </div>
+        <div className="form-field" style={{ marginBottom: "0.75rem" }}>
+          <label htmlFor="gvGroup">Grupo</label>
+          {groups.length === 0 ? (
+            <span className="text-muted">Nenhum grupo cadastrado.</span>
+          ) : (
+            <select id="gvGroup" value={groupId} onChange={(e) => setGroupId(e.target.value)}>
+              <option value="">(selecione o grupo)</option>
+              {groups.map((g) => (
+                <option key={g.id} value={g.id}>
+                  {g.name}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
+        <div className="form-field" style={{ marginBottom: "0.75rem" }}>
+          <label htmlFor="gvUntil">Válido até</label>
+          <input
+            id="gvUntil"
+            type="datetime-local"
+            value={groupValidUntil}
+            onChange={(e) => setGroupValidUntil(e.target.value)}
+            required
+          />
+        </div>
+        <div className="form-field" style={{ marginBottom: "0.75rem" }}>
+          <label htmlFor="gvCard">Número do cartão</label>
+          <input
+            id="gvCard"
+            type="number"
+            min={0}
+            value={groupCard}
+            onChange={(e) => setGroupCard(e.target.value)}
+            placeholder="crachá do visitante"
+          />
+          <span className="text-muted" style={{ fontSize: "0.8rem" }}>
+            Sem cartão, a pessoa fica cadastrada mas não consegue abrir nenhuma porta.
+          </span>
+        </div>
+        <button type="submit" className={`btn btn-primary${groupBusy ? " is-busy" : ""}`} disabled={groupBusy || !groupId}>
+          Criar visitante de grupo
+        </button>
       </form>
 
       {qrImage && (

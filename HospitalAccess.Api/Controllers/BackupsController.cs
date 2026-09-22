@@ -20,12 +20,15 @@ public sealed class BackupsController : ControllerBase
 {
     private readonly BackupService _backup;
     private readonly SingleFlight _singleFlight;
+    private readonly RuntimeSettingsProvider _settings;
     private readonly ILogger<BackupsController> _logger;
 
-    public BackupsController(BackupService backup, SingleFlight singleFlight, ILogger<BackupsController> logger)
+    public BackupsController(BackupService backup, SingleFlight singleFlight,
+        RuntimeSettingsProvider settings, ILogger<BackupsController> logger)
     {
         _backup = backup;
         _singleFlight = singleFlight;
+        _settings = settings;
         _logger = logger;
     }
 
@@ -54,7 +57,8 @@ public sealed class BackupsController : ControllerBase
         try
         {
             var file = await _backup.CreateAsync(ct);
-            _backup.ApplyRetention();
+            var politica = _settings.Backup;
+            _backup.ApplyRetention(politica.MaxFiles, politica.RetentionDays);
             _logger.LogInformation("Cópia de segurança gerada sob demanda por {User}.", User.Identity?.Name);
             return Ok(file);
         }

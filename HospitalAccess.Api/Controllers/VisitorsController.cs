@@ -12,13 +12,25 @@ namespace HospitalAccess.Api.Controllers;
 
 // Name anulável de propósito — ver a nota em CreateUserRequest: garante que a mensagem de erro
 // venha do PersonNameRules (português, acionável) e não da validação automática do framework.
-public record CreateVisitorRequest(string? Name, DateTime ValidUntil, int TimeGroup, Guid[]? ControllerIds = null);
+// A grade de horário saiu daqui: ela passou a ser POR PORTA e é definida na tela do usuário,
+// depois de criado. Um visitante nasce sem restrição — o que limita o acesso dele é a validade.
+public record CreateVisitorRequest(string? Name, DateTime ValidUntil, Guid[]? ControllerIds = null);
 
 /// <summary>Texto do QRCode copiado da controladora, para renderizar um PNG imprimível.</summary>
 public record RenderQrRequest(string Text);
 
 /// <summary>Troca o quarto (controlador/porta) de um visitante temporário.</summary>
 public record ChangeRoomRequest(Guid ControllerId);
+
+/// <summary>
+/// Visitante temporário que recebe as portas PADRÃO de um grupo — um prestador de serviço que
+/// precisa circular por várias portas durante alguns dias, por exemplo.
+/// </summary>
+/// <param name="CardNumber">
+/// Número do cartão/crachá. É a ÚNICA forma de este visitante abrir porta: o QR é cunhado pela
+/// controladora e só vale nela, então uma pessoa com várias portas não tem QR que sirva em todas.
+/// </param>
+public record CreateGroupVisitorRequest(string? Name, DateTime ValidUntil, Guid GroupId, uint? CardNumber = null);
 
 /// <summary>Cadastro de visitantes temporários e geração do QR de acesso.</summary>
 [ApiController]
@@ -58,7 +70,6 @@ public class VisitorsController : ControllerBase
                 u.Name,
                 u.ValidFrom,
                 u.ValidUntil,
-                u.TimeGroup,
                 u.CreatedByUsername,
                 u.CreatedAtUtc,
                 u.RevokedAtUtc,
@@ -141,8 +152,6 @@ public class VisitorsController : ControllerBase
         var validUntil = ToUtc(request.ValidUntil);
         if (validUntil <= DateTime.UtcNow)
             return BadRequest("ValidUntil deve ser no futuro.");
-        if (request.TimeGroup is < 1 or > 64)
-            return BadRequest("TimeGroup deve estar entre 1 e 64.");
 
         // Gestão de leitos: o temporário fica em UM quarto (uma porta). O QR é cunhado por aparelho,
         // então cadastrar em várias portas geraria QRs diferentes por porta — sem sentido para um
@@ -163,7 +172,6 @@ public class VisitorsController : ControllerBase
             Type = UserType.Visitor,
             ValidFrom = DateTime.UtcNow,
             ValidUntil = validUntil,
-            TimeGroup = request.TimeGroup,
             CreatedByUsername = User.Identity?.Name,
         };
 
@@ -173,7 +181,7 @@ public class VisitorsController : ControllerBase
         {
             if (!await _db.Controllers.AnyAsync(c => c.Id == controllerId, ct))
                 return BadRequest($"Controlador {controllerId} não existe.");
-            visitor.Permissions.Add(new AccessPermission { ControllerId = controllerId, TimeGroup = request.TimeGroup });
+            visitor.Permissions.Add(new AccessPermission { ControllerId = controllerId, TimeGroup = TimeGroupAllocation.ReservedUnrestricted });
         }
 
         _db.Users.Add(visitor);
@@ -184,6 +192,76 @@ public class VisitorsController : ControllerBase
         _syncQueue.EnqueueSync(visitor.Id);
 
         return CreatedAtAction(nameof(GenerateQr), new { visitorId = visitor.Id }, new { visitor.Id, visitor.UserCode });
+    }
+
+    /// <summary>
+    /// Cria um visitante temporário com as portas PADRÃO de um grupo de usuários.
+    ///
+    /// <para>
+    /// Diferente do visitante de leito, que fica em UMA porta e abre por QR: aqui a pessoa recebe
+    /// várias portas de uma vez, e por isso NÃO há QR. O QR válido é o que a controladora cunha e
+    /// guarda por pessoa — o firmware o valida contra aquele texto exato, então o QR lido de uma
+    /// porta não serve nas outras. Quem tem várias portas se identifica por CARTÃO.
+    /// </para>
+    /// </summary>
+    [HttpPost("group")]
+    public async Task<IActionResult> CreateForGroup([FromBody] CreateGroupVisitorRequest request, CancellationToken ct)
+    {
+        var validUntil = ToUtc(request.ValidUntil);
+        if (validUntil <= DateTime.UtcNow)
+            return BadRequest("A validade deve ser no futuro.");
+
+        if (!PersonNameRules.TryNormalize(request.Name, "O nome", out var visitorName, out var nameError))
+            return BadRequest(nameError);
+
+        var grupo = await _db.UserGroups
+            .Include(g => g.DefaultControllers)
+            .FirstOrDefaultAsync(g => g.Id == request.GroupId, ct);
+        if (grupo is null) return BadRequest("Grupo não existe.");
+
+        var portas = grupo.DefaultControllers.Select(d => d.ControllerId).Distinct().ToList();
+        if (portas.Count == 0)
+            return BadRequest($"O grupo \"{grupo.Name}\" não tem porta padrão nenhuma. Defina as portas do grupo antes de criar um visitante para ele.");
+
+        var visitor = new User
+        {
+            UserCode = await NextUserCodeAsync(ct),
+            Name = visitorName,
+            Type = UserType.Visitor,
+            GroupId = grupo.Id,
+            CardNumber = request.CardNumber,
+            ValidFrom = DateTime.UtcNow,
+            ValidUntil = validUntil,
+            CreatedByUsername = User.Identity?.Name,
+            Notes = $"Visitante do grupo {grupo.Name} — {portas.Count} porta(s), sem QR (identificação por cartão).",
+        };
+
+        foreach (var controllerId in portas)
+        {
+            // Sem restrição de horário: quem limita este visitante é a validade. Horário por
+            // porta, se precisar, é definido depois na tela do usuário.
+            visitor.Permissions.Add(new AccessPermission
+            {
+                ControllerId = controllerId,
+                TimeGroup = TimeGroupAllocation.ReservedUnrestricted,
+                GrantedByGroupId = grupo.Id,
+            });
+        }
+
+        _db.Users.Add(visitor);
+        UserAuditLogger.Record(_db, visitor, $"Criado como visitante do grupo {grupo.Name}", User.Identity?.Name);
+        await _db.SaveChangesAsync(ct);
+
+        _syncQueue.EnqueueSync(visitor.Id);
+
+        return Ok(new
+        {
+            visitor.Id,
+            visitor.UserCode,
+            GroupName = grupo.Name,
+            DoorCount = portas.Count,
+            HasCard = request.CardNumber is not null,
+        });
     }
 
     /// <summary>
@@ -224,7 +302,6 @@ public class VisitorsController : ControllerBase
             {
                 UserId = visitor.Id,
                 ControllerId = request.ControllerId,
-                TimeGroup = visitor.TimeGroup,
             });
 
         UserAuditLogger.Record(_db, visitor, "Quarto alterado", User.Identity?.Name);

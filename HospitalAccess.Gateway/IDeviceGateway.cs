@@ -16,14 +16,19 @@ public interface IDeviceGateway
     /// Cadastra/atualiza um usuário com foto de face em um controlador.
     /// A imagem já deve vir convertida (480x640, &lt;=120KB) OU o gateway converte internamente.
     /// </summary>
-    Task<AddFaceResult> AddPersonWithFaceAsync(Controller controller, User user, byte[] faceJpg, CancellationToken ct = default);
+    /// <param name="timeGroup">Grade de horário NESTA porta (1-64), vinda da permissão.</param>
+    Task<AddFaceResult> AddPersonWithFaceAsync(Controller controller, User user, byte[] faceJpg, int timeGroup, CancellationToken ct = default);
 
     /// <summary>
     /// Cadastra/atualiza uma pessoa SEM face (só código + validade nativa + grupo de horário) —
     /// usada para visitantes identificados apenas por QR. O controlador valida o vencimento
     /// offline (Person.Expiry).
     /// </summary>
-    Task AddPersonWithoutFaceAsync(Controller controller, User user, CancellationToken ct = default);
+    /// <param name="timeGroup">
+    /// Grade de horário NESTA porta (1-64). Vem da permissão do usuário no controlador, e não do
+    /// cadastro global: é o que permite horários diferentes por porta.
+    /// </param>
+    Task AddPersonWithoutFaceAsync(Controller controller, User user, int timeGroup, CancellationToken ct = default);
 
     /// <summary>Remove um usuário de um controlador.</summary>
     Task DeletePersonAsync(Controller controller, uint userCode, CancellationToken ct = default);

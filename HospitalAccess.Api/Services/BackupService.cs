@@ -154,20 +154,26 @@ public sealed class BackupService
         return new BackupFileInfo(fileName, info.Length, info.CreationTimeUtc);
     }
 
-    /// <summary>Aplica a retenção (idade e teto de arquivos). Devolve quantos foram removidos.</summary>
-    public int ApplyRetention()
+    /// <summary>
+    /// Aplica a retenção e devolve quantos arquivos foram removidos. A POLÍTICA vem de fora, em
+    /// vez de ser lida daqui: ela é administrável pela tela e muda em tempo de execução, e este
+    /// serviço não deveria precisar de banco só para descobrir quantas cópias manter.
+    /// </summary>
+    /// <param name="maxFiles">Teto de arquivos. 0 = sem teto.</param>
+    /// <param name="retentionDays">Idade máxima em dias. 0 = não expurgar por idade.</param>
+    public int ApplyRetention(int maxFiles, int retentionDays)
     {
         var files = List();
         var toDelete = new List<BackupFileInfo>();
 
-        if (_options.RetentionDays > 0)
+        if (retentionDays > 0)
         {
-            var cutoff = DateTime.UtcNow.AddDays(-_options.RetentionDays);
+            var cutoff = DateTime.UtcNow.AddDays(-retentionDays);
             toDelete.AddRange(files.Where(f => f.CreatedAtUtc < cutoff));
         }
 
-        if (_options.MaxFiles > 0 && files.Count > _options.MaxFiles)
-            toDelete.AddRange(files.Skip(_options.MaxFiles));
+        if (maxFiles > 0 && files.Count > maxFiles)
+            toDelete.AddRange(files.Skip(maxFiles));
 
         var removed = 0;
         foreach (var file in toDelete.DistinctBy(f => f.FileName))

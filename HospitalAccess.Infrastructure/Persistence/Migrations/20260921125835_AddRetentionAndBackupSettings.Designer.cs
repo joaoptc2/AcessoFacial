@@ -3,6 +3,7 @@ using System;
 using HospitalAccess.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace HospitalAccess.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(AccessDbContext))]
-    partial class AccessDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260921125835_AddRetentionAndBackupSettings")]
+    partial class AddRetentionAndBackupSettings
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -313,68 +316,6 @@ namespace HospitalAccess.Infrastructure.Persistence.Migrations
                     b.ToTable("ControllerAuditLogs");
                 });
 
-            modelBuilder.Entity("HospitalAccess.Domain.Entities.ControllerTimeGroup", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("ContentHash")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<Guid>("ControllerId")
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int>("GroupNumber")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("Label")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("ControllerId", "ContentHash");
-
-                    b.HasIndex("ControllerId", "GroupNumber")
-                        .IsUnique();
-
-                    b.ToTable("ControllerTimeGroups");
-                });
-
-            modelBuilder.Entity("HospitalAccess.Domain.Entities.ControllerTimeGroupSegment", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<TimeOnly>("BeginTime")
-                        .HasColumnType("time without time zone");
-
-                    b.Property<Guid>("ControllerTimeGroupId")
-                        .HasColumnType("uuid");
-
-                    b.Property<TimeOnly>("EndTime")
-                        .HasColumnType("time without time zone");
-
-                    b.Property<byte>("SegmentIndex")
-                        .HasColumnType("smallint");
-
-                    b.Property<byte>("Weekday")
-                        .HasColumnType("smallint");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("ControllerTimeGroupId", "Weekday", "SegmentIndex")
-                        .IsUnique();
-
-                    b.ToTable("ControllerTimeGroupSegments");
-                });
-
             modelBuilder.Entity("HospitalAccess.Domain.Entities.DeviceSyncStatus", b =>
                 {
                     b.Property<Guid>("Id")
@@ -647,6 +588,56 @@ namespace HospitalAccess.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("HospitalAccess.Domain.Entities.TimeGroupSchedule", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("GroupNumber")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("GroupNumber")
+                        .IsUnique();
+
+                    b.ToTable("TimeGroupSchedules");
+                });
+
+            modelBuilder.Entity("HospitalAccess.Domain.Entities.TimeGroupSegment", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<TimeOnly>("BeginTime")
+                        .HasColumnType("time without time zone");
+
+                    b.Property<TimeOnly>("EndTime")
+                        .HasColumnType("time without time zone");
+
+                    b.Property<byte>("SegmentIndex")
+                        .HasColumnType("smallint");
+
+                    b.Property<Guid>("TimeGroupScheduleId")
+                        .HasColumnType("uuid");
+
+                    b.Property<byte>("Weekday")
+                        .HasColumnType("smallint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TimeGroupScheduleId", "Weekday", "SegmentIndex")
+                        .IsUnique();
+
+                    b.ToTable("TimeGroupSegments");
+                });
+
             modelBuilder.Entity("HospitalAccess.Domain.Entities.User", b =>
                 {
                     b.Property<Guid>("Id")
@@ -695,6 +686,9 @@ namespace HospitalAccess.Infrastructure.Persistence.Migrations
 
                     b.Property<string>("RevokedByUsername")
                         .HasColumnType("text");
+
+                    b.Property<int>("TimeGroup")
+                        .HasColumnType("integer");
 
                     b.Property<int>("Type")
                         .HasColumnType("integer");
@@ -817,28 +811,6 @@ namespace HospitalAccess.Infrastructure.Persistence.Migrations
                     b.Navigation("VisitorUser");
                 });
 
-            modelBuilder.Entity("HospitalAccess.Domain.Entities.ControllerTimeGroup", b =>
-                {
-                    b.HasOne("HospitalAccess.Domain.Entities.Controller", "Controller")
-                        .WithMany()
-                        .HasForeignKey("ControllerId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Controller");
-                });
-
-            modelBuilder.Entity("HospitalAccess.Domain.Entities.ControllerTimeGroupSegment", b =>
-                {
-                    b.HasOne("HospitalAccess.Domain.Entities.ControllerTimeGroup", "Group")
-                        .WithMany("Segments")
-                        .HasForeignKey("ControllerTimeGroupId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Group");
-                });
-
             modelBuilder.Entity("HospitalAccess.Domain.Entities.DeviceSyncStatus", b =>
                 {
                     b.HasOne("HospitalAccess.Domain.Entities.Controller", "Controller")
@@ -877,6 +849,17 @@ namespace HospitalAccess.Infrastructure.Persistence.Migrations
                     b.Navigation("Group");
                 });
 
+            modelBuilder.Entity("HospitalAccess.Domain.Entities.TimeGroupSegment", b =>
+                {
+                    b.HasOne("HospitalAccess.Domain.Entities.TimeGroupSchedule", "Schedule")
+                        .WithMany("Segments")
+                        .HasForeignKey("TimeGroupScheduleId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Schedule");
+                });
+
             modelBuilder.Entity("HospitalAccess.Domain.Entities.User", b =>
                 {
                     b.HasOne("HospitalAccess.Domain.Entities.UserGroup", "Group")
@@ -892,7 +875,7 @@ namespace HospitalAccess.Infrastructure.Persistence.Migrations
                     b.Navigation("Permissions");
                 });
 
-            modelBuilder.Entity("HospitalAccess.Domain.Entities.ControllerTimeGroup", b =>
+            modelBuilder.Entity("HospitalAccess.Domain.Entities.TimeGroupSchedule", b =>
                 {
                     b.Navigation("Segments");
                 });

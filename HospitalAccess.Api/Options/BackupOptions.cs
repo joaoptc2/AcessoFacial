@@ -21,7 +21,10 @@ public sealed class BackupOptions
     /// </summary>
     public string Directory { get; set; } = "/var/lib/hospitalaccess/backups";
 
-    /// <summary>Intervalo entre cópias automáticas.</summary>
+    /// <summary>
+    /// Intervalo entre cópias automáticas. Configurável na tela de Configurações, que vence este
+    /// valor quando preenchida.
+    /// </summary>
     public int IntervalHours { get; set; } = 24;
 
     /// <summary>Por quantos dias guardar. 0 = nunca expurgar.</summary>
@@ -29,9 +32,16 @@ public sealed class BackupOptions
 
     /// <summary>
     /// Teto de arquivos guardados, independente da idade — trava de segurança para o disco não
-    /// encher se a rotina rodar mais vezes que o previsto. 0 = sem teto.
+    /// encher se a rotina rodar mais vezes que o previsto. 0 = sem teto. Configurável na tela de
+    /// Configurações, que vence este valor quando preenchida.
+    ///
+    /// <para>
+    /// O padrão é 3, combinado com o intervalo de 24h: três dias de cópias. Uma cópia carrega o
+    /// banco inteiro com as fotos de rosto — guardar dezenas enche o disco sem acrescentar
+    /// proteção, porque o que salva uma restauração é a cópia mais recente que ainda presta.
+    /// </para>
     /// </summary>
-    public int MaxFiles { get; set; } = 60;
+    public int MaxFiles { get; set; } = 3;
 
     /// <summary>Caminho do <c>pg_dump</c>. O padrão resolve pelo PATH do serviço.</summary>
     public string PgDumpPath { get; set; } = "pg_dump";

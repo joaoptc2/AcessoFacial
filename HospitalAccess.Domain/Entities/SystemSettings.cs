@@ -25,6 +25,22 @@ public class SystemSettings
     public int ControllerAuditRetentionDays { get; set; }
 
     /// <summary>
+    /// Dias para reter o histórico de internações ENCERRADAS (mudanças de leito e altas).
+    /// 0 = nunca expurgar. A internação ATIVA nunca é tocada, qualquer que seja o prazo — ela é
+    /// o estado corrente do leito, não histórico.
+    /// </summary>
+    public int BedStayHistoryRetentionDays { get; set; }
+
+    // ---- Cópias de segurança. Null = herdar o appsettings (mesma regra dos demais campos
+    // administráveis). O padrão de fábrica é 3 cópias, uma por dia.
+
+    /// <summary>Horas entre cópias automáticas. Null = herdar o appsettings.</summary>
+    public int? BackupIntervalHours { get; set; }
+
+    /// <summary>Quantas cópias manter. Null = herdar o appsettings. 0 = sem teto.</summary>
+    public int? BackupMaxFiles { get; set; }
+
+    /// <summary>
     /// Formato do QR de acesso:
     /// - "PlainText" (padrão): Base64 de "user_id={code}_time={microssegundos Unix}". É o formato
     ///   CONFIRMADO contra o QR real do sistema oficial do fabricante (idêntico byte a byte).

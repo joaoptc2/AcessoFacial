@@ -272,7 +272,7 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
     public DateTime? GetCircuitOpenUntilUtc(Guid controllerId) =>
         _circuitBreakers.TryGetValue(controllerId, out var breaker) ? breaker.OpenUntil(DateTime.UtcNow) : null;
 
-    public async Task<AddFaceResult> AddPersonWithFaceAsync(Controller controller, User user, byte[] faceJpg, CancellationToken ct = default)
+    public async Task<AddFaceResult> AddPersonWithFaceAsync(Controller controller, User user, byte[] faceJpg, int timeGroup, CancellationToken ct = default)
     {
         // Requisito de hardware: JPG, 480x640, <= 120KB (Classe 11 / Appendix do protocolo).
         // Falha aqui é do ARQUIVO, não do aparelho: devolvemos um código permanente em vez de
@@ -294,7 +294,7 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
         {
             UserCode = user.UserCode,
             PName = user.Name,
-            TimeGroup = user.TimeGroup,
+            TimeGroup = timeGroup,
         };
         if (user.ValidUntil is { } validUntil)
             person.Expiry = ToDeviceWallClock(validUntil);
@@ -379,13 +379,13 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
     /// gravados, de modo que o próprio dispositivo bloqueia o acesso após o vencimento — a gestão
     /// (criar/remover) é feita pelo sistema. Protocolo §8.1 (campos Validade e TimeGroup).
     /// </summary>
-    public async Task AddPersonWithoutFaceAsync(Controller controller, User user, CancellationToken ct = default)
+    public async Task AddPersonWithoutFaceAsync(Controller controller, User user, int timeGroup, CancellationToken ct = default)
     {
         var person = new PersonData
         {
             UserCode = user.UserCode,
             PName = user.Name,
-            TimeGroup = user.TimeGroup,
+            TimeGroup = timeGroup,
         };
         if (user.ValidUntil is { } validUntil)
             person.Expiry = ToDeviceWallClock(validUntil);

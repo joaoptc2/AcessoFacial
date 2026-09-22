@@ -83,7 +83,6 @@ public class UsersController : ControllerBase
                 u.Id,
                 u.UserCode,
                 u.Name,
-                u.TimeGroup,
                 u.GroupId,
                 GroupName = u.Group != null ? u.Group.Name : null,
                 u.CardNumber,
@@ -113,7 +112,6 @@ public class UsersController : ControllerBase
             user.Id,
             user.UserCode,
             user.Name,
-            user.TimeGroup,
             user.GroupId,
             GroupName = user.Group?.Name,
             user.CardNumber,
@@ -146,8 +144,6 @@ public class UsersController : ControllerBase
             return BadRequest("facePhoto é obrigatório.");
         if (!PersonNameRules.TryNormalize(request.Name, "O nome", out var name, out var nameError))
             return BadRequest(nameError);
-        if (request.TimeGroup is < 1 or > 64)
-            return BadRequest("TimeGroup deve estar entre 1 e 64.");
         if (request.GroupId is { } groupId && !await _db.UserGroups.AnyAsync(g => g.Id == groupId, ct))
             return BadRequest("Grupo não existe.");
 
@@ -167,7 +163,6 @@ public class UsersController : ControllerBase
             UserCode = nextCode,
             Name = name,
             Type = UserType.Permanent,
-            TimeGroup = request.TimeGroup,
             GroupId = request.GroupId,
             CardNumber = request.CardNumber,
             Document = NullIfBlank(request.Document),
@@ -188,7 +183,7 @@ public class UsersController : ControllerBase
 
         _db.Users.Add(user);
         // Portas efetivas = manuais pedidas ∪ portas herdadas do grupo (o serviço marca a origem).
-        await _groupAccess.ReconcileUserPermissionsAsync(user, request.ControllerIds ?? [], request.TimeGroup, ct);
+        await _groupAccess.ReconcileUserPermissionsAsync(user, request.ControllerIds ?? [], ct);
         UserAuditLogger.Record(_db, user, "Criado", CurrentUsername());
         await _db.SaveChangesAsync(ct);
 
@@ -211,8 +206,6 @@ public class UsersController : ControllerBase
 
         if (!PersonNameRules.TryNormalize(request.Name, "O nome", out var name, out var nameError))
             return BadRequest(nameError);
-        if (request.TimeGroup is < 1 or > 64)
-            return BadRequest("TimeGroup deve estar entre 1 e 64.");
         if (request.GroupId is { } groupId && !await _db.UserGroups.AnyAsync(g => g.Id == groupId, ct))
             return BadRequest("Grupo não existe.");
 
@@ -222,10 +215,9 @@ public class UsersController : ControllerBase
         // face só porque o valor gravado perdeu um espaço duplicado que veio no formulário.
         var hasNewPhoto = facePhoto is { Length: > 0 };
         var deviceFieldsChanged = UserDeviceFields.Changed(
-            user, name, request.TimeGroup, request.CardNumber, hasNewPhoto);
+            user, name, request.CardNumber, hasNewPhoto);
 
         user.Name = name;
-        user.TimeGroup = request.TimeGroup;
         user.GroupId = request.GroupId;
         user.CardNumber = request.CardNumber;
         user.Document = NullIfBlank(request.Document);
@@ -291,7 +283,7 @@ public class UsersController : ControllerBase
         }
 
         // Reconcilia as permissões (portas do grupo herdadas + extras manuais) marcando a origem.
-        await _groupAccess.ReconcileUserPermissionsAsync(user, desiredControllerIds, request.TimeGroup, ct);
+        await _groupAccess.ReconcileUserPermissionsAsync(user, desiredControllerIds, ct);
 
         UserAuditLogger.Record(_db, user, "Atualizado", CurrentUsername(),
             await BuildControllerChangeDetailsAsync(addedControllerIds, removedControllerIds, ct));

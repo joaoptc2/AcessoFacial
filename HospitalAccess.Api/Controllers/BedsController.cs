@@ -165,11 +165,16 @@ public class BedsController : ControllerBase
             Type = UserType.Visitor,
             ValidFrom = DateTime.UtcNow,
             ValidUntil = validUntil,
-            TimeGroup = Math.Clamp(_options.PatientTimeGroup, 1, 64),
             CreatedByUsername = CurrentUsername(),
             Notes = $"Paciente — leito {controller.Name} (gestão de leitos)",
         };
-        visitor.Permissions.Add(new AccessPermission { ControllerId = controllerId, TimeGroup = visitor.TimeGroup });
+                // Paciente nasce SEM restrição de horário: quem limita o acesso dele é a validade da
+        // internação, não uma grade. Horário por porta, se precisar, é definido na tela do usuário.
+        visitor.Permissions.Add(new AccessPermission
+        {
+            ControllerId = controllerId,
+            TimeGroup = TimeGroupAllocation.ReservedUnrestricted,
+        });
         _db.Users.Add(visitor);
 
         var stay = new BedStay
@@ -278,7 +283,6 @@ public class BedsController : ControllerBase
                             {
                                 UserId = visitor.Id,
                                 ControllerId = target.Id,
-                                TimeGroup = visitor.TimeGroup,
                             });
 
                         UserAuditLogger.Record(_db, visitor, "Transferido de leito", CurrentUsername(),
