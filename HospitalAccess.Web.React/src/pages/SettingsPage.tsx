@@ -327,7 +327,7 @@ export function SettingsPage() {
               <input
                 value={settings.homeAssistantWelcomeService}
                 onChange={(e) => patch({ homeAssistantWelcomeService: e.target.value })}
-                placeholder="script.boas_vindas_leito"
+                placeholder="script.BV_{quarto}"
               />
             </div>
             <div className="form-field" style={{ minWidth: 220 }}>
@@ -355,6 +355,15 @@ export function SettingsPage() {
               />
             </div>
           </div>
+          <p className="text-muted" style={{ fontSize: "0.85rem", margin: "0.35rem 0 0" }}>
+            <strong>Um script por quarto</strong>: escreva <code>{"{quarto}"}</code> no nome do serviço e
+            o sistema troca pelo campo <strong>"Quarto no Home Assistant"</strong> do controlador — com{" "}
+            <code>script.BV_{"{quarto}"}</code> e o quarto <code>14</code>, a chamada vai para{" "}
+            <code>script.BV_14</code>. A imagem de boas-vindas continua sendo enviada no payload
+            (<code>room</code>, <code>patient_name</code>, <code>welcome_image_url</code>). Sem{" "}
+            <code>{"{quarto}"}</code>, vale o comportamento antigo: um único script para todos os quartos.
+            Maiúsculas e minúsculas vão exatamente como escritas aqui.
+          </p>
           <p className="text-muted" style={{ fontSize: "0.85rem", margin: "0.35rem 0 0" }}>
             Com o serviço preenchido, a <strong>Gestão de Leitos</strong> ganha um botão
             {settings.homeAssistantEffective.extraActionLabel

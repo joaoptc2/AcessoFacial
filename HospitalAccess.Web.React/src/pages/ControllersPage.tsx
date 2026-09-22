@@ -503,10 +503,14 @@ export function ControllersPage() {
               <div className="form-field" style={{ minWidth: 160 }}>
                 <label>Quarto no Home Assistant</label>
                 <input
-                  placeholder="quarto_101"
+                  placeholder="14"
                   value={form.homeAssistantRoomId}
                   onChange={(e) => setForm({ ...form, homeAssistantRoomId: e.target.value })}
                 />
+                <span className="text-muted" style={{ fontSize: "0.78rem" }}>
+                  Com um script por quarto (script.BV_&#123;quarto&#125;), use só o número: 14 → script.BV_14.
+                  Apenas letras, dígitos, _ e -.
+                </span>
               </div>
             )}
             {form.isRoom && (

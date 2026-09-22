@@ -178,13 +178,31 @@ export function BedsPage() {
     }, "Falha ao registrar a alta.");
   }
 
+  /**
+   * Na prática é o TESTE da automação do quarto. Por isso o aviso nomeia o script chamado
+   * (script.BV_14): é com esse nome que se confere o que existe no Home Assistant, sem log.
+   */
   function replayWelcome(bed: BedDto) {
     run(async () => {
       const result = await api.replayWelcome(bed.controllerId);
-      toastSuccess(
-        result.homeAssistantCalled
-          ? `Boas-vindas reenviadas para a TV de ${bed.name}.`
-          : `Imagem regenerada${result.welcomeImageUrl ? "" : " (verifique a configuração da imagem base)"} — HA não foi chamado (verifique HomeAssistantRoomId/HomeAssistant:Enabled).`,
+      if (result.homeAssistantCalled) {
+        toastSuccess(
+          `Boas-vindas reenviadas para a TV de ${bed.name}` +
+            (result.service ? ` (${result.service}).` : "."),
+        );
+        return;
+      }
+      if (!result.service) {
+        setError(
+          `Não foi possível montar o nome do script para ${bed.name}. Confira o campo "Quarto no Home ` +
+            `Assistant" do controlador (só letras, dígitos, _ e -) e o serviço em Configurações.`,
+        );
+        return;
+      }
+      setError(
+        `A imagem foi gerada${result.welcomeImageUrl ? "" : " (verifique a imagem base em Configurações)"}, ` +
+          `mas o Home Assistant não executou ${result.service}. Confira se esse script existe no HA e se a ` +
+          `integração está ligada. Os Logs (Dev) trazem a resposta do HA.`,
       );
     }, "Falha ao reenviar boas-vindas.");
   }
@@ -193,7 +211,7 @@ export function BedsPage() {
   function extraAction(bed: BedDto) {
     run(async () => {
       const result = await api.bedExtraAction(bed.controllerId);
-      toastSuccess(`${result.label} — comando enviado a ${bed.name}.`);
+      toastSuccess(`${result.label} — ${result.service} enviado a ${bed.name}.`);
     }, "Falha ao acionar o quarto.");
   }
 

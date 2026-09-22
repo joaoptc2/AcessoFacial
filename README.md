@@ -378,7 +378,22 @@ por padrão): REST API do HA na mesma rede com long-lived access token (env
 `script.boas_vindas_leito`) com `{room, patient_name, welcome_image_url}`; na alta/transferência
 chama `ClearService` (opcional) com `{room}`; o botão da **ação extra** chama
 `ExtraActionService` com `{room}`. O `room` vem do campo **"Quarto no Home Assistant"** do
-cadastro do controlador (ex.: `quarto_101`). Toda chamada é **best-effort**:
+cadastro do controlador.
+
+**Um script por quarto**: escrever `{quarto}` no nome do serviço faz o sistema trocar o
+marcador pelo valor desse campo — com `script.BV_{quarto}` e o quarto `14`, a chamada vai para
+`script.BV_14`, e o payload continua o mesmo (`room`, `patient_name`, `welcome_image_url`).
+Serve para os três serviços (boas-vindas, limpar TV, ação extra). **Sem** `{quarto}`, vale o
+comportamento original: um único script para todos os quartos, que recebe o quarto no payload —
+quem já estava configurado assim não precisa mexer em nada.
+
+A **caixa é preservada letra por letra** (`script.BV_14`, não `script.bv_14`): o `entity_id` do
+HA costuma ser minúsculo, mas quem configura é quem sabe como os scripts da casa foram criados,
+e normalizar aqui trocaria um "serviço não encontrado" claro por um mistério. Com `{quarto}`, o
+valor do campo precisa caber num `entity_id` — só letras, dígitos, `_` e `-`; "Quarto 101"
+produziria `script.BV_Quarto 101`, que o HA recusa, então o sistema **não chama** e loga o
+motivo em vez de falhar em silêncio. O botão **"Reexibir boas-vindas"** devolve o serviço que
+foi chamado (`script.BV_14`), o que o torna, na prática, o teste da automação do quarto. Toda chamada é **best-effort**:
 falha loga Warning (visível em Logs (Dev)) e nunca bloqueia o fluxo de internação. Exemplo de
 script no HA e instruções do token estão comentados no `appsettings.example.json`.
 

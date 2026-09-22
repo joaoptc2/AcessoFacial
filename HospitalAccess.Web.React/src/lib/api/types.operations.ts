@@ -197,6 +197,12 @@ export interface BedActionResult {
   userCode?: number;
   welcomeImageUrl: string | null;
   homeAssistantCalled: boolean;
+  /**
+   * Serviço do HA efetivamente chamado, já com o quarto resolvido (ex.: "script.BV_14").
+   * Só vem em "reexibir boas-vindas", que é o botão de teste da automação do quarto.
+   * Null = não foi possível montar o nome (quarto em branco ou fora do formato).
+   */
+  service?: string | null;
 }
 
 // ---- Logs de desenvolvimento (Admin) ----
