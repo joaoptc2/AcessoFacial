@@ -34,26 +34,6 @@ export interface HolidayRequest {
   holidayType: number;
 }
 
-export interface TimeGroupSegmentDto {
-  weekday: number;
-  segmentIndex: number;
-  beginTime: string;
-  endTime: string;
-}
-
-export interface TimeGroupScheduleDto {
-  id: string;
-  groupNumber: number;
-  name: string;
-  segments: TimeGroupSegmentDto[];
-}
-
-export interface TimeGroupScheduleRequest {
-  groupNumber: number;
-  name: string;
-  segments: TimeGroupSegmentDto[];
-}
-
 export interface ControllerStatusItem {
   id: string;
   name: string;
@@ -276,4 +256,22 @@ export interface TvStatusDto {
   focus: string | null;
   /** Saída literal do adb quando algo falha — é ela que aponta a correção certa. */
   detail: string | null;
+}
+
+/** Uma janela de horário: dia da semana (0 = segunda … 6 = domingo) e as duas horas em HH:MM. */
+export interface ScheduleWindowDto {
+  weekday: number;
+  begin: string;
+  end: string;
+}
+
+/** Horário de um usuário numa porta. O número da grade é detalhe do aparelho. */
+export interface DoorScheduleDto {
+  controllerId: string;
+  controllerName: string;
+  timeGroup: number;
+  /** Sem restrição: o dia inteiro, todos os dias. É o padrão de quem não definiu horário. */
+  unrestricted: boolean;
+  label: string;
+  windows: ScheduleWindowDto[];
 }

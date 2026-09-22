@@ -5,7 +5,7 @@
 import { buildQuery, request, requestBlob } from "./http";
 import type { AlarmSettings, ControllerDetailDto, ControllerDto, ControllerNetworkInfo, CreateControllerRequest, DiscoveredController, EventPhotoListItem, KioskSettings, PersonnelAudit, PersonnelAuditSnapshot, RelocateResult, SyncOverviewDto, SyncStatusDto, UpdateControllerRequest } from "./types.controllers";
 import type { CreateVisitorRequest, LoginResponse, StaffRole, StaffUserDto, UserAccessReport, UserAuditLogEntry, UserDetailDto, UserGroupDto, UserGroupRequest, UserListPage, VisitorListItemDto } from "./types.people";
-import type { AccessLogPage, AlarmEventPage, BackupFileDto, BackupListDto, BedActionResult, BedDto, BedHistoryPage, DashboardDto, DevLogsResponse, EmergencyResultDto, HolidayDto, HolidayRequest, SystemSettingsDto, TimeGroupScheduleDto, TimeGroupScheduleRequest, TvStatusDto, UpdateSettingsRequest } from "./types.operations";
+import type { AccessLogPage, DoorScheduleDto, ScheduleWindowDto, AlarmEventPage, BackupFileDto, BackupListDto, BedActionResult, BedDto, BedHistoryPage, DashboardDto, DevLogsResponse, EmergencyResultDto, HolidayDto, HolidayRequest, SystemSettingsDto, TvStatusDto, UpdateSettingsRequest } from "./types.operations";
 
 export const api = {
   login: (username: string, password: string) =>
@@ -152,14 +152,6 @@ export const api = {
   deleteHoliday: (id: string) => request<void>(`/holidays/${id}`, { method: "DELETE" }),
   syncAllHolidays: () => request<{ controllerCount: number }>("/holidays/sync-all", { method: "POST" }),
 
-  // ---- Grade horária ----
-  getTimeGroups: () => request<TimeGroupScheduleDto[]>("/timegroups"),
-  createTimeGroup: (body: TimeGroupScheduleRequest) =>
-    request<{ id: string }>("/timegroups", { method: "POST", body: JSON.stringify(body) }),
-  updateTimeGroup: (id: string, body: TimeGroupScheduleRequest) =>
-    request<void>(`/timegroups/${id}`, { method: "PUT", body: JSON.stringify(body) }),
-  deleteTimeGroup: (id: string) => request<void>(`/timegroups/${id}`, { method: "DELETE" }),
-  syncAllTimeGroups: () => request<{ controllerCount: number }>("/timegroups/sync-all", { method: "POST" }),
 
   // ---- Log de acessos ----
   queryAccessLog: (params: {
@@ -239,6 +231,15 @@ export const api = {
     request<void>(`/tv/${controllerId}/apps/${pkg}/clear`, { method: "POST" }),
   suspendTvApp: (controllerId: string, pkg: string, suspended: boolean) =>
     request<void>(`/tv/${controllerId}/apps/${pkg}/suspend`, { method: "POST", body: JSON.stringify({ suspended }) }),
+
+  // ---- Horário por porta (substituiu a grade global) ----
+  // O número da grade no aparelho é escolhido pelo sistema; a tela informa só as janelas.
+  getUserSchedules: (userId: string) => request<DoorScheduleDto[]>(`/users/${userId}/schedules`),
+  setUserSchedule: (userId: string, controllerId: string, windows: ScheduleWindowDto[]) =>
+    request<{ timeGroup: number; reused: boolean; pushed: boolean }>(`/users/${userId}/schedules/${controllerId}`, {
+      method: "PUT",
+      body: JSON.stringify({ windows }),
+    }),
 
   getBeds: () => request<BedDto[]>("/beds"),
   getBedHistory: (params: { controllerId?: string; page: number; pageSize: number }) =>

@@ -15,7 +15,6 @@ interface UserFormProps {
 
 interface FormModel {
   name: string;
-  timeGroup: number;
   groupId: string;
   cardNumber: string;
   document: string;
@@ -28,7 +27,6 @@ interface FormModel {
 
 const emptyForm: FormModel = {
   name: "",
-  timeGroup: 1,
   groupId: "",
   cardNumber: "",
   document: "",
@@ -62,7 +60,6 @@ export function UserForm({ mode, userId, groups, controllers, onSaved, onCancel 
         if (!active) return;
         setForm({
           name: detail.name,
-          timeGroup: detail.timeGroup,
           groupId: detail.groupId ?? "",
           cardNumber: detail.cardNumber?.toString() ?? "",
           document: detail.document ?? "",
@@ -140,10 +137,6 @@ export function UserForm({ mode, userId, groups, controllers, onSaved, onCancel 
       setError("Selecione uma foto de face.");
       return;
     }
-    if (form.timeGroup < 1 || form.timeGroup > 64) {
-      setError("Grupo de horário deve estar entre 1 e 64.");
-      return;
-    }
     let cardNumber: number | null = null;
     if (form.cardNumber.trim()) {
       const parsed = Number(form.cardNumber);
@@ -157,7 +150,6 @@ export function UserForm({ mode, userId, groups, controllers, onSaved, onCancel 
     setBusy(true);
     const formData = new FormData();
     formData.append("Name", form.name);
-    formData.append("TimeGroup", String(form.timeGroup));
     if (form.groupId) formData.append("GroupId", form.groupId);
     if (cardNumber !== null) formData.append("CardNumber", String(cardNumber));
     // Campos de perfil (só envia os preenchidos; ausente = limpo no servidor).
@@ -195,16 +187,6 @@ export function UserForm({ mode, userId, groups, controllers, onSaved, onCancel 
         <div className="form-field" style={{ flex: "2 1 240px" }}>
           <label>Nome</label>
           <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
-        </div>
-        <div className="form-field">
-          <label>Grupo de horário (1-64)</label>
-          <input
-            type="number"
-            min={1}
-            max={64}
-            value={form.timeGroup}
-            onChange={(e) => setForm({ ...form, timeGroup: Number(e.target.value) })}
-          />
         </div>
         <div className="form-field">
           <label>Grupo organizacional</label>

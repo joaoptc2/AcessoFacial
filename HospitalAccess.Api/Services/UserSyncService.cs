@@ -178,13 +178,22 @@ public sealed class UserSyncService : IUserSyncService
             _db.SyncStatuses.Add(status);
         }
 
+        // A grade de horário É DA PORTA: vem da permissão do usuário neste controlador, não do
+        // cadastro global. Sem permissão (caso que não deveria existir aqui), cai na grade
+        // reservada — sem restrição — em vez de num número qualquer, que no aparelho significaria
+        // "sempre fechado".
+        var timeGroup = await _db.Permissions
+            .Where(p => p.UserId == user.Id && p.ControllerId == controllerId)
+            .Select(p => (int?)p.TimeGroup)
+            .FirstOrDefaultAsync(ct) ?? TimeGroupAllocation.ReservedUnrestricted;
+
         try
         {
             if (user.Type == UserType.Visitor)
             {
                 // Visitante: pessoa sem face, com validade nativa (Person.Expiry) — o controlador
                 // valida o vencimento offline; o QR carrega o código.
-                await _gateway.AddPersonWithoutFaceAsync(controller, user, ct);
+                await _gateway.AddPersonWithoutFaceAsync(controller, user, timeGroup, ct);
                 status.State = SyncState.Synced;
                 status.LastError = null;
                 status.ConflictUserCode = null;
@@ -195,7 +204,7 @@ public sealed class UserSyncService : IUserSyncService
             }
             else
             {
-                var result = await _gateway.AddPersonWithFaceAsync(controller, user, user.FacePhoto!, ct);
+                var result = await _gateway.AddPersonWithFaceAsync(controller, user, user.FacePhoto!, timeGroup, ct);
                 status.State = result.Success ? SyncState.Synced : SyncState.Failed;
                 status.LastError = result.Success ? null : result.Message;
                 // Guarda o código do conflito só quando é duplicidade de face — a UI usa para

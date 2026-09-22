@@ -21,7 +21,6 @@ export function VisitorsPage() {
   const [controllers, setControllers] = useState<ControllerDto[]>([]);
   const [name, setName] = useState("");
   const [validUntil, setValidUntil] = useState(() => toLocalInputValue(new Date(Date.now() + 24 * 60 * 60 * 1000)));
-  const [timeGroup, setTimeGroup] = useState(1);
   const [selectedRoom, setSelectedRoom] = useState<string>("");
   const [changingRoomId, setChangingRoomId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -79,10 +78,6 @@ export function VisitorsPage() {
       setError("Validade deve ser no futuro.");
       return;
     }
-    if (timeGroup < 1 || timeGroup > 64) {
-      setError("Grupo de horário deve estar entre 1 e 64.");
-      return;
-    }
     if (!selectedRoom) {
       setError("Selecione o quarto (porta) do visitante.");
       return;
@@ -93,7 +88,6 @@ export function VisitorsPage() {
       const created = await api.createVisitor({
         name,
         validUntil: validUntilDate.toISOString(),
-        timeGroup,
         controllerIds: [selectedRoom],
       });
       await showQr(created.id, name);
@@ -159,10 +153,6 @@ export function VisitorsPage() {
         <div className="form-field" style={{ marginBottom: "0.75rem" }}>
           <label>Válido até</label>
           <input type="datetime-local" value={validUntil} onChange={(e) => setValidUntil(e.target.value)} required />
-        </div>
-        <div className="form-field" style={{ marginBottom: "0.75rem" }}>
-          <label>Grupo de horário (1-64)</label>
-          <input type="number" value={timeGroup} onChange={(e) => setTimeGroup(Number(e.target.value))} />
         </div>
         <div className="form-field" style={{ marginBottom: "0.75rem" }}>
           <label>Quarto (porta)</label>

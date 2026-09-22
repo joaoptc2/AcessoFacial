@@ -29,7 +29,6 @@ export interface UserListItemDto {
   id: string;
   userCode: number;
   name: string;
-  timeGroup: number;
   groupId: string | null;
   groupName: string | null;
   cardNumber: number | null;
@@ -66,7 +65,6 @@ export interface UserDetailDto extends UserProfileFields {
   id: string;
   userCode: number;
   name: string;
-  timeGroup: number;
   groupId: string | null;
   groupName: string | null;
   cardNumber: number | null;
@@ -119,7 +117,6 @@ export interface VisitorListItemDto {
   name: string;
   validFrom: string | null;
   validUntil: string | null;
-  timeGroup: number;
   createdByUsername: string | null;
   createdAtUtc: string;
   revokedAtUtc: string | null;
@@ -135,7 +132,6 @@ export interface VisitorListItemDto {
 export interface CreateVisitorRequest {
   name: string;
   validUntil: string;
-  timeGroup: number;
   controllerIds?: string[];
 }
 

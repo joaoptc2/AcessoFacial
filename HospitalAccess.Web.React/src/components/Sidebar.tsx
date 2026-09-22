@@ -38,7 +38,6 @@ const GRUPOS: { titulo: string | null; adminOnly?: boolean; itens: NavItem[] }[]
       { to: "/usergroups", label: "Grupos de Usuários", icon: "group" },
       { to: "/visitors", label: "Visitantes / Temporários", icon: "visitor" },
       { to: "/beds", label: "Gestão de Leitos", icon: "bed" },
-      { to: "/timegroups", label: "Grade Horária", icon: "clock" },
     ],
   },
   {

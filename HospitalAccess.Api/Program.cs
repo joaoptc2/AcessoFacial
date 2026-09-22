@@ -170,6 +170,10 @@ builder.Services.AddSingleton<WelcomeImageService>();
 builder.Services.Configure<TvOptions>(builder.Configuration.GetSection(TvOptions.SectionName));
 builder.Services.AddSingleton<AdbClient>();
 
+// Grades de horário por controladora: aloca as 64 posições do aparelho, libera as órfãs e
+// reescreve a tabela. Scoped porque usa o DbContext.
+builder.Services.AddScoped<ControllerTimeGroupService>();
+
 // Reprocessa sincronizações pendentes/falhas: reenfileira na fila serial (não processa em paralelo).
 // O heartbeat guarda a última varredura — a tela de Sincronizações usa como prova de vida.
 builder.Services.AddSingleton<SyncScanHeartbeat>();

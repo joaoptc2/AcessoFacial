@@ -12,9 +12,8 @@ namespace HospitalAccess.Api.Services;
 public static class UserDeviceFields
 {
     /// <summary>Compare ANTES de aplicar a edição na entidade (senão nunca há diferença).</summary>
-    public static bool Changed(User current, string newName, int newTimeGroup, uint? newCardNumber, bool hasNewPhoto) =>
+    public static bool Changed(User current, string newName, uint? newCardNumber, bool hasNewPhoto) =>
         hasNewPhoto
         || current.Name != newName
-        || current.TimeGroup != newTimeGroup
         || current.CardNumber != newCardNumber;
 }

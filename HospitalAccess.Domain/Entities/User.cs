@@ -36,9 +36,6 @@ public class User
     public DateTime? ValidFrom { get; set; }
     public DateTime? ValidUntil { get; set; }
 
-    /// <summary>Grupo de horário no dispositivo (1-64). Restringir para visitantes.</summary>
-    public int TimeGroup { get; set; } = 1;
-
     /// <summary>Foto de face (JPG). Convertida p/ 480x640 / <=120KB antes do upload.</summary>
     public byte[]? FacePhoto { get; set; }
 

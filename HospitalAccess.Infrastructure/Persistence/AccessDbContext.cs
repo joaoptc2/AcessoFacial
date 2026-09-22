@@ -40,8 +40,8 @@ public class AccessDbContext : DbContext
     public DbSet<AlarmEvent> AlarmEvents => Set<AlarmEvent>();
     public DbSet<EventPhoto> EventPhotos => Set<EventPhoto>();
     public DbSet<Holiday> Holidays => Set<Holiday>();
-    public DbSet<TimeGroupSchedule> TimeGroupSchedules => Set<TimeGroupSchedule>();
-    public DbSet<TimeGroupSegment> TimeGroupSegments => Set<TimeGroupSegment>();
+    public DbSet<ControllerTimeGroup> ControllerTimeGroups => Set<ControllerTimeGroup>();
+    public DbSet<ControllerTimeGroupSegment> ControllerTimeGroupSegments => Set<ControllerTimeGroupSegment>();
     public DbSet<SystemSettings> SystemSettings => Set<SystemSettings>();
     public DbSet<BedStay> BedStays => Set<BedStay>();
 
@@ -149,14 +149,26 @@ public class AccessDbContext : DbContext
 
         b.Entity<Holiday>().HasIndex(h => h.Index).IsUnique();
 
-        b.Entity<TimeGroupSchedule>().HasIndex(t => t.GroupNumber).IsUnique();
-        b.Entity<TimeGroupSegment>()
-            .HasOne(s => s.Schedule)
-            .WithMany(t => t.Segments)
-            .HasForeignKey(s => s.TimeGroupScheduleId)
+        // Grades de horário POR CONTROLADORA (antes eram globais). O número só é único dentro
+        // de um aparelho — a grade 7 da Ala Norte não tem relação com a grade 7 da Recepção.
+        b.Entity<ControllerTimeGroup>()
+            .HasIndex(t => new { t.ControllerId, t.GroupNumber }).IsUnique();
+        // Busca por conteúdo: é ela que faz o reaproveitamento custar um índice, não uma varredura.
+        b.Entity<ControllerTimeGroup>()
+            .HasIndex(t => new { t.ControllerId, t.ContentHash });
+        b.Entity<ControllerTimeGroup>()
+            .HasOne(t => t.Controller)
+            .WithMany()
+            .HasForeignKey(t => t.ControllerId)
             .OnDelete(DeleteBehavior.Cascade);
-        b.Entity<TimeGroupSegment>()
-            .HasIndex(s => new { s.TimeGroupScheduleId, s.Weekday, s.SegmentIndex }).IsUnique();
+
+        b.Entity<ControllerTimeGroupSegment>()
+            .HasOne(s => s.Group)
+            .WithMany(t => t.Segments)
+            .HasForeignKey(s => s.ControllerTimeGroupId)
+            .OnDelete(DeleteBehavior.Cascade);
+        b.Entity<ControllerTimeGroupSegment>()
+            .HasIndex(s => new { s.ControllerTimeGroupId, s.Weekday, s.SegmentIndex }).IsUnique();
 
         // Todas as colunas de data são timestamptz (UTC). O Npgsql rejeita DateTime com Kind
         // Unspecified/Local; este conversor global normaliza a escrita para UTC e marca a leitura

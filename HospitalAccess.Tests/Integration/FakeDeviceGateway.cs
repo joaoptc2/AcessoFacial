@@ -37,7 +37,7 @@ public sealed class FakeDeviceGateway : IDeviceGateway
     /// <summary>Controladores cuja REMOÇÃO deve lançar (revogação que não chega ao aparelho).</summary>
     public ConcurrentDictionary<Guid, string> ThrowingOnDelete { get; } = new();
 
-    public Task<AddFaceResult> AddPersonWithFaceAsync(Controller controller, User user, byte[] faceJpg, CancellationToken ct = default)
+    public Task<AddFaceResult> AddPersonWithFaceAsync(Controller controller, User user, byte[] faceJpg, int timeGroup, CancellationToken ct = default)
     {
         if (ThrowingControllers.TryGetValue(controller.Id, out var message))
             throw new DeviceCommandException(message);
@@ -48,7 +48,7 @@ public sealed class FakeDeviceGateway : IDeviceGateway
             : new AddFaceResult(true, FaceUploadCode.Ok, null));
     }
 
-    public Task AddPersonWithoutFaceAsync(Controller controller, User user, CancellationToken ct = default)
+    public Task AddPersonWithoutFaceAsync(Controller controller, User user, int timeGroup, CancellationToken ct = default)
     {
         if (ThrowingControllers.TryGetValue(controller.Id, out var message))
             throw new DeviceCommandException(message);

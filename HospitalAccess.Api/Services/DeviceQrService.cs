@@ -56,7 +56,14 @@ public sealed class DeviceQrService
         {
             try
             {
-                var result = await ReadOrProvisionAsync(controller, user, ct);
+                // Grade da porta: a permissão do usuário NESTE controlador. Sem permissão
+                // explícita, sem restrição — nunca um número qualquer, que no aparelho seria
+                // "sempre fechado".
+                var timeGroup = user.Permissions
+                    .FirstOrDefault(p => p.ControllerId == controller.Id)?.TimeGroup
+                    ?? TimeGroupAllocation.ReservedUnrestricted;
+
+                var result = await ReadOrProvisionAsync(controller, user, timeGroup, ct);
                 if (result != null) return result;
             }
             catch (DeviceHttpException ex)
@@ -98,7 +105,7 @@ public sealed class DeviceQrService
         }
     }
 
-    private async Task<DeviceQrResult?> ReadOrProvisionAsync(Controller controller, User user, CancellationToken ct)
+    private async Task<DeviceQrResult?> ReadOrProvisionAsync(Controller controller, User user, int timeGroup, CancellationToken ct)
     {
         var userId = user.UserCode.ToString();
         await using var client = _factory.Create(controller);
@@ -111,7 +118,7 @@ public sealed class DeviceQrService
         // Sem cadastro (ou sem QRCode): provisiona via People/New (o firmware cunha o QRCode) e relê.
         if (string.IsNullOrEmpty(qr))
         {
-            var peopleJson = BuildVisitorPeopleJson(user);
+            var peopleJson = BuildVisitorPeopleJson(user, timeGroup);
             await client.AddOrUpdateUserAsync(peopleJson, photoBytes: null, ct: ct);
             provisioned = true;
             detail = await client.GetUserDetailAsync(userId, ct);
@@ -129,7 +136,7 @@ public sealed class DeviceQrService
     }
 
     /// <summary>Monta o PeopleJson de um visitante (sem foto/face). ExpirationDate em unix seconds (UTC absoluto), clampado.</summary>
-    private static Dictionary<string, object> BuildVisitorPeopleJson(User user)
+    private static Dictionary<string, object> BuildVisitorPeopleJson(User user, int timeGroup)
     {
         var expUnix = ClampExpiration(user.ValidUntil);
         var code = user.UserCode.ToString();
@@ -143,7 +150,10 @@ public sealed class DeviceQrService
             ["IdentityCard"] = "",
             ["CardNum"] = user.CardNumber?.ToString() ?? "0",
             ["Password"] = "",
-            ["Timegroup"] = user.TimeGroup < 1 ? 1 : user.TimeGroup,
+            // Grade da PORTA (a permissão do usuário neste controlador), não a do cadastro:
+            // é o mesmo valor que o SDK envia, e divergir aqui daria horários diferentes
+            // conforme o caminho usado para cadastrar a pessoa.
+            ["Timegroup"] = timeGroup,
             ["ExpirationDate"] = expUnix,
             ["AccessType"] = 0,
             ["OpenTimes"] = 65535,

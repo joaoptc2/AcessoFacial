@@ -12,7 +12,9 @@ namespace HospitalAccess.Api.Controllers;
 
 // Name anulável de propósito — ver a nota em CreateUserRequest: garante que a mensagem de erro
 // venha do PersonNameRules (português, acionável) e não da validação automática do framework.
-public record CreateVisitorRequest(string? Name, DateTime ValidUntil, int TimeGroup, Guid[]? ControllerIds = null);
+// A grade de horário saiu daqui: ela passou a ser POR PORTA e é definida na tela do usuário,
+// depois de criado. Um visitante nasce sem restrição — o que limita o acesso dele é a validade.
+public record CreateVisitorRequest(string? Name, DateTime ValidUntil, Guid[]? ControllerIds = null);
 
 /// <summary>Texto do QRCode copiado da controladora, para renderizar um PNG imprimível.</summary>
 public record RenderQrRequest(string Text);
@@ -58,7 +60,6 @@ public class VisitorsController : ControllerBase
                 u.Name,
                 u.ValidFrom,
                 u.ValidUntil,
-                u.TimeGroup,
                 u.CreatedByUsername,
                 u.CreatedAtUtc,
                 u.RevokedAtUtc,
@@ -141,8 +142,6 @@ public class VisitorsController : ControllerBase
         var validUntil = ToUtc(request.ValidUntil);
         if (validUntil <= DateTime.UtcNow)
             return BadRequest("ValidUntil deve ser no futuro.");
-        if (request.TimeGroup is < 1 or > 64)
-            return BadRequest("TimeGroup deve estar entre 1 e 64.");
 
         // Gestão de leitos: o temporário fica em UM quarto (uma porta). O QR é cunhado por aparelho,
         // então cadastrar em várias portas geraria QRs diferentes por porta — sem sentido para um
@@ -163,7 +162,6 @@ public class VisitorsController : ControllerBase
             Type = UserType.Visitor,
             ValidFrom = DateTime.UtcNow,
             ValidUntil = validUntil,
-            TimeGroup = request.TimeGroup,
             CreatedByUsername = User.Identity?.Name,
         };
 
@@ -173,7 +171,7 @@ public class VisitorsController : ControllerBase
         {
             if (!await _db.Controllers.AnyAsync(c => c.Id == controllerId, ct))
                 return BadRequest($"Controlador {controllerId} não existe.");
-            visitor.Permissions.Add(new AccessPermission { ControllerId = controllerId, TimeGroup = request.TimeGroup });
+            visitor.Permissions.Add(new AccessPermission { ControllerId = controllerId, TimeGroup = TimeGroupAllocation.ReservedUnrestricted });
         }
 
         _db.Users.Add(visitor);
@@ -224,7 +222,6 @@ public class VisitorsController : ControllerBase
             {
                 UserId = visitor.Id,
                 ControllerId = request.ControllerId,
-                TimeGroup = visitor.TimeGroup,
             });
 
         UserAuditLogger.Record(_db, visitor, "Quarto alterado", User.Identity?.Name);
