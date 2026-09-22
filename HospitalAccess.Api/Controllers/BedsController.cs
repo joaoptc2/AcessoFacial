@@ -71,6 +71,11 @@ public class BedsController : ControllerBase
             .Where(c => c.IsRoom)
             .OrderBy(c => c.Name)
             .ToListAsync(ct);
+        // Ação extra (ex.: frigobar): o botão só aparece no leito que TEM quarto do HA e com a
+        // integração pronta — senão o clique só produziria um erro.
+        var ha = _settings.HomeAssistant;
+        var extraLabel = ha.Ready && ha.HasExtraAction ? ha.ExtraActionLabel : null;
+
         var beds = controllers.Select(c =>
         {
             stayByController.TryGetValue(c.Id, out var stay);
@@ -92,6 +97,8 @@ public class BedsController : ControllerBase
                 StartedAtUtc = stay?.StartedAtUtc,
                 VisitorUserId = stay?.VisitorUserId,
                 AccessSyncState = syncState,
+                // Null = sem botão de ação extra neste leito.
+                ExtraActionLabel = string.IsNullOrWhiteSpace(c.HomeAssistantRoomId) ? null : extraLabel,
             };
         });
 
@@ -398,6 +405,37 @@ public class BedsController : ControllerBase
         if (controller is not null) await TriggerClearAsync(controller, CancellationToken.None);
 
         return NoContent();
+    }
+
+    /// <summary>
+    /// Dispara a AÇÃO EXTRA configurada do quarto (ex.: abrir o frigobar) — um serviço do Home
+    /// Assistant à escolha do hospital, definido em Configurações. Diferente das boas-vindas,
+    /// aqui a falha NÃO é silenciosa: o botão é um comando do operador, então cada motivo de
+    /// não-execução vira uma mensagem acionável.
+    /// </summary>
+    [HttpPost("{controllerId:guid}/extra-action")]
+    public async Task<IActionResult> ExtraAction(Guid controllerId, CancellationToken ct)
+    {
+        var ha = _settings.HomeAssistant;
+        if (!ha.HasExtraAction)
+            return BadRequest("Nenhuma ação extra configurada. Defina o serviço em Configurações → Home Assistant.");
+        if (!ha.Ready)
+            return BadRequest("A integração com o Home Assistant está desligada ou incompleta (Configurações → Home Assistant).");
+
+        var controller = await _db.Controllers.AsNoTracking().FirstOrDefaultAsync(c => c.Id == controllerId, ct);
+        if (controller is null) return NotFound("Leito (controlador) não existe.");
+        if (string.IsNullOrWhiteSpace(controller.HomeAssistantRoomId))
+            return BadRequest($"O leito {controller.Name} não tem o quarto do Home Assistant definido (edite-o na tela de controladores).");
+
+        var ok = await _ha.CallServiceAsync(ha.ExtraActionService,
+            HomeAssistantPayload.Room(controller.HomeAssistantRoomId), ct);
+        if (!ok)
+            return StatusCode(StatusCodes.Status502BadGateway,
+                $"O Home Assistant não executou \"{ha.ExtraActionService}\" no quarto {controller.HomeAssistantRoomId}. Veja os Logs (Dev) para o motivo.");
+
+        _logger.LogInformation("Ação extra {Service} disparada no leito {Controller} por {User}.",
+            ha.ExtraActionService, controller.Name, CurrentUsername());
+        return Ok(new { label = ha.ExtraActionLabel, room = controller.HomeAssistantRoomId });
     }
 
     /// <summary>Regenera o JPG e re-dispara as boas-vindas no HA (para a TV que perdeu o evento).</summary>

@@ -734,6 +734,15 @@ input[type="radio"] {
   white-space: nowrap;
 }
 
+/* Etiqueta que carrega um IDENTIFICADOR (id de quarto no HA, IP): tem que sair na tela
+   exatamente como está configurado — versalete mudaria o que a pessoa vai comparar. */
+.tag.is-literal {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 600;
+  font-size: 0.7rem;
+}
+
 .divider {
   height: 1px;
   background: var(--border-color);
@@ -1276,6 +1285,144 @@ tr.row-active > td {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* ============================================================
+   GESTÃO DE LEITOS
+   Um cartão por leito: o estado (livre/ocupado) é a primeira coisa
+   que se lê — cor da faixa superior, pílula e nome do paciente —
+   e as ações ficam no rodapé do próprio leito, nunca numa linha de
+   tabela apertada.
+   ============================================================ */
+
+.bed-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-4);
+}
+
+.bed-search {
+  flex: 1 1 220px;
+  max-width: 320px;
+}
+
+.bed-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+  /* start, não stretch: um leito livre tem metade do conteúdo de um ocupado e esticá-lo
+     até a altura da linha deixaria um vazio maior que o próprio cartão. */
+  align-items: start;
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
+}
+
+.bed-card {
+  background: var(--surface);
+  border: 1px solid var(--border-color);
+  border-top: 3px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-card);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.bed-card.is-free {
+  border-top-color: var(--success);
+}
+
+.bed-card.is-occupied {
+  border-top-color: var(--warning);
+}
+
+.bed-card-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.bed-card-head .bed-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bed-card-head .pill {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.bed-card-body {
+  padding: var(--space-4);
+  min-width: 0;
+}
+
+.bed-patient {
+  font-size: 1.05rem;
+  font-weight: 600;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.bed-patient.is-empty {
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.bed-meta {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  margin-top: 0.15rem;
+}
+
+.bed-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-top: var(--space-3);
+}
+
+/* Rodapé de ações: a linha principal em cima, as auxiliares embaixo. */
+.bed-card-foot {
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--border-color);
+  background: var(--surface-alt);
+  border-radius: 0 0 var(--radius) var(--radius);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.bed-card-foot .btn-group {
+  flex-wrap: wrap;
+}
+
+.bed-card-foot .btn {
+  flex: 1 1 auto;
+  justify-content: center;
+}
+
+/* Formulário embutido no cartão (internar / transferir). */
+.bed-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.bed-form input,
+.bed-form select {
+  width: 100%;
+}
+
+.bed-form label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
 }
 
 /* ============================================================

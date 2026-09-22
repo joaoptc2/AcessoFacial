@@ -143,6 +143,8 @@ export function SettingsPage() {
         clearHomeAssistantToken: clearHaToken,
         homeAssistantWelcomeService: settings.homeAssistantWelcomeService,
         homeAssistantClearService: settings.homeAssistantClearService,
+        homeAssistantExtraActionService: settings.homeAssistantExtraActionService,
+        homeAssistantExtraActionLabel: settings.homeAssistantExtraActionLabel,
         welcomeBaseImagePath: settings.welcomeBaseImagePath,
         welcomePublicBaseUrl: settings.welcomePublicBaseUrl,
         welcomeTextY: settings.welcomeTextY === null ? "" : String(settings.welcomeTextY),
@@ -336,7 +338,30 @@ export function SettingsPage() {
                 placeholder="script.limpar_tv_leito"
               />
             </div>
+            <div className="form-field" style={{ minWidth: 220 }}>
+              <label>Ação extra do quarto — serviço</label>
+              <input
+                value={settings.homeAssistantExtraActionService}
+                onChange={(e) => patch({ homeAssistantExtraActionService: e.target.value })}
+                placeholder="script.abrir_frigobar"
+              />
+            </div>
+            <div className="form-field" style={{ minWidth: 220 }}>
+              <label>Ação extra do quarto — rótulo do botão</label>
+              <input
+                value={settings.homeAssistantExtraActionLabel}
+                onChange={(e) => patch({ homeAssistantExtraActionLabel: e.target.value })}
+                placeholder={settings.homeAssistantEffective.extraActionLabel || "Abrir frigobar"}
+              />
+            </div>
           </div>
+          <p className="text-muted" style={{ fontSize: "0.85rem", margin: "0.35rem 0 0" }}>
+            Com o serviço preenchido, a <strong>Gestão de Leitos</strong> ganha um botão
+            {settings.homeAssistantEffective.extraActionLabel
+              ? ` "${settings.homeAssistantEffective.extraActionLabel}"`
+              : " extra"}{" "}
+            em cada quarto integrado ao Home Assistant. Vazio = sem botão.
+          </p>
           <div className="btn-group" style={{ marginTop: "0.5rem" }}>
             <button type="button" className="btn btn-outline btn-sm" onClick={testHomeAssistant} disabled={testingHa}>
               {testingHa ? "Testando…" : "Testar conexão"}

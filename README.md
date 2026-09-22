@@ -353,6 +353,13 @@ Fluxos (`BedsController`, rota `api/beds`):
 - **Alta** (`POST .../discharge`): encerra a internação (motivo Discharge) e revoga o acesso.
 - **Reexibir boas-vindas** (`POST .../replay-welcome`): regenera o JPG e re-chama o HA (para a
   TV que perdeu o evento).
+- **Ação extra do quarto** (`POST .../extra-action`): dispara um serviço do HA **à escolha do
+  hospital** (ex.: `script.abrir_frigobar`) com `{room}`. Configurado em **Configurações → Home
+  Assistant** (serviço + rótulo do botão); com o serviço vazio, o botão simplesmente não existe.
+  O botão aparece em cada leito **com "Quarto no Home Assistant" preenchido**, ocupado ou não —
+  é uma ação do quarto, não da internação. Diferente das boas-vindas, aqui a falha **não** é
+  silenciosa: sem serviço, sem quarto do HA ou com o HA recusando, o operador recebe a mensagem
+  do motivo (o botão é um comando, e comando sem retorno é pior que botão nenhum).
 
 **Tela de boas-vindas (JPG)**: o `WelcomeImageService` parte da **imagem base** do hospital
 (`BedManagement:WelcomeBaseImagePath`), desenha o nome do paciente na posição configurada
@@ -369,8 +376,9 @@ pública contém o nome do paciente — mantenha o servidor restrito à rede int
 por padrão): REST API do HA na mesma rede com long-lived access token (env
 `HomeAssistant__Token`). Na internação/transferência chama `WelcomeService` (ex.:
 `script.boas_vindas_leito`) com `{room, patient_name, welcome_image_url}`; na alta/transferência
-chama `ClearService` (opcional) com `{room}`. O `room` vem do campo **"Quarto no Home
-Assistant"** do cadastro do controlador (ex.: `quarto_101`). Toda chamada é **best-effort**:
+chama `ClearService` (opcional) com `{room}`; o botão da **ação extra** chama
+`ExtraActionService` com `{room}`. O `room` vem do campo **"Quarto no Home Assistant"** do
+cadastro do controlador (ex.: `quarto_101`). Toda chamada é **best-effort**:
 falha loga Warning (visível em Logs (Dev)) e nunca bloqueia o fluxo de internação. Exemplo de
 script no HA e instruções do token estão comentados no `appsettings.example.json`.
 

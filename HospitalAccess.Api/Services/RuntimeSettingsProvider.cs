@@ -17,10 +17,14 @@ namespace HospitalAccess.Api.Services;
 public sealed class RuntimeSettingsProvider : IDeviceSecretDefaults, IDeviceHttpSecretDefaults
 {
     public sealed record HomeAssistantSettings(bool Enabled, string BaseUrl, string Token,
-        string WelcomeService, string ClearService, int TimeoutSeconds)
+        string WelcomeService, string ClearService, string ExtraActionService, string ExtraActionLabel,
+        int TimeoutSeconds)
     {
         /// <summary>Pronto para uso: ligado E com URL e token resolvidos.</summary>
         public bool Ready => Enabled && !string.IsNullOrWhiteSpace(BaseUrl) && !string.IsNullOrWhiteSpace(Token);
+
+        /// <summary>A ação extra só existe se houver serviço configurado (o rótulo sempre tem padrão).</summary>
+        public bool HasExtraAction => !string.IsNullOrWhiteSpace(ExtraActionService);
     }
 
     /// <summary>
@@ -118,6 +122,11 @@ public sealed class RuntimeSettingsProvider : IDeviceSecretDefaults, IDeviceHttp
             Pick(row?.HomeAssistantToken, _haDefaults.Token),
             Pick(row?.HomeAssistantWelcomeService, _haDefaults.WelcomeService),
             Pick(row?.HomeAssistantClearService, _haDefaults.ClearService),
+            Pick(row?.HomeAssistantExtraActionService, _haDefaults.ExtraActionService),
+            // Dois níveis de fallback: o rótulo é o TEXTO do botão, então não pode chegar vazio
+            // à tela nem quando o appsettings traz a chave em branco.
+            Pick(row?.HomeAssistantExtraActionLabel,
+                Pick(_haDefaults.ExtraActionLabel, HomeAssistantOptions.DefaultExtraActionLabel)),
             _haDefaults.TimeoutSeconds),
         new WelcomeSettings(
             Pick(row?.WelcomeBaseImagePath, _bedDefaults.WelcomeBaseImagePath),

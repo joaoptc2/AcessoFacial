@@ -260,6 +260,9 @@ export const api = {
     request<void>(`/beds/${controllerId}/discharge`, { method: "POST" }),
   replayWelcome: (controllerId: string) =>
     request<BedActionResult>(`/beds/${controllerId}/replay-welcome`, { method: "POST" }),
+  // Ação extra configurável do quarto (ex.: abrir o frigobar) — o rótulo vem no próprio leito.
+  bedExtraAction: (controllerId: string) =>
+    request<{ label: string; room: string }>(`/beds/${controllerId}/extra-action`, { method: "POST" }),
 
   // ---- Logs de desenvolvimento (Admin) ----
   getDevLogs: (params: { sinceId?: number; take?: number } = {}) =>

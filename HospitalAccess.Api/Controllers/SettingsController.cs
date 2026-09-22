@@ -34,6 +34,9 @@ public record UpdateSettingsRequest(
     bool ClearHomeAssistantToken = false,
     string? HomeAssistantWelcomeService = null,
     string? HomeAssistantClearService = null,
+    // Ação extra do leito (ex.: frigobar): serviço "" = herdar; rótulo "" = herdar o padrão.
+    string? HomeAssistantExtraActionService = null,
+    string? HomeAssistantExtraActionLabel = null,
     string? WelcomeBaseImagePath = null,
     string? WelcomePublicBaseUrl = null,
     string? WelcomeTextY = null,
@@ -90,6 +93,8 @@ public class SettingsController : ControllerBase
             HasHomeAssistantToken = !string.IsNullOrEmpty(settings.HomeAssistantToken),
             settings.HomeAssistantWelcomeService,
             settings.HomeAssistantClearService,
+            settings.HomeAssistantExtraActionService,
+            settings.HomeAssistantExtraActionLabel,
             settings.WelcomeBaseImagePath,
             settings.WelcomePublicBaseUrl,
             settings.WelcomeTextY,
@@ -104,6 +109,8 @@ public class SettingsController : ControllerBase
                 HasToken = !string.IsNullOrEmpty(effective.Token),
                 effective.WelcomeService,
                 effective.ClearService,
+                effective.ExtraActionService,
+                effective.ExtraActionLabel,
             },
             settings.UpdatedAtUtc,
             settings.UpdatedByUsername,
@@ -125,6 +132,11 @@ public class SettingsController : ControllerBase
             return BadRequest("QrFormat deve ser 'Appendix8Rc4' ou 'PlainText'.");
         if (request.HomeAssistantEnabled is not (null or "" or "on" or "off"))
             return BadRequest("HomeAssistantEnabled deve ser 'on', 'off' ou vazio (herdar).");
+        // O serviço da ação extra vira um BOTÃO na gestão de leitos: um nome malformado só
+        // apareceria como falha na hora do clique, então é recusado aqui.
+        if (!string.IsNullOrWhiteSpace(request.HomeAssistantExtraActionService)
+            && HomeAssistantPayload.ParseService(request.HomeAssistantExtraActionService.Trim()) is null)
+            return BadRequest("O serviço da ação extra deve ter o formato 'dominio.servico' (ex.: script.abrir_frigobar).");
 
         int? textY = null;
         if (!string.IsNullOrWhiteSpace(request.WelcomeTextY))
@@ -182,6 +194,10 @@ public class SettingsController : ControllerBase
             settings.HomeAssistantWelcomeService = request.HomeAssistantWelcomeService.Trim();
         if (request.HomeAssistantClearService is not null)
             settings.HomeAssistantClearService = request.HomeAssistantClearService.Trim();
+        if (request.HomeAssistantExtraActionService is not null)
+            settings.HomeAssistantExtraActionService = request.HomeAssistantExtraActionService.Trim();
+        if (request.HomeAssistantExtraActionLabel is not null)
+            settings.HomeAssistantExtraActionLabel = request.HomeAssistantExtraActionLabel.Trim();
         if (request.WelcomeBaseImagePath is not null)
             settings.WelcomeBaseImagePath = request.WelcomeBaseImagePath.Trim();
         if (request.WelcomePublicBaseUrl is not null)
