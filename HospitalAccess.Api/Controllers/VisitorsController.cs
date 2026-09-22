@@ -22,6 +22,16 @@ public record RenderQrRequest(string Text);
 /// <summary>Troca o quarto (controlador/porta) de um visitante temporário.</summary>
 public record ChangeRoomRequest(Guid ControllerId);
 
+/// <summary>
+/// Visitante temporário que recebe as portas PADRÃO de um grupo — um prestador de serviço que
+/// precisa circular por várias portas durante alguns dias, por exemplo.
+/// </summary>
+/// <param name="CardNumber">
+/// Número do cartão/crachá. É a ÚNICA forma de este visitante abrir porta: o QR é cunhado pela
+/// controladora e só vale nela, então uma pessoa com várias portas não tem QR que sirva em todas.
+/// </param>
+public record CreateGroupVisitorRequest(string? Name, DateTime ValidUntil, Guid GroupId, uint? CardNumber = null);
+
 /// <summary>Cadastro de visitantes temporários e geração do QR de acesso.</summary>
 [ApiController]
 [Route("api/[controller]")]
@@ -182,6 +192,76 @@ public class VisitorsController : ControllerBase
         _syncQueue.EnqueueSync(visitor.Id);
 
         return CreatedAtAction(nameof(GenerateQr), new { visitorId = visitor.Id }, new { visitor.Id, visitor.UserCode });
+    }
+
+    /// <summary>
+    /// Cria um visitante temporário com as portas PADRÃO de um grupo de usuários.
+    ///
+    /// <para>
+    /// Diferente do visitante de leito, que fica em UMA porta e abre por QR: aqui a pessoa recebe
+    /// várias portas de uma vez, e por isso NÃO há QR. O QR válido é o que a controladora cunha e
+    /// guarda por pessoa — o firmware o valida contra aquele texto exato, então o QR lido de uma
+    /// porta não serve nas outras. Quem tem várias portas se identifica por CARTÃO.
+    /// </para>
+    /// </summary>
+    [HttpPost("group")]
+    public async Task<IActionResult> CreateForGroup([FromBody] CreateGroupVisitorRequest request, CancellationToken ct)
+    {
+        var validUntil = ToUtc(request.ValidUntil);
+        if (validUntil <= DateTime.UtcNow)
+            return BadRequest("A validade deve ser no futuro.");
+
+        if (!PersonNameRules.TryNormalize(request.Name, "O nome", out var visitorName, out var nameError))
+            return BadRequest(nameError);
+
+        var grupo = await _db.UserGroups
+            .Include(g => g.DefaultControllers)
+            .FirstOrDefaultAsync(g => g.Id == request.GroupId, ct);
+        if (grupo is null) return BadRequest("Grupo não existe.");
+
+        var portas = grupo.DefaultControllers.Select(d => d.ControllerId).Distinct().ToList();
+        if (portas.Count == 0)
+            return BadRequest($"O grupo \"{grupo.Name}\" não tem porta padrão nenhuma. Defina as portas do grupo antes de criar um visitante para ele.");
+
+        var visitor = new User
+        {
+            UserCode = await NextUserCodeAsync(ct),
+            Name = visitorName,
+            Type = UserType.Visitor,
+            GroupId = grupo.Id,
+            CardNumber = request.CardNumber,
+            ValidFrom = DateTime.UtcNow,
+            ValidUntil = validUntil,
+            CreatedByUsername = User.Identity?.Name,
+            Notes = $"Visitante do grupo {grupo.Name} — {portas.Count} porta(s), sem QR (identificação por cartão).",
+        };
+
+        foreach (var controllerId in portas)
+        {
+            // Sem restrição de horário: quem limita este visitante é a validade. Horário por
+            // porta, se precisar, é definido depois na tela do usuário.
+            visitor.Permissions.Add(new AccessPermission
+            {
+                ControllerId = controllerId,
+                TimeGroup = TimeGroupAllocation.ReservedUnrestricted,
+                GrantedByGroupId = grupo.Id,
+            });
+        }
+
+        _db.Users.Add(visitor);
+        UserAuditLogger.Record(_db, visitor, $"Criado como visitante do grupo {grupo.Name}", User.Identity?.Name);
+        await _db.SaveChangesAsync(ct);
+
+        _syncQueue.EnqueueSync(visitor.Id);
+
+        return Ok(new
+        {
+            visitor.Id,
+            visitor.UserCode,
+            GroupName = grupo.Name,
+            DoorCount = portas.Count,
+            HasCard = request.CardNumber is not null,
+        });
     }
 
     /// <summary>

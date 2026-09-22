@@ -241,6 +241,14 @@ export const api = {
       body: JSON.stringify({ windows }),
     }),
 
+  // Visitante com as portas PADRÃO de um grupo. Sem QR de propósito: o QR é cunhado pela
+  // controladora e só vale nela, então quem tem várias portas se identifica por cartão.
+  createGroupVisitor: (body: { name: string; validUntil: string; groupId: string; cardNumber?: number }) =>
+    request<{ id: string; userCode: number; groupName: string; doorCount: number; hasCard: boolean }>(
+      "/visitors/group",
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+
   getBeds: () => request<BedDto[]>("/beds"),
   getBedHistory: (params: { controllerId?: string; page: number; pageSize: number }) =>
     request<BedHistoryPage>(`/beds/history${buildQuery(params)}`),
