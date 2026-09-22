@@ -34,31 +34,15 @@ export function StatusBanner() {
 
   const critical = offline > 0 || activeAlarms > 0 || pendingMigrations.length > 0;
 
+  // Sem estilo embutido: a faixa precisa reempacotar no celular (o texto é longo e os
+  // atalhos não podem ser espremidos contra ele), e isso é regra de mídia, não inline.
   return (
-    <div
-      role="alert"
-      style={{
-        background: critical ? "#fef2f2" : "#fffbeb",
-        borderBottom: `2px solid ${critical ? "var(--danger)" : "var(--warning)"}`,
-        color: critical ? "#991b1b" : "#92400e",
-        padding: "0.5rem 1rem",
-        fontSize: "0.9rem",
-        display: "flex",
-        alignItems: "center",
-        gap: "0.75rem",
-      }}
-    >
-      <span style={{ fontWeight: 600 }}>⚠ Atenção:</span>
-      <span>{parts.join(" · ")}</span>
-      <span style={{ marginLeft: "auto", display: "flex", gap: "0.75rem" }}>
-        {pendingSync + manualSync > 0 && (
-          <Link to="/sync" style={{ color: "inherit", fontWeight: 600 }}>
-            Ver sincronizações
-          </Link>
-        )}
-        <Link to="/" style={{ color: "inherit", fontWeight: 600 }}>
-          Ver painel
-        </Link>
+    <div role="alert" className={`status-banner${critical ? " is-critical" : ""}`}>
+      <span className="status-banner-label">⚠ Atenção:</span>
+      <span className="status-banner-text">{parts.join(" · ")}</span>
+      <span className="status-banner-links">
+        {pendingSync + manualSync > 0 && <Link to="/sync">Ver sincronizações</Link>}
+        <Link to="/">Ver painel</Link>
       </span>
     </div>
   );

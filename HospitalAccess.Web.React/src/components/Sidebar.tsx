@@ -1,4 +1,5 @@
-import { NavLink } from "react-router-dom";
+import { useEffect } from "react";
+import { NavLink, useLocation } from "react-router-dom";
 import { useAuth } from "../lib/AuthContext";
 import { Icon, type IconName } from "./Icon";
 
@@ -58,23 +59,50 @@ const GRUPOS: { titulo: string | null; adminOnly?: boolean; itens: NavItem[] }[]
   },
 ];
 
-export function Sidebar() {
+interface SidebarProps {
+  /** Só tem efeito no celular, onde a navegação é uma gaveta sobreposta. */
+  aberto: boolean;
+  onFechar: () => void;
+}
+
+export function Sidebar({ aberto, onFechar }: SidebarProps) {
   const { role } = useAuth();
   const isAdmin = role === "Admin";
+  const { pathname } = useLocation();
+
+  // Navegou = a gaveta cumpriu o seu papel. Fechar aqui (e não no onClick de cada link)
+  // cobre também voltar/avançar do navegador.
+  useEffect(() => {
+    onFechar();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pathname]);
+
+  // Esc fecha: numa gaveta sobreposta, é a saída que o teclado espera.
+  useEffect(() => {
+    if (!aberto) return;
+    const aoTeclar = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onFechar();
+    };
+    window.addEventListener("keydown", aoTeclar);
+    return () => window.removeEventListener("keydown", aoTeclar);
+  }, [aberto, onFechar]);
 
   return (
-    <nav className="sidebar" aria-label="Navegação principal">
-      {GRUPOS.filter((g) => !g.adminOnly || isAdmin).map((grupo) => (
-        <div key={grupo.titulo ?? "principal"}>
-          {grupo.titulo && <div className="sidebar-section">{grupo.titulo}</div>}
-          {grupo.itens.map((item) => (
-            <NavLink key={item.to} to={item.to} end={item.end} className={navClass}>
-              <Icon name={item.icon} size={17} />
-              {item.label}
-            </NavLink>
-          ))}
-        </div>
-      ))}
-    </nav>
+    <>
+      {aberto && <div className="sidebar-backdrop" onClick={onFechar} aria-hidden="true" />}
+      <nav className={`sidebar${aberto ? " is-open" : ""}`} aria-label="Navegação principal">
+        {GRUPOS.filter((g) => !g.adminOnly || isAdmin).map((grupo) => (
+          <div key={grupo.titulo ?? "principal"}>
+            {grupo.titulo && <div className="sidebar-section">{grupo.titulo}</div>}
+            {grupo.itens.map((item) => (
+              <NavLink key={item.to} to={item.to} end={item.end} className={navClass}>
+                <Icon name={item.icon} size={17} />
+                {item.label}
+              </NavLink>
+            ))}
+          </div>
+        ))}
+      </nav>
+    </>
   );
 }

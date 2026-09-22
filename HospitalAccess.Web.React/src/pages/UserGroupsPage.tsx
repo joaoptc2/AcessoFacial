@@ -141,75 +141,77 @@ export function UserGroupsPage() {
         </div>
       </div>
 
-      <table>
-        <thead>
-          <tr>
-            <th>Nome</th>
-            <th>Descrição</th>
-            <th>Usuários</th>
-            <th>Portas padrão</th>
-            <th>Ações</th>
-          </tr>
-        </thead>
-        <tbody>
-          {filtered.map((g) => (
-            <Fragment key={g.id}>
-              <tr className={editingId === g.id ? "row-active" : undefined}>
-                <td>{g.name}</td>
-                <td>{g.description}</td>
-                <td>
-                  <span className="pill">{g.userCount}</span>
-                </td>
-                <td>
-                  <span className="pill">{g.defaultControllerIds.length}</span>
-                </td>
-                <td>
-                  <div className="btn-group">
-                    <button className={`btn btn-sm ${editingId === g.id ? "btn-primary" : "btn-outline"}`} onClick={() => startEdit(g)}>
-                      Editar
-                    </button>
-                    <button className="btn btn-danger-outline btn-sm" onClick={() => setConfirmDelete(g)}>
-                      Excluir
-                    </button>
-                  </div>
-                </td>
-              </tr>
-              {editingId === g.id && (
-                <tr>
-                  <td colSpan={5} style={{ background: "var(--surface-alt, #f8fafc)" }}>
-                    <form onSubmit={handleSave} style={{ padding: "0.5rem 0" }}>
-                      <div className="form-row">
-                        <div className="form-field">
-                          <label>Nome</label>
-                          <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
-                        </div>
-                        <div className="form-field" style={{ minWidth: 260 }}>
-                          <label>Descrição</label>
-                          <input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
-                        </div>
-                        <div className="form-field">
-                          <button type="submit" className="btn btn-primary">
-                            Salvar
-                          </button>
-                        </div>
-                        <div className="form-field">
-                          <button type="button" className="btn btn-outline" onClick={cancelEdit}>
-                            Cancelar
-                          </button>
-                        </div>
-                      </div>
-                      <div className="form-field" style={{ marginTop: "0.75rem" }}>
-                        <label>Portas padrão do grupo (herdadas pelos membros)</label>
-                        <ControllerChecklist controllers={controllers} selected={selectedDefaults} onChange={setSelectedDefaults} />
-                      </div>
-                    </form>
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Nome</th>
+              <th>Descrição</th>
+              <th>Usuários</th>
+              <th>Portas padrão</th>
+              <th>Ações</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.map((g) => (
+              <Fragment key={g.id}>
+                <tr className={editingId === g.id ? "row-active" : undefined}>
+                  <td>{g.name}</td>
+                  <td>{g.description}</td>
+                  <td>
+                    <span className="pill">{g.userCount}</span>
+                  </td>
+                  <td>
+                    <span className="pill">{g.defaultControllerIds.length}</span>
+                  </td>
+                  <td>
+                    <div className="btn-group">
+                      <button className={`btn btn-sm ${editingId === g.id ? "btn-primary" : "btn-outline"}`} onClick={() => startEdit(g)}>
+                        Editar
+                      </button>
+                      <button className="btn btn-danger-outline btn-sm" onClick={() => setConfirmDelete(g)}>
+                        Excluir
+                      </button>
+                    </div>
                   </td>
                 </tr>
-              )}
-            </Fragment>
-          ))}
-        </tbody>
-      </table>
+                {editingId === g.id && (
+                  <tr>
+                    <td colSpan={5} style={{ background: "var(--surface-alt, #f8fafc)" }}>
+                      <form onSubmit={handleSave} style={{ padding: "0.5rem 0" }}>
+                        <div className="form-row">
+                          <div className="form-field">
+                            <label>Nome</label>
+                            <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
+                          </div>
+                          <div className="form-field" style={{ minWidth: 260 }}>
+                            <label>Descrição</label>
+                            <input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+                          </div>
+                          <div className="form-field">
+                            <button type="submit" className="btn btn-primary">
+                              Salvar
+                            </button>
+                          </div>
+                          <div className="form-field">
+                            <button type="button" className="btn btn-outline" onClick={cancelEdit}>
+                              Cancelar
+                            </button>
+                          </div>
+                        </div>
+                        <div className="form-field" style={{ marginTop: "0.75rem" }}>
+                          <label>Portas padrão do grupo (herdadas pelos membros)</label>
+                          <ControllerChecklist controllers={controllers} selected={selectedDefaults} onChange={setSelectedDefaults} />
+                        </div>
+                      </form>
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
+            ))}
+          </tbody>
+        </table>
+      </div>
 
       {confirmDelete && (
         <Modal title="Excluir grupo" onClose={() => (deleting ? null : setConfirmDelete(null))}>

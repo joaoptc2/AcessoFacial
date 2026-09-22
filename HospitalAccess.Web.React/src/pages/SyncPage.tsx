@@ -251,102 +251,104 @@ export function SyncPage() {
               Exibindo {overview.items.length} de {overview.totalItems} pendências.
             </div>
           )}
-          <table>
-            <thead>
-              <tr>
-                <th>Usuário</th>
-                <th>Porta</th>
-                <th>Ação pendente</th>
-                <th>Situação</th>
-                <th>Próxima tentativa</th>
-                <th>Tentativas</th>
-                <th>Último erro</th>
-                <th>Atualizado</th>
-                {canEdit && <th>Ações</th>}
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((item) => (
-                <tr key={`${item.userId}:${item.controllerId}`}>
-                  <td>
-                    {item.userType === "Permanent" ? (
-                      <Link to={`/users/${item.userId}`}>{item.userName}</Link>
-                    ) : (
-                      item.userName
-                    )}{" "}
-                    {item.userType === "Visitor" && <span className="pill">Visitante</span>}{" "}
-                    {item.userRevoked && <span className="pill">Revogado</span>}
-                  </td>
-                  <td>
-                    {item.controllerName}{" "}
-                    {!item.controllerOnline && <span className="pill pill-danger">offline</span>}{" "}
-                    {item.circuitOpenUntilUtc && (
-                      <span
-                        className="pill pill-warning"
-                        title="Protocolo sem resposta — o disjuntor pausa os comandos para proteger o aparelho."
-                      >
-                        protegido até {fmtTime(item.circuitOpenUntilUtc)}
-                      </span>
-                    )}
-                  </td>
-                  <td>{item.action === "Send" ? "Enviar cadastro" : "Remover da porta"}</td>
-                  <td>
-                    {item.processingSinceUtc ? (
-                      <span className="pill pill-success">Sincronizando…</span>
-                    ) : item.inQueue ? (
-                      <span className="pill">Na fila</span>
-                    ) : (
-                      <span className={CATEGORY_PILL[item.category]}>{CATEGORY_LABEL[item.category]}</span>
-                    )}
-                  </td>
-                  <td style={{ whiteSpace: "nowrap" }}>
-                    {item.processingSinceUtc || item.inQueue
-                      ? "em andamento"
-                      : item.category === "Quarantined" || item.category === "Conflict"
-                        ? "manual"
-                        : item.category === "Pending" || item.category === "DueNow"
-                          ? "próxima varredura"
-                          : fmtRelative(item.nextRetryAtUtc, nowMs)}
-                  </td>
-                  <td>{item.retryCount}</td>
-                  <td title={item.lastError ?? undefined} style={{ maxWidth: 280, wordBreak: "break-word" }}>
-                    {item.lastError ? truncate(item.lastError, 80) : "—"}
-                  </td>
-                  <td style={{ whiteSpace: "nowrap" }}>{fmtRelative(item.updatedAtUtc, nowMs)}</td>
-                  {canEdit && (
-                    <td style={{ whiteSpace: "nowrap" }}>
-                      {item.category === "Conflict" ? (
-                        <>
-                          <button
-                            className="btn btn-sm btn-primary"
-                            disabled={busyUserId === item.userId}
-                            onClick={() => resolveConflict(item, true)}
-                          >
-                            Substituir
-                          </button>{" "}
-                          <button
-                            className="btn btn-sm btn-outline"
-                            disabled={busyUserId === item.userId}
-                            onClick={() => resolveConflict(item, false)}
-                          >
-                            Manter existente
-                          </button>
-                        </>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Usuário</th>
+                  <th>Porta</th>
+                  <th>Ação pendente</th>
+                  <th>Situação</th>
+                  <th>Próxima tentativa</th>
+                  <th>Tentativas</th>
+                  <th>Último erro</th>
+                  <th>Atualizado</th>
+                  {canEdit && <th>Ações</th>}
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((item) => (
+                  <tr key={`${item.userId}:${item.controllerId}`}>
+                    <td>
+                      {item.userType === "Permanent" ? (
+                        <Link to={`/users/${item.userId}`}>{item.userName}</Link>
                       ) : (
-                        <button
-                          className="btn btn-sm btn-primary"
-                          disabled={busyUserId === item.userId || item.processingSinceUtc !== null}
-                          onClick={() => forceUser(item)}
+                        item.userName
+                      )}{" "}
+                      {item.userType === "Visitor" && <span className="pill">Visitante</span>}{" "}
+                      {item.userRevoked && <span className="pill">Revogado</span>}
+                    </td>
+                    <td>
+                      {item.controllerName}{" "}
+                      {!item.controllerOnline && <span className="pill pill-danger">offline</span>}{" "}
+                      {item.circuitOpenUntilUtc && (
+                        <span
+                          className="pill pill-warning"
+                          title="Protocolo sem resposta — o disjuntor pausa os comandos para proteger o aparelho."
                         >
-                          Forçar agora
-                        </button>
+                          protegido até {fmtTime(item.circuitOpenUntilUtc)}
+                        </span>
                       )}
                     </td>
-                  )}
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                    <td>{item.action === "Send" ? "Enviar cadastro" : "Remover da porta"}</td>
+                    <td>
+                      {item.processingSinceUtc ? (
+                        <span className="pill pill-success">Sincronizando…</span>
+                      ) : item.inQueue ? (
+                        <span className="pill">Na fila</span>
+                      ) : (
+                        <span className={CATEGORY_PILL[item.category]}>{CATEGORY_LABEL[item.category]}</span>
+                      )}
+                    </td>
+                    <td style={{ whiteSpace: "nowrap" }}>
+                      {item.processingSinceUtc || item.inQueue
+                        ? "em andamento"
+                        : item.category === "Quarantined" || item.category === "Conflict"
+                          ? "manual"
+                          : item.category === "Pending" || item.category === "DueNow"
+                            ? "próxima varredura"
+                            : fmtRelative(item.nextRetryAtUtc, nowMs)}
+                    </td>
+                    <td>{item.retryCount}</td>
+                    <td title={item.lastError ?? undefined} style={{ maxWidth: 280, wordBreak: "break-word" }}>
+                      {item.lastError ? truncate(item.lastError, 80) : "—"}
+                    </td>
+                    <td style={{ whiteSpace: "nowrap" }}>{fmtRelative(item.updatedAtUtc, nowMs)}</td>
+                    {canEdit && (
+                      <td style={{ whiteSpace: "nowrap" }}>
+                        {item.category === "Conflict" ? (
+                          <>
+                            <button
+                              className="btn btn-sm btn-primary"
+                              disabled={busyUserId === item.userId}
+                              onClick={() => resolveConflict(item, true)}
+                            >
+                              Substituir
+                            </button>{" "}
+                            <button
+                              className="btn btn-sm btn-outline"
+                              disabled={busyUserId === item.userId}
+                              onClick={() => resolveConflict(item, false)}
+                            >
+                              Manter existente
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            className="btn btn-sm btn-primary"
+                            disabled={busyUserId === item.userId || item.processingSinceUtc !== null}
+                            onClick={() => forceUser(item)}
+                          >
+                            Forçar agora
+                          </button>
+                        )}
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </>
       )}
     </div>

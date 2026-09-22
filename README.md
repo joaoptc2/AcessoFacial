@@ -417,7 +417,13 @@ TCP, seções 1-9) e o **cliente HTTP** do painel web (`Infrastructure/Devices/`
   `DeviceQrService` (QR via HTTP) e o `DeviceCallbackController` (phone-home). Serve
   também o SPA React em `wwwroot/`.
 - **HospitalAccess.Web.React** — front-end React (Vite/TS), único front-end. O build gera
-  os estáticos em `HospitalAccess.Api/wwwroot/`.
+  os estáticos em `HospitalAccess.Api/wwwroot/`. O sistema visual inteiro sai das variáveis no
+  topo do `index.css` — nenhuma regra adiante traz um literal de cor. **Celular**: a partir de
+  900px a navegação vira uma **gaveta** (botão de menu na topbar, véu, fecha ao navegar/Esc);
+  abaixo de 600px formulários passam a um campo por linha e os diálogos ocupam a largura; abaixo
+  de 420px a topbar fica em ícones. A regra que amarra tudo é que **nada pode rolar a página na
+  horizontal**: tabela larga rola dentro do seu `.table-wrap`, nunca arrastando a tela. Layout
+  verificado de 320px (piso) a 1440px.
 - **HospitalAccess.Tests** — testes unitários (QR, classificador de eventos, conversor de imagem).
 
 ## Cópia de segurança (backup)

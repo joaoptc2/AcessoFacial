@@ -611,33 +611,35 @@ export function SettingsPage() {
 
         {backups && backups.files.length > 0 && (
           <div style={{ overflowX: "auto" }}>
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Arquivo</th>
-                  <th>Gerada em</th>
-                  <th>Tamanho</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {backups.files.map((f) => (
-                  <tr key={f.fileName}>
-                    <td style={{ fontFamily: "monospace", fontSize: "0.85rem" }}>{f.fileName}</td>
-                    <td>{new Date(f.createdAtUtc).toLocaleString()}</td>
-                    <td style={{ whiteSpace: "nowrap" }}>{formatBytes(f.sizeBytes)}</td>
-                    <td style={{ whiteSpace: "nowrap" }}>
-                      <button type="button" className="btn btn-outline btn-sm" onClick={() => handleDownloadBackup(f.fileName)}>
-                        Baixar
-                      </button>{" "}
-                      <button type="button" className="btn btn-danger btn-sm" onClick={() => handleDeleteBackup(f.fileName)}>
-                        Remover
-                      </button>
-                    </td>
+            <div className="table-wrap">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Arquivo</th>
+                    <th>Gerada em</th>
+                    <th>Tamanho</th>
+                    <th />
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {backups.files.map((f) => (
+                    <tr key={f.fileName}>
+                      <td style={{ fontFamily: "monospace", fontSize: "0.85rem" }}>{f.fileName}</td>
+                      <td>{new Date(f.createdAtUtc).toLocaleString()}</td>
+                      <td style={{ whiteSpace: "nowrap" }}>{formatBytes(f.sizeBytes)}</td>
+                      <td style={{ whiteSpace: "nowrap" }}>
+                        <button type="button" className="btn btn-outline btn-sm" onClick={() => handleDownloadBackup(f.fileName)}>
+                          Baixar
+                        </button>{" "}
+                        <button type="button" className="btn btn-danger btn-sm" onClick={() => handleDeleteBackup(f.fileName)}>
+                          Remover
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
       </div>
