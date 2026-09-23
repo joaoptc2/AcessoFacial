@@ -354,10 +354,11 @@ sudo systemctl start hospitalaccess-api
 
 > **Se a migração for esquecida**: o serviço sobe mesmo assim, mas loga um ERRO destacado no
 > startup ("BANCO DESATUALIZADO: migration(s) pendente(s): …") e o painel mostra uma faixa
-> vermelha com o nome da migration e a instrução desta seção. As consultas às tabelas/colunas
-> das migrations pendentes falham com `42703 column ... does not exist` até a migração ser
-> aplicada e o serviço reiniciado. O script idempotente (opção a) é seguro de re-rodar — ele
-> aplica apenas o que falta.
+> vermelha com o nome da migration e a instrução desta seção. As telas que tocam as
+> tabelas/colunas das migrations pendentes respondem com a mensagem **"O banco de dados está
+> DESATUALIZADO para esta versão do sistema — falta aplicar: `<migration>`"**, apontando esta
+> seção (nos logs, o erro cru é `42703 column ... does not exist`). O script idempotente
+> (opção a) é seguro de re-rodar — ele aplica apenas o que falta.
 
 ## Checklist rápido de verificação pós-instalação
 - [ ] `systemctl status hospitalaccess-api` — `active (running)`.

@@ -26,6 +26,7 @@ export type IconName =
   | "info"
   | "close"
   | "tv"
+  | "menu"
   | "shield";
 
 const PATHS: Record<IconName, React.ReactNode> = {
@@ -144,6 +145,7 @@ const PATHS: Record<IconName, React.ReactNode> = {
     </>
   ),
   close: <path d="M18 6L6 18M6 6l12 12" />,
+  menu: <path d="M3 6h18M3 12h18M3 18h18" />,
   tv: (
     <>
       <rect x="2" y="7" width="20" height="13" rx="2" />

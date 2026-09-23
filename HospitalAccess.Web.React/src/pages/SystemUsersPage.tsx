@@ -164,56 +164,58 @@ export function SystemUsersPage() {
         </p>
       </form>
 
-      <table>
-        <thead>
-          <tr>
-            <th>Usuário</th>
-            <th>Cargo</th>
-            <th>Situação</th>
-            <th>Ações</th>
-          </tr>
-        </thead>
-        <tbody>
-          {users.map((u) => (
-            <tr key={u.id} style={!u.active ? { background: "var(--surface-alt, #f8fafc)" } : undefined}>
-              <td>
-                {u.username} {u.username === myUsername && <span className="pill">você</span>}
-              </td>
-              <td>
-                <select
-                  value={u.role}
-                  disabled={busyId === u.id}
-                  onChange={(e) => changeRole(u, e.target.value as StaffRole)}
-                  title={ROLE_HINT[u.role]}
-                >
-                  {(Object.keys(ROLE_LABEL) as StaffRole[]).map((r) => (
-                    <option key={r} value={r}>
-                      {ROLE_LABEL[r]}
-                    </option>
-                  ))}
-                </select>
-              </td>
-              <td>
-                <span className={u.active ? "pill pill-success" : "pill"}>{u.active ? "Ativo" : "Desativado"}</span>
-              </td>
-              <td>
-                <div className="btn-group">
-                  <button className="btn btn-outline btn-sm" disabled={busyId === u.id} onClick={() => resetPassword(u)}>
-                    Redefinir senha
-                  </button>
-                  <button
-                    className={u.active ? "btn btn-danger-outline btn-sm" : "btn btn-outline btn-sm"}
-                    disabled={busyId === u.id}
-                    onClick={() => toggleActive(u)}
-                  >
-                    {u.active ? "Desativar" : "Reativar"}
-                  </button>
-                </div>
-              </td>
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Usuário</th>
+              <th>Cargo</th>
+              <th>Situação</th>
+              <th>Ações</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {users.map((u) => (
+              <tr key={u.id} style={!u.active ? { background: "var(--surface-alt, #f8fafc)" } : undefined}>
+                <td>
+                  {u.username} {u.username === myUsername && <span className="pill">você</span>}
+                </td>
+                <td>
+                  <select
+                    value={u.role}
+                    disabled={busyId === u.id}
+                    onChange={(e) => changeRole(u, e.target.value as StaffRole)}
+                    title={ROLE_HINT[u.role]}
+                  >
+                    {(Object.keys(ROLE_LABEL) as StaffRole[]).map((r) => (
+                      <option key={r} value={r}>
+                        {ROLE_LABEL[r]}
+                      </option>
+                    ))}
+                  </select>
+                </td>
+                <td>
+                  <span className={u.active ? "pill pill-success" : "pill"}>{u.active ? "Ativo" : "Desativado"}</span>
+                </td>
+                <td>
+                  <div className="btn-group">
+                    <button className="btn btn-outline btn-sm" disabled={busyId === u.id} onClick={() => resetPassword(u)}>
+                      Redefinir senha
+                    </button>
+                    <button
+                      className={u.active ? "btn btn-danger-outline btn-sm" : "btn btn-outline btn-sm"}
+                      disabled={busyId === u.id}
+                      onClick={() => toggleActive(u)}
+                    >
+                      {u.active ? "Desativar" : "Reativar"}
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

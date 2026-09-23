@@ -84,6 +84,15 @@ public class SystemSettings
     public string HomeAssistantWelcomeService { get; set; } = string.Empty;
     public string HomeAssistantClearService { get; set; } = string.Empty;
 
+    /// <summary>
+    /// Ação EXTRA do leito (ex.: abrir o frigobar): serviço do HA disparado por um botão na
+    /// gestão de leitos. Vazio = herda o appsettings; sem serviço em lugar nenhum = sem botão.
+    /// </summary>
+    public string HomeAssistantExtraActionService { get; set; } = string.Empty;
+
+    /// <summary>Rótulo do botão da ação extra. Vazio = herda o appsettings ("Abrir frigobar").</summary>
+    public string HomeAssistantExtraActionLabel { get; set; } = string.Empty;
+
     /// <summary>Tela de boas-vindas (gestão de leitos): imagem base e composição do texto.</summary>
     public string WelcomeBaseImagePath { get; set; } = string.Empty;
     public string WelcomePublicBaseUrl { get; set; } = string.Empty;

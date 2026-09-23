@@ -342,18 +342,15 @@ else
         app.Logger.LogError(error, "Erro não tratado ({CorrelationId}) em {Method} {Path}",
             correlationId, context.Request.Method, context.Request.Path);
 
-        var isUniqueViolation = error is DbUpdateException { InnerException: PostgresException { SqlState: PostgresErrorCodes.UniqueViolation } };
-        var isConcurrency = error is DbUpdateConcurrencyException;
+        // Classificação em UnhandledErrorResponse (pura, coberta por testes): a tradução de
+        // exceção em mensagem acionável é regra de negócio de operação, não detalhe do pipeline.
+        var kind = UnhandledErrorResponse.Classify(error);
+        var pendingMigrations = app.Services.GetRequiredService<DatabaseSchemaState>().PendingMigrations;
 
-        context.Response.StatusCode = isUniqueViolation ? StatusCodes.Status409Conflict
-            : isConcurrency ? StatusCodes.Status409Conflict
-            : StatusCodes.Status500InternalServerError;
+        context.Response.StatusCode = UnhandledErrorResponse.StatusCodeFor(kind);
         context.Response.ContentType = "text/plain; charset=utf-8";
-        await context.Response.WriteAsync(isUniqueViolation
-            ? "Já existe um registro com esse valor único (ex.: número de série ou código já cadastrado)."
-            : isConcurrency
-                ? "O registro foi alterado por outra pessoa enquanto você editava. Recarregue e tente novamente."
-                : $"Ocorreu um erro inesperado ao processar a solicitação. Código de referência: {correlationId}.");
+        await context.Response.WriteAsync(
+            UnhandledErrorResponse.MessageFor(kind, pendingMigrations, correlationId));
     }));
 }
 

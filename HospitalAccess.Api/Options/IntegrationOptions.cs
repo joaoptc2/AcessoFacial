@@ -27,6 +27,18 @@ public sealed class HomeAssistantOptions
     /// <summary>Serviço opcional chamado na alta/transferência para limpar a TV do quarto ({ room }). Vazio = não chama.</summary>
     public string ClearService { get; set; } = string.Empty;
 
+    /// <summary>
+    /// AÇÃO EXTRA do leito: um serviço à escolha do hospital (ex.: abrir o frigobar do quarto),
+    /// disparado por um botão na gestão de leitos. Recebe { room }. Vazio = sem botão.
+    /// </summary>
+    public string ExtraActionService { get; set; } = string.Empty;
+
+    /// <summary>Texto do botão da ação extra quando nem o banco nem o appsettings definem um.</summary>
+    public const string DefaultExtraActionLabel = "Abrir frigobar";
+
+    /// <summary>Rótulo do botão da ação extra na gestão de leitos.</summary>
+    public string ExtraActionLabel { get; set; } = DefaultExtraActionLabel;
+
     public int TimeoutSeconds { get; set; } = 5;
 }
 

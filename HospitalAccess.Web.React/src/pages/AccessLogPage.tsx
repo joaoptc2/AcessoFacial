@@ -98,30 +98,32 @@ export function AccessLogPage() {
           <p className="text-muted">
             {page.total} registro(s) — página {page.page}
           </p>
-          <table>
-            <thead>
-              <tr>
-                <th>Data/Hora (UTC)</th>
-                <th>Usuário</th>
-                <th>Controlador</th>
-                <th>Método</th>
-                <th>Direção</th>
-                <th>Concedido</th>
-              </tr>
-            </thead>
-            <tbody>
-              {page.items.map((item) => (
-                <tr key={item.id} style={item.granted ? undefined : { background: "#fef2f2" }}>
-                  <td>{new Date(item.timestampUtc).toLocaleString()}</td>
-                  <td>{item.userName ?? item.userCode ?? "—"}</td>
-                  <td>{item.controllerName}</td>
-                  <td>{item.method}</td>
-                  <td>{item.direction === 1 ? "Entrada" : item.direction === 2 ? "Saída" : "—"}</td>
-                  <td>{item.granted ? "Sim" : "Não"}</td>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Data/Hora (UTC)</th>
+                  <th>Usuário</th>
+                  <th>Controlador</th>
+                  <th>Método</th>
+                  <th>Direção</th>
+                  <th>Concedido</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {page.items.map((item) => (
+                  <tr key={item.id} style={item.granted ? undefined : { background: "#fef2f2" }}>
+                    <td>{new Date(item.timestampUtc).toLocaleString()}</td>
+                    <td>{item.userName ?? item.userCode ?? "—"}</td>
+                    <td>{item.controllerName}</td>
+                    <td>{item.method}</td>
+                    <td>{item.direction === 1 ? "Entrada" : item.direction === 2 ? "Saída" : "—"}</td>
+                    <td>{item.granted ? "Sim" : "Não"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
 
           <div className="btn-group" style={{ marginTop: "0.75rem" }}>
             <button className="btn btn-outline btn-sm" disabled={currentPage <= 1} onClick={() => loadPage(currentPage - 1)}>

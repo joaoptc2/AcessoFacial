@@ -11,8 +11,11 @@ public static class HomeAssistantPayload
     public static object Welcome(string room, string patientName, string welcomeImageUrl) =>
         new { room, patient_name = patientName, welcome_image_url = welcomeImageUrl };
 
+    /// <summary>Ação de quarto sem parâmetros: o script do HA recebe só o identificador do quarto.</summary>
+    public static object Room(string room) => new { room };
+
     /// <summary>Limpeza da TV do quarto (alta/transferência).</summary>
-    public static object Clear(string room) => new { room };
+    public static object Clear(string room) => Room(room);
 
     /// <summary>"script.boas_vindas_leito" → ("script", "boas_vindas_leito"). Null se malformado.</summary>
     public static (string Domain, string Service)? ParseService(string service)

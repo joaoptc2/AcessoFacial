@@ -766,32 +766,34 @@ export function ControllerDetailPage() {
           {accessLog.length === 0 ? (
             <p className="text-muted">Nenhum acesso registrado ainda.</p>
           ) : (
-            <table>
-              <thead>
-                <tr>
-                  <th>Data/hora</th>
-                  <th>Usuário</th>
-                  <th>Código</th>
-                  <th>Método</th>
-                  <th>Resultado</th>
-                </tr>
-              </thead>
-              <tbody>
-                {accessLog.map((l) => (
-                  <tr key={l.id}>
-                    <td>{new Date(l.timestampUtc).toLocaleString()}</td>
-                    <td>{l.userName ?? "—"}</td>
-                    <td>{l.userCode ?? "—"}</td>
-                    <td>{l.method}</td>
-                    <td>
-                      <span className={l.granted ? "pill pill-success" : "pill pill-danger"}>
-                        {l.granted ? "Concedido" : "Negado"}
-                      </span>
-                    </td>
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Data/hora</th>
+                    <th>Usuário</th>
+                    <th>Código</th>
+                    <th>Método</th>
+                    <th>Resultado</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {accessLog.map((l) => (
+                    <tr key={l.id}>
+                      <td>{new Date(l.timestampUtc).toLocaleString()}</td>
+                      <td>{l.userName ?? "—"}</td>
+                      <td>{l.userCode ?? "—"}</td>
+                      <td>{l.method}</td>
+                      <td>
+                        <span className={l.granted ? "pill pill-success" : "pill pill-danger"}>
+                          {l.granted ? "Concedido" : "Negado"}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
           <Link to={`/accesslog`} className="btn btn-outline btn-sm" style={{ marginTop: "0.75rem", display: "inline-block" }}>
             Ver log completo (com filtros)

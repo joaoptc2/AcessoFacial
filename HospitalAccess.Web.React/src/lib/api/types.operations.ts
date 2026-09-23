@@ -93,6 +93,8 @@ export interface SystemSettingsDto {
   hasHomeAssistantToken: boolean;
   homeAssistantWelcomeService: string;
   homeAssistantClearService: string;
+  homeAssistantExtraActionService: string;
+  homeAssistantExtraActionLabel: string;
   welcomeBaseImagePath: string;
   welcomePublicBaseUrl: string;
   welcomeTextY: number | null;
@@ -106,6 +108,8 @@ export interface SystemSettingsDto {
     hasToken: boolean;
     welcomeService: string;
     clearService: string;
+    extraActionService: string;
+    extraActionLabel: string;
   };
   updatedAtUtc: string;
   updatedByUsername: string | null;
@@ -132,6 +136,8 @@ export interface UpdateSettingsRequest {
   clearHomeAssistantToken?: boolean;
   homeAssistantWelcomeService?: string;
   homeAssistantClearService?: string;
+  homeAssistantExtraActionService?: string;
+  homeAssistantExtraActionLabel?: string;
   welcomeBaseImagePath?: string;
   welcomePublicBaseUrl?: string;
   welcomeTextY?: string;
@@ -159,6 +165,11 @@ export interface BedDto {
   visitorUserId: string | null;
   /** Estado da sincronização do acesso do paciente NA porta do leito (Pending/Synced/Failed/Revoked). */
   accessSyncState: string | null;
+  /**
+   * Rótulo do botão da ação extra do quarto (ex.: "Abrir frigobar"). Null = sem ação extra
+   * neste leito (serviço não configurado, integração desligada ou quarto do HA em branco).
+   */
+  extraActionLabel: string | null;
 }
 
 export interface BedHistoryItem {
@@ -186,6 +197,12 @@ export interface BedActionResult {
   userCode?: number;
   welcomeImageUrl: string | null;
   homeAssistantCalled: boolean;
+  /**
+   * Serviço do HA efetivamente chamado, já com o quarto resolvido (ex.: "script.BV_14").
+   * Só vem em "reexibir boas-vindas", que é o botão de teste da automação do quarto.
+   * Null = não foi possível montar o nome (quarto em branco ou fora do formato).
+   */
+  service?: string | null;
 }
 
 // ---- Logs de desenvolvimento (Admin) ----

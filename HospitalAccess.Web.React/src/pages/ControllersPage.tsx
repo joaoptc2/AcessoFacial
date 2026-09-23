@@ -503,10 +503,14 @@ export function ControllersPage() {
               <div className="form-field" style={{ minWidth: 160 }}>
                 <label>Quarto no Home Assistant</label>
                 <input
-                  placeholder="quarto_101"
+                  placeholder="14"
                   value={form.homeAssistantRoomId}
                   onChange={(e) => setForm({ ...form, homeAssistantRoomId: e.target.value })}
                 />
+                <span className="text-muted" style={{ fontSize: "0.78rem" }}>
+                  Com um script por quarto (script.BV_&#123;quarto&#125;), use só o número: 14 → script.BV_14.
+                  Apenas letras, dígitos, _ e -.
+                </span>
               </div>
             )}
             {form.isRoom && (
@@ -647,55 +651,57 @@ export function ControllersPage() {
         </div>
       </div>
 
-      <table>
-        <thead>
-          <tr>
-            <th>Nome</th>
-            <th>IP:Porta</th>
-            <th>SN</th>
-            <th>Usuários</th>
-            <th>Ações</th>
-          </tr>
-        </thead>
-        <tbody>
-          {filtered.map((c) => (
-            <tr key={c.id}>
-              <td>
-                {c.name} {c.isRoom && <span className="pill">Quarto</span>}
-              </td>
-              <td>
-                {c.ipAddress}:{c.port}
-              </td>
-              <td>
-                <code>{c.serialNumber}</code>
-              </td>
-              <td>
-                <span className="pill">{c.userCount}</span>
-              </td>
-              <td>
-                <div className="btn-group">
-                  <button className="btn btn-primary btn-sm" onClick={() => openModal(c)}>
-                    Controlar
-                  </button>
-                  <Link to={`/controllers/${c.id}`} className="btn btn-outline btn-sm">
-                    Detalhes
-                  </Link>
-                  {isAdminOrOperator && (
-                    <>
-                      <button className="btn btn-outline btn-sm" onClick={() => startEdit(c.id)}>
-                        Editar
-                      </button>
-                      <button className="btn btn-danger-outline btn-sm" onClick={() => handleDelete(c)}>
-                        Excluir
-                      </button>
-                    </>
-                  )}
-                </div>
-              </td>
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Nome</th>
+              <th>IP:Porta</th>
+              <th>SN</th>
+              <th>Usuários</th>
+              <th>Ações</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {filtered.map((c) => (
+              <tr key={c.id}>
+                <td>
+                  {c.name} {c.isRoom && <span className="pill">Quarto</span>}
+                </td>
+                <td>
+                  {c.ipAddress}:{c.port}
+                </td>
+                <td>
+                  <code>{c.serialNumber}</code>
+                </td>
+                <td>
+                  <span className="pill">{c.userCount}</span>
+                </td>
+                <td>
+                  <div className="btn-group">
+                    <button className="btn btn-primary btn-sm" onClick={() => openModal(c)}>
+                      Controlar
+                    </button>
+                    <Link to={`/controllers/${c.id}`} className="btn btn-outline btn-sm">
+                      Detalhes
+                    </Link>
+                    {isAdminOrOperator && (
+                      <>
+                        <button className="btn btn-outline btn-sm" onClick={() => startEdit(c.id)}>
+                          Editar
+                        </button>
+                        <button className="btn btn-danger-outline btn-sm" onClick={() => handleDelete(c)}>
+                          Excluir
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
 
       {modalController && (
         <Modal title={modalController.name} onClose={closeModal}>

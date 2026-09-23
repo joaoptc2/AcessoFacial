@@ -161,44 +161,46 @@ export function DevLogsPage() {
             : "Nenhum log capturado. Ative o modo de desenvolvimento para começar a registrar."}
         </div>
       ) : (
-        <table>
-          <thead>
-            <tr>
-              <th style={{ whiteSpace: "nowrap" }}>Horário</th>
-              <th>Nível</th>
-              <th>Origem</th>
-              <th>Mensagem</th>
-            </tr>
-          </thead>
-          <tbody>
-            {[...filtered].reverse().map((e) => {
-              const style = LEVEL_STYLE[e.level] ?? LEVEL_STYLE.Debug;
-              const shortCategory = e.category.split(".").pop() ?? e.category;
-              return (
-                <tr key={e.id}>
-                  <td style={{ whiteSpace: "nowrap" }}>{new Date(e.timestampUtc).toLocaleTimeString()}</td>
-                  <td>
-                    <span style={{ ...style, padding: "0.1rem 0.45rem", borderRadius: "0.35rem", fontSize: "0.78rem", fontWeight: 600 }}>
-                      {e.level}
-                    </span>
-                  </td>
-                  <td title={e.category} className="text-muted" style={{ whiteSpace: "nowrap" }}>
-                    {shortCategory}
-                  </td>
-                  <td style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.85rem", wordBreak: "break-word" }}>
-                    {e.message}
-                    {e.exception && (
-                      <details style={{ marginTop: "0.25rem" }}>
-                        <summary className="text-muted" style={{ cursor: "pointer" }}>exceção</summary>
-                        <pre style={{ whiteSpace: "pre-wrap", fontSize: "0.75rem", margin: "0.25rem 0 0" }}>{e.exception}</pre>
-                      </details>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th style={{ whiteSpace: "nowrap" }}>Horário</th>
+                <th>Nível</th>
+                <th>Origem</th>
+                <th>Mensagem</th>
+              </tr>
+            </thead>
+            <tbody>
+              {[...filtered].reverse().map((e) => {
+                const style = LEVEL_STYLE[e.level] ?? LEVEL_STYLE.Debug;
+                const shortCategory = e.category.split(".").pop() ?? e.category;
+                return (
+                  <tr key={e.id}>
+                    <td style={{ whiteSpace: "nowrap" }}>{new Date(e.timestampUtc).toLocaleTimeString()}</td>
+                    <td>
+                      <span style={{ ...style, padding: "0.1rem 0.45rem", borderRadius: "0.35rem", fontSize: "0.78rem", fontWeight: 600 }}>
+                        {e.level}
+                      </span>
+                    </td>
+                    <td title={e.category} className="text-muted" style={{ whiteSpace: "nowrap" }}>
+                      {shortCategory}
+                    </td>
+                    <td style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.85rem", wordBreak: "break-word" }}>
+                      {e.message}
+                      {e.exception && (
+                        <details style={{ marginTop: "0.25rem" }}>
+                          <summary className="text-muted" style={{ cursor: "pointer" }}>exceção</summary>
+                          <pre style={{ whiteSpace: "pre-wrap", fontSize: "0.75rem", margin: "0.25rem 0 0" }}>{e.exception}</pre>
+                        </details>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );

@@ -98,28 +98,30 @@ export function AlarmEventsPage() {
           <p className="text-muted">
             {page.total} registro(s) — página {page.page}
           </p>
-          <table>
-            <thead>
-              <tr>
-                <th>Data/Hora</th>
-                <th>Controlador</th>
-                <th>Tipo</th>
-                <th>Código bruto</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {page.items.map((item) => (
-                <tr key={item.id} style={item.cleared ? undefined : { background: "#fef2f2" }}>
-                  <td>{new Date(item.timestampUtc).toLocaleString()}</td>
-                  <td>{item.controllerName}</td>
-                  <td>{item.kind}</td>
-                  <td>{item.rawEventCode}</td>
-                  <td>{item.cleared ? "Encerrado" : "Disparado"}</td>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Data/Hora</th>
+                  <th>Controlador</th>
+                  <th>Tipo</th>
+                  <th>Código bruto</th>
+                  <th>Status</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {page.items.map((item) => (
+                  <tr key={item.id} style={item.cleared ? undefined : { background: "#fef2f2" }}>
+                    <td>{new Date(item.timestampUtc).toLocaleString()}</td>
+                    <td>{item.controllerName}</td>
+                    <td>{item.kind}</td>
+                    <td>{item.rawEventCode}</td>
+                    <td>{item.cleared ? "Encerrado" : "Disparado"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
 
           <div className="btn-group" style={{ marginTop: "0.75rem" }}>
             <button className="btn btn-outline btn-sm" disabled={currentPage <= 1} onClick={() => loadPage(currentPage - 1)}>

@@ -143,6 +143,8 @@ export function SettingsPage() {
         clearHomeAssistantToken: clearHaToken,
         homeAssistantWelcomeService: settings.homeAssistantWelcomeService,
         homeAssistantClearService: settings.homeAssistantClearService,
+        homeAssistantExtraActionService: settings.homeAssistantExtraActionService,
+        homeAssistantExtraActionLabel: settings.homeAssistantExtraActionLabel,
         welcomeBaseImagePath: settings.welcomeBaseImagePath,
         welcomePublicBaseUrl: settings.welcomePublicBaseUrl,
         welcomeTextY: settings.welcomeTextY === null ? "" : String(settings.welcomeTextY),
@@ -325,7 +327,7 @@ export function SettingsPage() {
               <input
                 value={settings.homeAssistantWelcomeService}
                 onChange={(e) => patch({ homeAssistantWelcomeService: e.target.value })}
-                placeholder="script.boas_vindas_leito"
+                placeholder="script.BV_{quarto}"
               />
             </div>
             <div className="form-field" style={{ minWidth: 220 }}>
@@ -336,7 +338,39 @@ export function SettingsPage() {
                 placeholder="script.limpar_tv_leito"
               />
             </div>
+            <div className="form-field" style={{ minWidth: 220 }}>
+              <label>Ação extra do quarto — serviço</label>
+              <input
+                value={settings.homeAssistantExtraActionService}
+                onChange={(e) => patch({ homeAssistantExtraActionService: e.target.value })}
+                placeholder="script.abrir_frigobar"
+              />
+            </div>
+            <div className="form-field" style={{ minWidth: 220 }}>
+              <label>Ação extra do quarto — rótulo do botão</label>
+              <input
+                value={settings.homeAssistantExtraActionLabel}
+                onChange={(e) => patch({ homeAssistantExtraActionLabel: e.target.value })}
+                placeholder={settings.homeAssistantEffective.extraActionLabel || "Abrir frigobar"}
+              />
+            </div>
           </div>
+          <p className="text-muted" style={{ fontSize: "0.85rem", margin: "0.35rem 0 0" }}>
+            <strong>Um script por quarto</strong>: escreva <code>{"{quarto}"}</code> no nome do serviço e
+            o sistema troca pelo campo <strong>"Quarto no Home Assistant"</strong> do controlador — com{" "}
+            <code>script.BV_{"{quarto}"}</code> e o quarto <code>14</code>, a chamada vai para{" "}
+            <code>script.BV_14</code>. A imagem de boas-vindas continua sendo enviada no payload
+            (<code>room</code>, <code>patient_name</code>, <code>welcome_image_url</code>). Sem{" "}
+            <code>{"{quarto}"}</code>, vale o comportamento antigo: um único script para todos os quartos.
+            Maiúsculas e minúsculas vão exatamente como escritas aqui.
+          </p>
+          <p className="text-muted" style={{ fontSize: "0.85rem", margin: "0.35rem 0 0" }}>
+            Com o serviço preenchido, a <strong>Gestão de Leitos</strong> ganha um botão
+            {settings.homeAssistantEffective.extraActionLabel
+              ? ` "${settings.homeAssistantEffective.extraActionLabel}"`
+              : " extra"}{" "}
+            em cada quarto integrado ao Home Assistant. Vazio = sem botão.
+          </p>
           <div className="btn-group" style={{ marginTop: "0.5rem" }}>
             <button type="button" className="btn btn-outline btn-sm" onClick={testHomeAssistant} disabled={testingHa}>
               {testingHa ? "Testando…" : "Testar conexão"}
@@ -586,33 +620,35 @@ export function SettingsPage() {
 
         {backups && backups.files.length > 0 && (
           <div style={{ overflowX: "auto" }}>
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Arquivo</th>
-                  <th>Gerada em</th>
-                  <th>Tamanho</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {backups.files.map((f) => (
-                  <tr key={f.fileName}>
-                    <td style={{ fontFamily: "monospace", fontSize: "0.85rem" }}>{f.fileName}</td>
-                    <td>{new Date(f.createdAtUtc).toLocaleString()}</td>
-                    <td style={{ whiteSpace: "nowrap" }}>{formatBytes(f.sizeBytes)}</td>
-                    <td style={{ whiteSpace: "nowrap" }}>
-                      <button type="button" className="btn btn-outline btn-sm" onClick={() => handleDownloadBackup(f.fileName)}>
-                        Baixar
-                      </button>{" "}
-                      <button type="button" className="btn btn-danger btn-sm" onClick={() => handleDeleteBackup(f.fileName)}>
-                        Remover
-                      </button>
-                    </td>
+            <div className="table-wrap">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Arquivo</th>
+                    <th>Gerada em</th>
+                    <th>Tamanho</th>
+                    <th />
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {backups.files.map((f) => (
+                    <tr key={f.fileName}>
+                      <td style={{ fontFamily: "monospace", fontSize: "0.85rem" }}>{f.fileName}</td>
+                      <td>{new Date(f.createdAtUtc).toLocaleString()}</td>
+                      <td style={{ whiteSpace: "nowrap" }}>{formatBytes(f.sizeBytes)}</td>
+                      <td style={{ whiteSpace: "nowrap" }}>
+                        <button type="button" className="btn btn-outline btn-sm" onClick={() => handleDownloadBackup(f.fileName)}>
+                          Baixar
+                        </button>{" "}
+                        <button type="button" className="btn btn-danger btn-sm" onClick={() => handleDeleteBackup(f.fileName)}>
+                          Remover
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
       </div>

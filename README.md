@@ -353,6 +353,13 @@ Fluxos (`BedsController`, rota `api/beds`):
 - **Alta** (`POST .../discharge`): encerra a internação (motivo Discharge) e revoga o acesso.
 - **Reexibir boas-vindas** (`POST .../replay-welcome`): regenera o JPG e re-chama o HA (para a
   TV que perdeu o evento).
+- **Ação extra do quarto** (`POST .../extra-action`): dispara um serviço do HA **à escolha do
+  hospital** (ex.: `script.abrir_frigobar`) com `{room}`. Configurado em **Configurações → Home
+  Assistant** (serviço + rótulo do botão); com o serviço vazio, o botão simplesmente não existe.
+  O botão aparece em cada leito **com "Quarto no Home Assistant" preenchido**, ocupado ou não —
+  é uma ação do quarto, não da internação. Diferente das boas-vindas, aqui a falha **não** é
+  silenciosa: sem serviço, sem quarto do HA ou com o HA recusando, o operador recebe a mensagem
+  do motivo (o botão é um comando, e comando sem retorno é pior que botão nenhum).
 
 **Tela de boas-vindas (JPG)**: o `WelcomeImageService` parte da **imagem base** do hospital
 (`BedManagement:WelcomeBaseImagePath`), desenha o nome do paciente na posição configurada
@@ -369,8 +376,24 @@ pública contém o nome do paciente — mantenha o servidor restrito à rede int
 por padrão): REST API do HA na mesma rede com long-lived access token (env
 `HomeAssistant__Token`). Na internação/transferência chama `WelcomeService` (ex.:
 `script.boas_vindas_leito`) com `{room, patient_name, welcome_image_url}`; na alta/transferência
-chama `ClearService` (opcional) com `{room}`. O `room` vem do campo **"Quarto no Home
-Assistant"** do cadastro do controlador (ex.: `quarto_101`). Toda chamada é **best-effort**:
+chama `ClearService` (opcional) com `{room}`; o botão da **ação extra** chama
+`ExtraActionService` com `{room}`. O `room` vem do campo **"Quarto no Home Assistant"** do
+cadastro do controlador.
+
+**Um script por quarto**: escrever `{quarto}` no nome do serviço faz o sistema trocar o
+marcador pelo valor desse campo — com `script.BV_{quarto}` e o quarto `14`, a chamada vai para
+`script.BV_14`, e o payload continua o mesmo (`room`, `patient_name`, `welcome_image_url`).
+Serve para os três serviços (boas-vindas, limpar TV, ação extra). **Sem** `{quarto}`, vale o
+comportamento original: um único script para todos os quartos, que recebe o quarto no payload —
+quem já estava configurado assim não precisa mexer em nada.
+
+A **caixa é preservada letra por letra** (`script.BV_14`, não `script.bv_14`): o `entity_id` do
+HA costuma ser minúsculo, mas quem configura é quem sabe como os scripts da casa foram criados,
+e normalizar aqui trocaria um "serviço não encontrado" claro por um mistério. Com `{quarto}`, o
+valor do campo precisa caber num `entity_id` — só letras, dígitos, `_` e `-`; "Quarto 101"
+produziria `script.BV_Quarto 101`, que o HA recusa, então o sistema **não chama** e loga o
+motivo em vez de falhar em silêncio. O botão **"Reexibir boas-vindas"** devolve o serviço que
+foi chamado (`script.BV_14`), o que o torna, na prática, o teste da automação do quarto. Toda chamada é **best-effort**:
 falha loga Warning (visível em Logs (Dev)) e nunca bloqueia o fluxo de internação. Exemplo de
 script no HA e instruções do token estão comentados no `appsettings.example.json`.
 
@@ -409,7 +432,13 @@ TCP, seções 1-9) e o **cliente HTTP** do painel web (`Infrastructure/Devices/`
   `DeviceQrService` (QR via HTTP) e o `DeviceCallbackController` (phone-home). Serve
   também o SPA React em `wwwroot/`.
 - **HospitalAccess.Web.React** — front-end React (Vite/TS), único front-end. O build gera
-  os estáticos em `HospitalAccess.Api/wwwroot/`.
+  os estáticos em `HospitalAccess.Api/wwwroot/`. O sistema visual inteiro sai das variáveis no
+  topo do `index.css` — nenhuma regra adiante traz um literal de cor. **Celular**: a partir de
+  900px a navegação vira uma **gaveta** (botão de menu na topbar, véu, fecha ao navegar/Esc);
+  abaixo de 600px formulários passam a um campo por linha e os diálogos ocupam a largura; abaixo
+  de 420px a topbar fica em ícones. A regra que amarra tudo é que **nada pode rolar a página na
+  horizontal**: tabela larga rola dentro do seu `.table-wrap`, nunca arrastando a tela. Layout
+  verificado de 320px (piso) a 1440px.
 - **HospitalAccess.Tests** — testes unitários (QR, classificador de eventos, conversor de imagem).
 
 ## Cópia de segurança (backup)

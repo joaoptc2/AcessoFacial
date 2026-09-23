@@ -71,6 +71,11 @@ public class BedsController : ControllerBase
             .Where(c => c.IsRoom)
             .OrderBy(c => c.Name)
             .ToListAsync(ct);
+        // Ação extra (ex.: frigobar): o botão só aparece no leito que TEM quarto do HA e com a
+        // integração pronta — senão o clique só produziria um erro.
+        var ha = _settings.HomeAssistant;
+        var extraLabel = ha.Ready && ha.HasExtraAction ? ha.ExtraActionLabel : null;
+
         var beds = controllers.Select(c =>
         {
             stayByController.TryGetValue(c.Id, out var stay);
@@ -92,6 +97,13 @@ public class BedsController : ControllerBase
                 StartedAtUtc = stay?.StartedAtUtc,
                 VisitorUserId = stay?.VisitorUserId,
                 AccessSyncState = syncState,
+                // Null = sem botão de ação extra neste leito. Com um script POR quarto, o
+                // botão só aparece onde o nome do serviço REALMENTE fecha — um botão que só
+                // pode dar erro não é oferta, é armadilha.
+                ExtraActionLabel = extraLabel is not null
+                    && HomeAssistantServiceName.Resolve(ha.ExtraActionService, c.HomeAssistantRoomId) is not null
+                        ? extraLabel
+                        : null,
             };
         });
 
@@ -190,7 +202,7 @@ public class BedsController : ControllerBase
         await _db.SaveChangesAsync(ct);
 
         _syncQueue.EnqueueSync(visitor.Id);
-        var (welcomeUrl, haCalled) = await TriggerWelcomeAsync(controller, patientName, ct);
+        var (welcomeUrl, haCalled, _) = await TriggerWelcomeAsync(controller, patientName, ct);
 
         return CreatedAtAction(nameof(List), null, new
         {
@@ -322,7 +334,7 @@ public class BedsController : ControllerBase
 
         // HA: limpa a TV do leito antigo (se configurado) e dá boas-vindas no novo.
         if (source is not null) await TriggerClearAsync(source, CancellationToken.None);
-        var (welcomeUrl, haCalled) = await TriggerWelcomeAsync(target, patientName, CancellationToken.None);
+        var (welcomeUrl, haCalled, _) = await TriggerWelcomeAsync(target, patientName, CancellationToken.None);
 
         return Ok(new
         {
@@ -400,6 +412,44 @@ public class BedsController : ControllerBase
         return NoContent();
     }
 
+    /// <summary>
+    /// Dispara a AÇÃO EXTRA configurada do quarto (ex.: abrir o frigobar) — um serviço do Home
+    /// Assistant à escolha do hospital, definido em Configurações. Diferente das boas-vindas,
+    /// aqui a falha NÃO é silenciosa: o botão é um comando do operador, então cada motivo de
+    /// não-execução vira uma mensagem acionável.
+    /// </summary>
+    [HttpPost("{controllerId:guid}/extra-action")]
+    public async Task<IActionResult> ExtraAction(Guid controllerId, CancellationToken ct)
+    {
+        var ha = _settings.HomeAssistant;
+        if (!ha.HasExtraAction)
+            return BadRequest("Nenhuma ação extra configurada. Defina o serviço em Configurações → Home Assistant.");
+        if (!ha.Ready)
+            return BadRequest("A integração com o Home Assistant está desligada ou incompleta (Configurações → Home Assistant).");
+
+        var controller = await _db.Controllers.AsNoTracking().FirstOrDefaultAsync(c => c.Id == controllerId, ct);
+        if (controller is null) return NotFound("Leito (controlador) não existe.");
+        if (string.IsNullOrWhiteSpace(controller.HomeAssistantRoomId))
+            return BadRequest($"O leito {controller.Name} não tem o quarto do Home Assistant definido (edite-o na tela de controladores).");
+
+        var service = HomeAssistantServiceName.Resolve(ha.ExtraActionService, controller.HomeAssistantRoomId);
+        if (service is null)
+            return BadRequest(
+                $"Não foi possível montar o serviço a partir de \"{ha.ExtraActionService}\" com o quarto " +
+                $"\"{controller.HomeAssistantRoomId}\" do leito {controller.Name}. O quarto só pode ter letras, " +
+                "dígitos, _ e - (ex.: 14).");
+
+        var ok = await _ha.CallServiceAsync(service,
+            HomeAssistantPayload.Room(controller.HomeAssistantRoomId), ct);
+        if (!ok)
+            return StatusCode(StatusCodes.Status502BadGateway,
+                $"O Home Assistant não executou \"{service}\" no quarto {controller.HomeAssistantRoomId}. Veja os Logs (Dev) para o motivo.");
+
+        _logger.LogInformation("Ação extra {Service} disparada no leito {Controller} por {User}.",
+            service, controller.Name, CurrentUsername());
+        return Ok(new { label = ha.ExtraActionLabel, room = controller.HomeAssistantRoomId, service });
+    }
+
     /// <summary>Regenera o JPG e re-dispara as boas-vindas no HA (para a TV que perdeu o evento).</summary>
     [HttpPost("{controllerId:guid}/replay-welcome")]
     public async Task<IActionResult> ReplayWelcome(Guid controllerId, CancellationToken ct)
@@ -411,15 +461,17 @@ public class BedsController : ControllerBase
         var controller = await _db.Controllers.FirstOrDefaultAsync(c => c.Id == controllerId, ct);
         if (controller is null) return NotFound();
 
-        var (welcomeUrl, haCalled) = await TriggerWelcomeAsync(controller, stay.PatientName, ct);
-        return Ok(new { welcomeImageUrl = welcomeUrl, homeAssistantCalled = haCalled });
+        var (welcomeUrl, haCalled, service) = await TriggerWelcomeAsync(controller, stay.PatientName, ct);
+        // Este botão é, na prática, o teste da automação do quarto — devolver QUAL serviço foi
+        // chamado (script.BV_14) é o que permite conferir contra o HA sem abrir o log.
+        return Ok(new { welcomeImageUrl = welcomeUrl, homeAssistantCalled = haCalled, service });
     }
 
     /// <summary>
     /// Gera o JPG de boas-vindas e chama o HA. BEST-EFFORT: qualquer falha loga e devolve o
     /// que conseguiu — nunca derruba a operação de leito que a disparou.
     /// </summary>
-    private async Task<(string? WelcomeUrl, bool HaCalled)> TriggerWelcomeAsync(
+    private async Task<(string? WelcomeUrl, bool HaCalled, string? Service)> TriggerWelcomeAsync(
         Domain.Entities.Controller controller, string patientName, CancellationToken ct)
     {
         string? url = null;
@@ -442,21 +494,34 @@ public class BedsController : ControllerBase
         }
 
         var haCalled = false;
-        if (url is not null && !string.IsNullOrWhiteSpace(controller.HomeAssistantRoomId))
+        var service = HomeAssistantServiceName.Resolve(
+            _settings.HomeAssistant.WelcomeService, controller.HomeAssistantRoomId);
+        if (url is not null && !string.IsNullOrWhiteSpace(controller.HomeAssistantRoomId) && service is not null)
         {
             haCalled = await _ha.CallServiceAsync(
-                _settings.HomeAssistant.WelcomeService,
+                service,
                 HomeAssistantPayload.Welcome(controller.HomeAssistantRoomId, patientName, url), ct);
         }
-        return (url, haCalled);
+        else if (url is not null && service is null)
+        {
+            // Com um script POR quarto, não resolver o nome é falha de CADASTRO, não de rede —
+            // e as boas-vindas são best-effort, então sem este aviso ninguém descobriria por que
+            // a TV daquele quarto nunca acende.
+            _logger.LogWarning(
+                "Boas-vindas do leito {Controller}: não foi possível montar o serviço a partir de '{Template}' " +
+                "com o quarto '{Room}'. Verifique o campo 'Quarto no Home Assistant' do controlador (só letras, " +
+                "dígitos, _ e -) e o serviço em Configurações.",
+                controller.Name, _settings.HomeAssistant.WelcomeService, controller.HomeAssistantRoomId);
+        }
+        return (url, haCalled, service);
     }
 
     private async Task TriggerClearAsync(Domain.Entities.Controller controller, CancellationToken ct)
     {
-        var clearService = _settings.HomeAssistant.ClearService;
-        if (string.IsNullOrWhiteSpace(clearService) ||
-            string.IsNullOrWhiteSpace(controller.HomeAssistantRoomId))
-            return;
+        if (string.IsNullOrWhiteSpace(controller.HomeAssistantRoomId)) return;
+        var clearService = HomeAssistantServiceName.Resolve(
+            _settings.HomeAssistant.ClearService, controller.HomeAssistantRoomId);
+        if (clearService is null) return;
         await _ha.CallServiceAsync(clearService,
             HomeAssistantPayload.Clear(controller.HomeAssistantRoomId), ct);
     }

@@ -320,87 +320,89 @@ export function VisitorsPage() {
         </div>
       </div>
 
-      <table>
-        <thead>
-          <tr>
-            <th>Nome</th>
-            <th>Código</th>
-            <th>Quarto</th>
-            <th>Válido até</th>
-            <th>Status</th>
-            <th>Sincronização (QR)</th>
-            <th>Ações</th>
-          </tr>
-        </thead>
-        <tbody>
-          {filtered.map((v) => (
-            <tr key={v.id}>
-              <td>{v.name}</td>
-              <td>{v.userCode}</td>
-              <td>
-                {changingRoomId === v.id ? (
-                  <select
-                    autoFocus
-                    defaultValue={v.controllers[0]?.controllerId ?? ""}
-                    onChange={(e) => e.target.value && handleChangeRoom(v, e.target.value)}
-                    onBlur={() => setChangingRoomId(null)}
-                  >
-                    <option value="">(selecione)</option>
-                    {controllers.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <span>{v.controllers[0]?.controllerName ?? <span className="text-muted">—</span>}</span>
-                )}
-              </td>
-              <td>{v.validUntil ? new Date(v.validUntil).toLocaleString() : "—"}</td>
-              <td>
-                <span className={statusClass(v)}>{statusLabel(v)}</span>
-              </td>
-              <td>
-                {v.syncTotal === 0 ? (
-                  <span className="pill pill-danger" title="Sem porta — o QR não abre nada">sem porta</span>
-                ) : v.syncSynced > 0 ? (
-                  <span className="pill pill-success" title="QR ativo nas portas sincronizadas">
-                    {v.syncSynced}/{v.syncTotal} porta(s)
-                  </span>
-                ) : (
-                  <span className="pill pill-warning" title="Ainda não enviado ao(s) controlador(es)">
-                    pendente {v.syncPending}/{v.syncTotal}
-                  </span>
-                )}
-              </td>
-              <td>
-                <div className="btn-group">
-                  {!v.isRevoked && (
-                    <>
-                      <button className="btn btn-outline btn-sm" onClick={() => showQr(v.id, v.name)}>
-                        Ver QR
-                      </button>
-                      <button
-                        className="btn btn-outline btn-sm"
-                        onClick={() => setChangingRoomId(changingRoomId === v.id ? null : v.id)}
-                        title="Mudar o visitante de quarto: invalida o QR atual e gera um novo"
-                      >
-                        Trocar quarto
-                      </button>
-                      <button className="btn btn-danger-outline btn-sm" onClick={() => handleRevoke(v.id)}>
-                        Revogar
-                      </button>
-                    </>
-                  )}
-                  <button className="btn btn-danger btn-sm" onClick={() => handleDelete(v.id, v.name)}>
-                    Excluir
-                  </button>
-                </div>
-              </td>
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Nome</th>
+              <th>Código</th>
+              <th>Quarto</th>
+              <th>Válido até</th>
+              <th>Status</th>
+              <th>Sincronização (QR)</th>
+              <th>Ações</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {filtered.map((v) => (
+              <tr key={v.id}>
+                <td>{v.name}</td>
+                <td>{v.userCode}</td>
+                <td>
+                  {changingRoomId === v.id ? (
+                    <select
+                      autoFocus
+                      defaultValue={v.controllers[0]?.controllerId ?? ""}
+                      onChange={(e) => e.target.value && handleChangeRoom(v, e.target.value)}
+                      onBlur={() => setChangingRoomId(null)}
+                    >
+                      <option value="">(selecione)</option>
+                      {controllers.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <span>{v.controllers[0]?.controllerName ?? <span className="text-muted">—</span>}</span>
+                  )}
+                </td>
+                <td>{v.validUntil ? new Date(v.validUntil).toLocaleString() : "—"}</td>
+                <td>
+                  <span className={statusClass(v)}>{statusLabel(v)}</span>
+                </td>
+                <td>
+                  {v.syncTotal === 0 ? (
+                    <span className="pill pill-danger" title="Sem porta — o QR não abre nada">sem porta</span>
+                  ) : v.syncSynced > 0 ? (
+                    <span className="pill pill-success" title="QR ativo nas portas sincronizadas">
+                      {v.syncSynced}/{v.syncTotal} porta(s)
+                    </span>
+                  ) : (
+                    <span className="pill pill-warning" title="Ainda não enviado ao(s) controlador(es)">
+                      pendente {v.syncPending}/{v.syncTotal}
+                    </span>
+                  )}
+                </td>
+                <td>
+                  <div className="btn-group">
+                    {!v.isRevoked && (
+                      <>
+                        <button className="btn btn-outline btn-sm" onClick={() => showQr(v.id, v.name)}>
+                          Ver QR
+                        </button>
+                        <button
+                          className="btn btn-outline btn-sm"
+                          onClick={() => setChangingRoomId(changingRoomId === v.id ? null : v.id)}
+                          title="Mudar o visitante de quarto: invalida o QR atual e gera um novo"
+                        >
+                          Trocar quarto
+                        </button>
+                        <button className="btn btn-danger-outline btn-sm" onClick={() => handleRevoke(v.id)}>
+                          Revogar
+                        </button>
+                      </>
+                    )}
+                    <button className="btn btn-danger btn-sm" onClick={() => handleDelete(v.id, v.name)}>
+                      Excluir
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
