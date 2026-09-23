@@ -4,6 +4,7 @@ using System.Threading.RateLimiting;
 using HospitalAccess.Api.Auth;
 using HospitalAccess.Api.Options;
 using HospitalAccess.Api.Services;
+using HospitalAccess.Application.Diagnostics;
 using HospitalAccess.Application.Qr;
 using HospitalAccess.Application.Sync;
 using HospitalAccess.Gateway;
@@ -31,7 +32,7 @@ builder.Logging.AddProvider(new HospitalAccess.Api.Services.DevLogLoggerProvider
 
 // Enums como string no JSON (ex.: AccessMethod, AlarmKind, SyncState) — os tipos TS do
 // front-end React já assumem essa representação.
-builder.Services.AddControllers()
+builder.Services.AddControllers(o => o.Filters.Add<DeviceTraceTriggerFilter>())
     .AddJsonOptions(o => o.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
@@ -106,6 +107,13 @@ builder.Services.Configure<MonitoringOptions>(builder.Configuration.GetSection(M
 builder.Services.Configure<OfflineCollectionOptions>(builder.Configuration.GetSection(OfflineCollectionOptions.SectionName));
 builder.Services.Configure<HealthCheckOptions>(builder.Configuration.GetSection(HealthCheckOptions.SectionName));
 
+// Diagnóstico de desempenho dos aparelhos: UMA instância que é, ao mesmo tempo, o destino das
+// medições (IDeviceTraceSink) e o serviço que as grava em lote. Registrar as duas faces
+// apontando para o mesmo singleton é o que garante que a fila em memória é uma só.
+builder.Services.AddSingleton<DeviceTraceRecorder>();
+builder.Services.AddSingleton<IDeviceTraceSink>(sp => sp.GetRequiredService<DeviceTraceRecorder>());
+builder.Services.AddHostedService(sp => sp.GetRequiredService<DeviceTraceRecorder>());
+
 // Gateway de dispositivos (SDK DoNetDrive). Singleton: o ConnectorAllocator é único.
 builder.Services.AddSingleton<ControllerConnectionFactory>();
 builder.Services.AddSingleton<IDeviceGateway>(sp => new DoNetDriveGateway(
@@ -114,6 +122,7 @@ builder.Services.AddSingleton<IDeviceGateway>(sp => new DoNetDriveGateway(
     sp.GetRequiredService<ILogger<DoNetDriveGateway>>())
 {
     FaceUploadWireRetries = sp.GetRequiredService<IOptions<SyncRetryOptions>>().Value.FaceUploadWireRetries,
+    TraceSink = sp.GetRequiredService<IDeviceTraceSink>(),
 });
 
 // Integração HTTP com o painel web dos controladores (para LER o QRCode que o aparelho gera e,

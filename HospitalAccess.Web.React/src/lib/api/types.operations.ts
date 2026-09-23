@@ -205,6 +205,30 @@ export interface BedActionResult {
   service?: string | null;
 }
 
+// ---- Diagnóstico de desempenho dos aparelhos (Admin) ----
+
+export interface DeviceTraceOperationStat {
+  channel: string;
+  operation: string;
+  chamadas: number;
+  tempoTotalMs: number;
+  mediaMs: number;
+  esperaMediaMs: number;
+  falhas: number;
+}
+
+export interface DeviceTraceSummary {
+  enabled: boolean;
+  retentionDays: number;
+  total: number;
+  firstAtUtc: string | null;
+  lastAtUtc: string | null;
+  written: number;
+  /** Amostras perdidas por fila cheia. > 0 significa CSV com buraco — precisa ser visível. */
+  dropped: number;
+  byOperation: DeviceTraceOperationStat[];
+}
+
 // ---- Logs de desenvolvimento (Admin) ----
 
 export interface DevLogEntry {

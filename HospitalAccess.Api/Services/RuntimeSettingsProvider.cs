@@ -33,11 +33,15 @@ public sealed class RuntimeSettingsProvider : IDeviceSecretDefaults, IDeviceHttp
     /// </summary>
     public sealed record BackupSettings(int IntervalHours, int MaxFiles, int RetentionDays);
 
+    /// <summary>Diagnóstico de desempenho dos aparelhos (ver DeviceTraceRecorder).</summary>
+    public sealed record DiagnosticsSettings(bool DeviceTraceEnabled, int DeviceTraceRetentionDays);
+
     public sealed record WelcomeSettings(string BaseImagePath, string OutputDirectory, string PublicBaseUrl,
         int TextX, int TextY, bool CenterHorizontally, float FontSize, string FontColorHex, string FontPath);
 
     private sealed record Snapshot(HomeAssistantSettings HomeAssistant, WelcomeSettings Welcome,
-        BackupSettings Backup, string DeviceDefaultCommunicationPassword, string DeviceDefaultApiPassword);
+        BackupSettings Backup, DiagnosticsSettings Diagnostics,
+        string DeviceDefaultCommunicationPassword, string DeviceDefaultApiPassword);
 
     /// <summary>Padrões de FÁBRICA do 8190H — último recurso quando nem o banco nem o appsettings definem.</summary>
     public const string FactoryCommunicationPassword = "FFFFFFFF";
@@ -69,6 +73,7 @@ public sealed class RuntimeSettingsProvider : IDeviceSecretDefaults, IDeviceHttp
     public HomeAssistantSettings HomeAssistant => Current.HomeAssistant;
     public WelcomeSettings Welcome => Current.Welcome;
     public BackupSettings Backup => Current.Backup;
+    public DiagnosticsSettings Diagnostics => Current.Diagnostics;
 
     /// <summary>Senha de comunicação padrão: Configurações → padrão de fábrica (FFFFFFFF).</summary>
     public string? DefaultCommunicationPassword =>
@@ -143,6 +148,10 @@ public sealed class RuntimeSettingsProvider : IDeviceSecretDefaults, IDeviceHttp
             Math.Max(1, row?.BackupIntervalHours ?? _backupDefaults.IntervalHours),
             Math.Max(0, row?.BackupMaxFiles ?? _backupDefaults.MaxFiles),
             _backupDefaults.RetentionDays),
+        new DiagnosticsSettings(
+            row?.DeviceTraceEnabled ?? false,
+            // Piso de 1 dia: prazo 0 apagaria a coleta na primeira passagem do expurgo.
+            Math.Max(1, row?.DeviceTraceRetentionDays ?? 7)),
         row?.DeviceDefaultCommunicationPassword ?? string.Empty,
         row?.DeviceDefaultApiPassword ?? string.Empty);
 

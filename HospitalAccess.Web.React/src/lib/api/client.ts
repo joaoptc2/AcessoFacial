@@ -5,7 +5,7 @@
 import { buildQuery, request, requestBlob } from "./http";
 import type { AlarmSettings, ControllerDetailDto, ControllerDto, ControllerNetworkInfo, CreateControllerRequest, DiscoveredController, EventPhotoListItem, KioskSettings, PersonnelAudit, PersonnelAuditSnapshot, RelocateResult, SyncOverviewDto, SyncStatusDto, UpdateControllerRequest } from "./types.controllers";
 import type { CreateVisitorRequest, LoginResponse, StaffRole, StaffUserDto, UserAccessReport, UserAuditLogEntry, UserDetailDto, UserGroupDto, UserGroupRequest, UserListPage, VisitorListItemDto } from "./types.people";
-import type { AccessLogPage, DoorScheduleDto, ScheduleWindowDto, AlarmEventPage, BackupFileDto, BackupListDto, BedActionResult, BedDto, BedHistoryPage, DashboardDto, DevLogsResponse, EmergencyResultDto, HolidayDto, HolidayRequest, SystemSettingsDto, TvStatusDto, UpdateSettingsRequest } from "./types.operations";
+import type { DeviceTraceSummary, AccessLogPage, DoorScheduleDto, ScheduleWindowDto, AlarmEventPage, BackupFileDto, BackupListDto, BedActionResult, BedDto, BedHistoryPage, DashboardDto, DevLogsResponse, EmergencyResultDto, HolidayDto, HolidayRequest, SystemSettingsDto, TvStatusDto, UpdateSettingsRequest } from "./types.operations";
 
 export const api = {
   login: (username: string, password: string) =>
@@ -265,6 +265,17 @@ export const api = {
     request<{ label: string; room: string; service: string }>(`/beds/${controllerId}/extra-action`, {
       method: "POST",
     }),
+
+  // ---- Diagnóstico de desempenho dos aparelhos (Admin) ----
+  getDeviceTraceSummary: () => request<DeviceTraceSummary>("/devicetrace/summary"),
+  setDeviceTraceMode: (enabled: boolean, retentionDays?: number) =>
+    request<{ enabled: boolean; retentionDays: number }>("/devicetrace/mode", {
+      method: "POST",
+      body: JSON.stringify({ enabled, retentionDays }),
+    }),
+  downloadDeviceTraceCsv: (days?: number) =>
+    requestBlob(`/devicetrace/export.csv${days ? `?days=${days}` : ""}`),
+  clearDeviceTrace: () => request<{ removed: number }>("/devicetrace", { method: "DELETE" }),
 
   // ---- Logs de desenvolvimento (Admin) ----
   getDevLogs: (params: { sinceId?: number; take?: number } = {}) =>

@@ -72,11 +72,17 @@ public sealed class DataRetentionBackgroundService : BackgroundService
                 .ExecuteDeleteAsync(ct);
         }
 
-        if (photos + access + alarms + audits + stays > 0)
+        // Rastreamento de desempenho: piso de 1 dia, NUNCA "reter indefinidamente". É um
+        // diagnóstico que escreve uma linha por comando — deixado ligado e sem teto, enche o
+        // disco em silêncio. Quem quiser guardar a coleta, exporta o CSV.
+        var traces = await PurgeOlderThanAsync(db.DeviceCommandTraces, t => t.StartedAtUtc,
+            Math.Max(1, settings.DeviceTraceRetentionDays), now, ct);
+
+        if (photos + access + alarms + audits + stays + traces > 0)
         {
             _logger.LogInformation(
-                "Expurgo por retenção: {Photos} fotos, {Access} acessos, {Alarms} alarmes, {Audits} auditorias, {Stays} internações encerradas.",
-                photos, access, alarms, audits, stays);
+                "Expurgo por retenção: {Photos} fotos, {Access} acessos, {Alarms} alarmes, {Audits} auditorias, {Stays} internações encerradas, {Traces} medições de comando.",
+                photos, access, alarms, audits, stays, traces);
         }
     }
 

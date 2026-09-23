@@ -43,7 +43,10 @@ public record UpdateSettingsRequest(
     string? WelcomeFontSize = null,
     string? WelcomeFontColorHex = null,
     // Caminho da fonte enviada ("" = voltar à fonte do sistema/appsettings; null = manter).
-    string? WelcomeFontPath = null);
+    string? WelcomeFontPath = null,
+    // Diagnóstico de desempenho dos aparelhos: null = manter o estado atual.
+    bool? DeviceTraceEnabled = null,
+    int? DeviceTraceRetentionDays = null);
 
 /// <summary>
 /// Configurações globais do sistema (linha única): retenção de dados (LGPD), formato do QR,
@@ -101,6 +104,8 @@ public class SettingsController : ControllerBase
             settings.WelcomeFontSize,
             settings.WelcomeFontColorHex,
             settings.WelcomeFontPath,
+            settings.DeviceTraceEnabled,
+            settings.DeviceTraceRetentionDays,
             // Efetivo (banco-ou-appsettings), para a tela mostrar o que vale de fato.
             HomeAssistantEffective = new
             {
@@ -128,6 +133,8 @@ public class SettingsController : ControllerBase
             return BadRequest("O intervalo entre cópias deve ser de pelo menos 1 hora.");
         if (request.BackupMaxFiles < 0)
             return BadRequest("O número de cópias a manter não pode ser negativo (0 = sem teto).");
+        if (request.DeviceTraceRetentionDays is { } dias && dias < 1)
+            return BadRequest("O prazo do diagnóstico de desempenho deve ser de pelo menos 1 dia.");
         if (request.QrFormat is not ("Appendix8Rc4" or "PlainText"))
             return BadRequest("QrFormat deve ser 'Appendix8Rc4' ou 'PlainText'.");
         if (request.HomeAssistantEnabled is not (null or "" or "on" or "off"))
@@ -210,6 +217,12 @@ public class SettingsController : ControllerBase
             settings.WelcomeFontColorHex = color.Length > 0 && !color.StartsWith('#') ? $"#{color}" : color;
         if (request.WelcomeFontPath is not null)
             settings.WelcomeFontPath = request.WelcomeFontPath.Trim();
+        if (request.DeviceTraceEnabled is { } traceEnabled)
+            settings.DeviceTraceEnabled = traceEnabled;
+        if (request.DeviceTraceRetentionDays is { } traceDays)
+            // Piso de 1: o rastreamento nunca é "reter indefinidamente" — ele escreve uma linha
+            // por comando e encheria o disco se ficasse ligado e esquecido.
+            settings.DeviceTraceRetentionDays = Math.Max(1, traceDays);
 
         settings.UpdatedAtUtc = DateTime.UtcNow;
         settings.UpdatedByUsername = User.Identity?.Name;

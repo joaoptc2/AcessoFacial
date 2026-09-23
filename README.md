@@ -441,6 +441,40 @@ TCP, seções 1-9) e o **cliente HTTP** do painel web (`Infrastructure/Devices/`
   verificado de 320px (piso) a 1440px.
 - **HospitalAccess.Tests** — testes unitários (QR, classificador de eventos, conversor de imagem).
 
+## Diagnóstico de desempenho dos aparelhos
+
+Uma linha por comando enviado a um controlador, para responder "por que está lento?" com número
+em vez de palpite. **Desligado por padrão**; liga-se em *Diagnóstico* (`/devlogs`), deixa-se
+coletar alguns dias, exporta-se o CSV e desliga-se.
+
+O que cada linha separa, e por que isso é o ponto todo:
+
+| Coluna | O que responde |
+|---|---|
+| `espera_fila_ms` | Quanto tempo o comando esperou a VEZ naquele controlador (os comandos são serializados por aparelho) |
+| `duracao_ms` | Quanto tempo o comando levou já com a vez garantida — o aparelho e a rede |
+| `fila_profundidade` | Quantos comandos estavam na frente quando este chegou |
+| `origem` | Quem pediu: fila de sincronização, comando manual da tela, gestão de leitos, health-check, monitoramento |
+| `desfecho` | `Success`, `Failed`, `Timeout`, `GateBusy` (a vez não chegou a tempo), `CircuitOpen`, `Canceled` |
+| `payload_bytes` | Bytes enviados — a face pesa ~120 KB, os demais comandos dezenas |
+
+Espera alta com duração baixa = a fila é nossa (concorrência do sistema). Espera zero com
+duração alta = o aparelho ou a rede. Sem essa separação, as duas causas parecem a mesma coisa.
+
+**Custos e limites**: desligado, nem o registro é montado no caminho do comando. Ligado, a
+gravação é assíncrona (fila em memória + INSERT em lote) — o instrumento não pode virar parte do
+que está medindo. A fila é limitada e DESCARTA quando cheia; o total descartado aparece no
+resumo, porque um CSV com lacuna que se ignora é pior que CSV nenhum. O expurgo automático tem
+piso de 1 dia e nunca "reter indefinidamente": é um registro por comando, e esquecido ligado
+encheria o disco.
+
+**Privacidade**: nunca guarda nome de pessoa — só o código numérico do usuário.
+
+**Ponto cego conhecido**: um comando que falha ANTES de chegar ao ponto medido (senha de
+comunicação indecifrável, SN fora do formato) não gera linha. São erros de cadastro, não de
+desempenho, e aparecem como 502 imediato na tela — mas vale lembrar ao ler um CSV com menos
+comandos do que o esperado.
+
 ## Cópia de segurança (backup)
 
 Rotina automática (`BackupBackgroundService`, ligada por padrão) mais geração sob demanda pela

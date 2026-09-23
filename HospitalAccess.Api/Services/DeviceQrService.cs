@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using HospitalAccess.Application.Diagnostics;
 using HospitalAccess.Domain.Entities;
 using HospitalAccess.Infrastructure.Devices;
 using HospitalAccess.Infrastructure.Persistence;
@@ -27,10 +28,14 @@ public sealed class DeviceQrService
     private readonly DeviceHttpClientFactory _factory;
     private readonly ILogger<DeviceQrService> _logger;
 
-    public DeviceQrService(AccessDbContext db, DeviceHttpClientFactory factory, ILogger<DeviceQrService> logger)
+    private readonly IDeviceTraceSink _trace;
+
+    public DeviceQrService(AccessDbContext db, DeviceHttpClientFactory factory,
+        IDeviceTraceSink trace, ILogger<DeviceQrService> logger)
     {
         _db = db;
         _factory = factory;
+        _trace = trace;
         _logger = logger;
     }
 
@@ -105,7 +110,50 @@ public sealed class DeviceQrService
         }
     }
 
+    /// <summary>
+    /// Mede a operação INTEIRA de QR (login + leitura + eventual provisionamento), não cada
+    /// requisição HTTP por dentro: é esse tempo que o operador espera olhando a tela, e é ele
+    /// que precisa ser comparável com os comandos do canal binário.
+    /// </summary>
     private async Task<DeviceQrResult?> ReadOrProvisionAsync(Controller controller, User user, int timeGroup, CancellationToken ct)
+    {
+        var tracing = _trace.Enabled;
+        var startedAtUtc = DateTime.UtcNow;
+        var clock = tracing ? System.Diagnostics.Stopwatch.StartNew() : null;
+        try
+        {
+            var result = await ReadOrProvisionCoreAsync(controller, user, timeGroup, ct);
+            TraceQr(tracing, startedAtUtc, clock, controller, user, DeviceTraceOutcome.Success, null);
+            return result;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            TraceQr(tracing, startedAtUtc, clock, controller, user, DeviceTraceOutcome.Canceled, null);
+            throw;
+        }
+        catch (Exception ex)
+        {
+            TraceQr(tracing, startedAtUtc, clock, controller, user, DeviceTraceOutcome.Failed, ex.Message);
+            throw;
+        }
+    }
+
+    private void TraceQr(bool tracing, DateTime startedAtUtc, System.Diagnostics.Stopwatch? clock,
+        Controller controller, User user, string outcome, string? error)
+    {
+        if (!tracing) return;
+        _trace.Record(new DeviceCommandTraceRecord(
+            startedAtUtc, controller.Id, controller.Name, controller.IpAddress,
+            "HTTP", "QrReadOrProvision", DeviceTraceContext.Trigger,
+            QueueWaitMs: 0, // o canal HTTP não passa pela fila do controlador
+            DurationMs: (int)Math.Min(int.MaxValue, clock?.ElapsedMilliseconds ?? 0),
+            QueueDepth: 0, outcome,
+            error is { Length: > 300 } ? error[..300] : error,
+            PayloadBytes: 0, TimeoutMs: controller.TimeoutMs, RestartCount: controller.RestartCount,
+            UserCode: user.UserCode));
+    }
+
+    private async Task<DeviceQrResult?> ReadOrProvisionCoreAsync(Controller controller, User user, int timeGroup, CancellationToken ct)
     {
         var userId = user.UserCode.ToString();
         await using var client = _factory.Create(controller);

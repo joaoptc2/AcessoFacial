@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, ApiError, type DevLogEntry } from "../lib/api";
+import { DeviceTracePanel } from "../components/DeviceTracePanel";
 import { useFeedback } from "../lib/feedback";
 
 const POLL_INTERVAL_MS = 3000;
@@ -106,7 +107,13 @@ export function DevLogsPage() {
 
   return (
     <div>
-      <h2>Logs de desenvolvimento</h2>
+      <h2>Diagnóstico</h2>
+
+      {/* A coleta de desempenho vem PRIMEIRO: é uma medição que roda por dias e precisa ser
+          conferida de relance, enquanto os logs abaixo são leitura pontual. */}
+      <DeviceTracePanel />
+
+      <h3 style={{ marginTop: "2rem" }}>Logs de desenvolvimento</h3>
       <p className="text-muted">
         Com o modo de desenvolvimento ativo, os logs importantes do servidor (sincronização,
         monitoramento, health-check, comandos aos controladores, erros) ficam visíveis aqui —
