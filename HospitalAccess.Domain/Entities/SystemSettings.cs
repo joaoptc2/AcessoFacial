@@ -102,6 +102,18 @@ public class SystemSettings
     public float? WelcomeFontSize { get; set; }
     public string WelcomeFontColorHex { get; set; } = string.Empty;
 
+    // ---- Diagnóstico de desempenho dos aparelhos. Desligado por padrão: liga-se por alguns
+    // dias para achar o gargalo, exporta-se o CSV e desliga-se.
+
+    /// <summary>
+    /// Registra uma linha por comando enviado a um aparelho (tempo de fila, duração, desfecho).
+    /// Desligado = custo zero: nem o registro é montado no caminho do comando.
+    /// </summary>
+    public bool DeviceTraceEnabled { get; set; }
+
+    /// <summary>Dias para reter o rastreamento. Piso de 1 — uma coleta esquecida não pode encher o disco.</summary>
+    public int DeviceTraceRetentionDays { get; set; } = 7;
+
     /// <summary>Última atualização das configurações.</summary>
     public DateTime UpdatedAtUtc { get; set; } = DateTime.UtcNow;
 

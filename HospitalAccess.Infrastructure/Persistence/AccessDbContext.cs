@@ -44,6 +44,7 @@ public class AccessDbContext : DbContext
     public DbSet<ControllerTimeGroupSegment> ControllerTimeGroupSegments => Set<ControllerTimeGroupSegment>();
     public DbSet<SystemSettings> SystemSettings => Set<SystemSettings>();
     public DbSet<BedStay> BedStays => Set<BedStay>();
+    public DbSet<DeviceCommandTrace> DeviceCommandTraces => Set<DeviceCommandTrace>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -120,6 +121,13 @@ public class AccessDbContext : DbContext
         // Gestão de leitos: no máximo 1 internação ATIVA (EndedAtUtc null) por leito; as
         // encerradas formam o histórico de mudanças. O User visitante de acesso pode ser
         // excluído sem perder o histórico (SetNull — PatientName é o snapshot).
+        // Rastreamento de desempenho: índice pelo instante porque TODA leitura é por período
+        // (exportar a janela, expurgar o que passou do prazo). Sem chave estrangeira para
+        // Controllers de propósito — apagar um controlador não pode apagar o histórico da
+        // medição que explica por que ele era lento.
+        b.Entity<DeviceCommandTrace>().HasIndex(t => t.StartedAtUtc);
+        b.Entity<DeviceCommandTrace>().HasIndex(t => new { t.ControllerId, t.StartedAtUtc });
+
         b.Entity<BedStay>()
             .HasIndex(s => s.ControllerId)
             .IsUnique()

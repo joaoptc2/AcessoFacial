@@ -1,4 +1,5 @@
 using HospitalAccess.Api.Options;
+using HospitalAccess.Application.Diagnostics;
 using HospitalAccess.Gateway;
 using HospitalAccess.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -58,6 +59,7 @@ public sealed class DeviceMonitoringBackgroundService : BackgroundService
 
     private async Task ArmAllAsync(CancellationToken ct)
     {
+        using var _trace = DeviceTraceContext.Use(DeviceTraceTrigger.Monitoring);
         List<Domain.Entities.Controller> controllers;
         try
         {

@@ -1,4 +1,5 @@
 using HospitalAccess.Api.Options;
+using HospitalAccess.Application.Diagnostics;
 using HospitalAccess.Api.Services;
 using HospitalAccess.Domain.Entities;
 using HospitalAccess.Domain.Enums;
@@ -49,7 +50,7 @@ public sealed class UserSyncServiceTests
         var httpFactory = new DeviceHttpClientFactory(
             Options.Create(new DeviceHttpOptions()),
             NullLogger<DeviceHttpClient>.Instance);
-        var qr = new DeviceQrService(db, httpFactory, NullLogger<DeviceQrService>.Instance);
+        var qr = new DeviceQrService(db, httpFactory, new NullDeviceTraceSink(), NullLogger<DeviceQrService>.Instance);
 
         var service = new UserSyncService(
             db, gateway, qr,

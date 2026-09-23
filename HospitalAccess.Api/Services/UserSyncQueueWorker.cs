@@ -1,4 +1,5 @@
 using HospitalAccess.Api.Options;
+using HospitalAccess.Application.Diagnostics;
 using HospitalAccess.Application.Sync;
 using HospitalAccess.Gateway;
 using HospitalAccess.Infrastructure.Persistence;
@@ -44,6 +45,7 @@ public sealed class UserSyncQueueWorker : BackgroundService
 
     private async Task WorkerLoopAsync(CancellationToken stoppingToken)
     {
+        using var _trace = DeviceTraceContext.Use(DeviceTraceTrigger.SyncQueue);
         await foreach (var work in _queue.Reader.ReadAllAsync(stoppingToken))
         {
             try

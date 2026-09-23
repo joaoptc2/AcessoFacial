@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using HospitalAccess.Application.Diagnostics;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using HospitalAccess.Api.Options;
@@ -78,6 +79,7 @@ public sealed class DeviceHealthBackgroundService : BackgroundService
 
     private async Task CheckAllAsync(CancellationToken ct)
     {
+        using var _trace = DeviceTraceContext.Use(DeviceTraceTrigger.HealthCheck);
         List<Domain.Entities.Controller> controllers;
         using (var scope = _scopeFactory.CreateScope())
         {
