@@ -178,6 +178,28 @@ public sealed class UserSyncService : IUserSyncService
             _db.SyncStatuses.Add(status);
         }
 
+        // Porta com o disjuntor ABERTO: alinha o backoff deste usuário ao relógio DA PORTA e sai
+        // sem tentar. É o que faz o recuo valer por porta e não por usuário × porta.
+        //
+        // Antes, cada usuário mantinha a sua própria contagem contra a mesma porta morta, então
+        // um aparelho fora do ar era redescoberto uma vez por usuário, e cada usuário novo
+        // recomeçava do zero. A medição de 43 h pegou isso: dois cadastros somaram 135 tentativas
+        // martelando a mesma leitura que nunca respondeu. O disjuntor já barrava no gateway, mas
+        // só depois de a tentativa atravessar fila, worker e banco para ser recusada no fim.
+        if (_gateway.GetCircuitOpenUntilUtc(controllerId) is { } circuitOpenUntil)
+        {
+            status.State = SyncState.Failed;
+            status.LastError = $"Porta sem resposta ao protocolo — nova tentativa após {TimeZoneInfo.ConvertTimeFromUtc(circuitOpenUntil, _deviceTimeZone):HH:mm:ss}.";
+            // Um minuto de folga: tentar no instante exato da reabertura perderia a corrida com
+            // o próprio disjuntor e gastaria a sonda de meia-abertura à toa.
+            status.NextRetryAtUtc = circuitOpenUntil.AddMinutes(1);
+            await _db.SaveChangesAsync(ct);
+            _logger.LogDebug(
+                "Sincronização de {Code} na porta {Controller} adiada: disjuntor aberto até {Until:HH:mm:ss}.",
+                user.UserCode, controller.Name, circuitOpenUntil);
+            return;
+        }
+
         // A grade de horário É DA PORTA: vem da permissão do usuário neste controlador, não do
         // cadastro global. Sem permissão (caso que não deveria existir aqui), cai na grade
         // reservada — sem restrição — em vez de num número qualquer, que no aparelho significaria

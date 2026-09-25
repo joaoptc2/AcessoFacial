@@ -145,14 +145,41 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
     // ----------------------------------------------------------------------------------
 
     /// <summary>
-    /// Tetos de segurança contra travamento SILENCIOSO do pipeline: maiores que qualquer comando
-    /// legítimo (o mais longo é a foto de evento: 30s × RestartCount 3 = 90s), mas finitos.
-    /// Sem eles, um comando que o SDK nunca completa (visto em produção: usuário 'Pending'
-    /// eternamente, sem linha de status nas demais portas e sem NENHUM log) segurava o gate do
-    /// controlador e um worker da fila PARA SEMPRE.
+    /// Tetos de segurança contra travamento SILENCIOSO do pipeline. Sem eles, um comando que o
+    /// SDK nunca completa (visto em produção: usuário 'Pending' eternamente, sem linha de status
+    /// nas demais portas e sem NENHUM log) segurava o gate do controlador e um worker da fila
+    /// PARA SEMPRE.
+    ///
+    /// O teto do COMANDO é derivado do que ele próprio pede (ver <see cref="HardCapFor"/>), e
+    /// não mais um valor fixo. A medição de 43h em 24 portas mostrou por que: um teto único de
+    /// 3 min dimensionado pelo comando mais pesado (foto de evento, 30s × 3 tentativas = 90s
+    /// legítimos) fazia um ReadWatchState — que precisa de 148 ms numa porta saudável — segurar
+    /// a fila por 180 s numa porta morta. Foram 290 comandos no teto, 14,5 h de espera pura:
+    /// 64% de TODO o tempo de comunicação do período.
     /// </summary>
-    private static readonly TimeSpan GateWaitCap = TimeSpan.FromMinutes(3);
-    private static readonly TimeSpan CommandHardCap = TimeSpan.FromMinutes(3);
+    /// <summary>
+    /// Espera máxima pela VEZ no controlador. Menor que o teto máximo de comando porque o que a
+    /// justifica é "há comandos legítimos na minha frente", não "o da frente travou" — esse caso
+    /// o teto do comando já resolve, e mais rápido agora.
+    /// </summary>
+    private static readonly TimeSpan GateWaitCap = TimeSpan.FromSeconds(90);
+
+    /// <summary>
+    /// Quanto esperar por ESTE comando: o que ele mesmo pede (timeout × tentativas), com metade
+    /// disso de folga para a rede, preso entre 10 s e 3 min.
+    ///
+    /// Derivar em vez de cravar é o que permite ser agressivo sem estrangular ninguém: o ReadSN
+    /// de uma porta morta desiste em ~13 s em vez de 180 s, e a foto de evento continua com os
+    /// ~135 s de que precisa. Um número fixo baixo o bastante para o primeiro mataria o segundo.
+    /// </summary>
+    private static TimeSpan HardCapFor(INCommand cmd)
+    {
+        var detail = cmd.CommandDetail;
+        // Sem detalhe legível, cai no teto máximo — o comportamento antigo, nunca pior que ele.
+        return detail is null
+            ? CommandHardCap.Max
+            : CommandHardCap.For(detail.Timeout, detail.RestartCount);
+    }
 
     /// <param name="ct">
     /// Cancelamento do CHAMADOR (desligamento do host, requisição HTTP abortada). Importante: o
@@ -253,7 +280,8 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
                 // comando bem-sucedido deixava um Task.Delay de 3 min vivo até disparar sozinho —
                 // com health-check e fila sobre 30 aparelhos, uma população constante de timers.
                 using var hardCap = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                var timeoutTask = Task.Delay(CommandHardCap, hardCap.Token);
+                var capDoComando = HardCapFor(cmd);
+                var timeoutTask = Task.Delay(capDoComando, hardCap.Token);
                 var finished = await Task.WhenAny(commandTask, timeoutTask);
                 hardCap.Cancel();
 
@@ -264,7 +292,7 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
                     ct.ThrowIfCancellationRequested();
 
                     throw new DeviceCommandException(
-                        $"{operation} excedeu o teto de {CommandHardCap.TotalSeconds:F0}s sem resposta do SDK no controlador " +
+                        $"{operation} excedeu o teto de {capDoComando.TotalSeconds:F0}s sem resposta do SDK no controlador " +
                         $"'{controller.Name}' ({controller.IpAddress}:{controller.Port}) — comando abandonado.");
                 }
                 await commandTask; // propaga a exceção do SDK, se houver
