@@ -72,7 +72,11 @@ public sealed class FakeDeviceGateway : IDeviceGateway
         return Task.CompletedTask;
     }
 
-    public DateTime? GetCircuitOpenUntilUtc(Guid controllerId) => null;
+    /// <summary>Disjuntor simulado por controlador. Vazio = fechado (o padrão dos testes).</summary>
+    public Dictionary<Guid, DateTime> CircuitOpenUntil { get; } = new();
+
+    public DateTime? GetCircuitOpenUntilUtc(Guid controllerId) =>
+        CircuitOpenUntil.TryGetValue(controllerId, out var until) ? until : null;
     public DateTime? GetLastPushActivityUtc(string serialNumber) => null;
     public DateTime? GetLastEventPushUtc(string serialNumber) => null;
     public void EnsurePushChannel(Controller controller) { }

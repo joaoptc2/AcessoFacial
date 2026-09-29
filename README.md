@@ -461,6 +461,14 @@ O que cada linha separa, e por que isso é o ponto todo:
 Espera alta com duração baixa = a fila é nossa (concorrência do sistema). Espera zero com
 duração alta = o aparelho ou a rede. Sem essa separação, as duas causas parecem a mesma coisa.
 
+**Achados da primeira coleta (43 h, 24 portas, 15 mil comandos)**: quatro leitoras consumiram
+89% de todo o tempo de comunicação, e uma delas (morta, zero sucessos em 1.281 tentativas) levou
+55% sozinha. Numa porta saudável a mediana é de **148 ms**. Duas correções vieram daí: o teto de
+comando passou a ser **derivado** do que cada comando pede (`CommandHardCap`) em vez de um valor
+fixo de 3 min — 290 comandos no teto somavam 14,5 h de espera pura — e a sincronização passou a
+**respeitar o disjuntor da porta**, para N usuários não redescobrirem o mesmo aparelho morto N
+vezes.
+
 **Custos e limites**: desligado, nem o registro é montado no caminho do comando. Ligado, a
 gravação é assíncrona (fila em memória + INSERT em lote) — o instrumento não pode virar parte do
 que está medindo. A fila é limitada e DESCARTA quando cheia; o total descartado aparece no

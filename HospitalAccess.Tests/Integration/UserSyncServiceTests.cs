@@ -132,6 +132,69 @@ public sealed class UserSyncServiceTests
         Assert.Contains("offline", status.LastError);
     }
 
+    /// <summary>
+    /// Porta com o disjuntor aberto: NÃO se tenta nada nela, e a nova tentativa deste usuário
+    /// passa a seguir o relógio DA PORTA.
+    ///
+    /// É o que transforma o recuo de "por usuário × porta" em "por porta". Antes, cada usuário
+    /// mantinha a sua própria contagem contra a mesma leitora morta — a medição de 43 h pegou
+    /// dois cadastros somando 135 tentativas contra uma porta que nunca respondeu, e cada
+    /// usuário novo recomeçava do zero contra ela.
+    /// </summary>
+    [SkippableFact]
+    public async Task PortaComDisjuntorAberto_NaoRecebeTentativa_EOBackoffSegueORelogioDaPorta()
+    {
+        Skip.IfNot(_pg.Available, _pg.SkipReason);
+        var (service, gateway, db) = BuildService();
+        await using var _ = db;
+
+        var controller = NewController("Quarto 9 (morta)");
+        var user = NewPermanentUser(NextCode());
+        user.Permissions.Add(new AccessPermission { ControllerId = controller.Id });
+        db.Controllers.Add(controller);
+        db.Users.Add(user);
+        await db.SaveChangesAsync();
+
+        var reabreEm = DateTime.UtcNow.AddMinutes(15);
+        gateway.CircuitOpenUntil[controller.Id] = reabreEm;
+
+        await service.SyncUserAsync(user.Id);
+
+        // O aparelho não foi tocado: nem o upload de 120 KB saiu da fila.
+        Assert.Empty(gateway.FaceUploads);
+
+        var status = await db.SyncStatuses.AsNoTracking().SingleAsync(s => s.UserId == user.Id);
+        Assert.Equal(SyncState.Failed, status.State);
+        Assert.NotNull(status.NextRetryAtUtc);
+        // Alinhado à reabertura da PORTA (com a folga de 1 min), não a um backoff próprio deste
+        // usuário — é isso que impede N usuários de redescobrirem a mesma porta morta N vezes.
+        Assert.True(status.NextRetryAtUtc >= reabreEm,
+            $"nova tentativa em {status.NextRetryAtUtc:O} seria ANTES da reabertura da porta ({reabreEm:O})");
+        Assert.True(status.NextRetryAtUtc <= reabreEm.AddMinutes(2));
+    }
+
+    /// <summary>Disjuntor fechado (o caso normal) segue sincronizando — o atalho não pode engolir o fluxo bom.</summary>
+    [SkippableFact]
+    public async Task PortaComDisjuntorFechado_SincronizaNormalmente()
+    {
+        Skip.IfNot(_pg.Available, _pg.SkipReason);
+        var (service, gateway, db) = BuildService();
+        await using var _ = db;
+
+        var controller = NewController("Quarto 1 (saudável)");
+        var user = NewPermanentUser(NextCode());
+        user.Permissions.Add(new AccessPermission { ControllerId = controller.Id });
+        db.Controllers.Add(controller);
+        db.Users.Add(user);
+        await db.SaveChangesAsync();
+
+        await service.SyncUserAsync(user.Id);
+
+        Assert.Single(gateway.FaceUploads);
+        var status = await db.SyncStatuses.AsNoTracking().SingleAsync(s => s.UserId == user.Id);
+        Assert.Equal(SyncState.Synced, status.State);
+    }
+
     [SkippableFact]
     public async Task FotoSemRosto_VaiParaQuarentena_SemNovaTentativaAutomatica()
     {
