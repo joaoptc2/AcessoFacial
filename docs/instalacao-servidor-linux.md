@@ -301,8 +301,9 @@ sudo apt-get install -y postgresql-client
 sudo install -d -o hospitalaccess -g hospitalaccess /var/lib/hospitalaccess/backups
 ```
 
-Ajustes em `/etc/hospitalaccess/appsettings.Production.json` (ou por variável de ambiente):
-`Backup__Directory`, `Backup__IntervalHours`, `Backup__RetentionDays`, `Backup__MaxFiles`.
+Ajustes por variável de ambiente em `/etc/hospitalaccess/api.env` (a aplicação não lê
+arquivos JSON de `/etc`): `Backup__Directory`, `Backup__IntervalHours`,
+`Backup__RetentionDays`, `Backup__MaxFiles`.
 
 O Admin lista, **gera na hora, baixa e remove** pela tela **Configurações → Cópias de segurança**.
 
@@ -349,10 +350,53 @@ dotnet ef migrations bundle --self-contained -r linux-x64 \
 ```
 
 Fluxo completo da atualização:
+
+**1. Na máquina de build** (pode ser o próprio servidor, se tiver o SDK .NET 10 e o Node 22):
+```bash
+cd HospitalAccess && git checkout main && git pull
+cd HospitalAccess.Web.React && npm ci && npm run build && cd ..
+rm -rf /tmp/publish/api
+dotnet publish HospitalAccess.Api/HospitalAccess.Api.csproj -c Release -r linux-x64 --self-contained false -o /tmp/publish/api
+# Se a versão trouxer migration nova, gere aqui o migracao.sql (opção a, acima).
+```
+
+**2. No servidor**, numa janela de manutenção:
+```bash
+# Cópia de segurança do banco: Configurações → Cópias de segurança → "Gerar agora"
+# (ou pg_dump) ANTES de qualquer migration.
+
+sudo systemctl stop hospitalaccess-api
+
+# Guarda a versão em uso para a volta rápida (passo 4).
+sudo rm -rf /opt/hospitalaccess/api.anterior
+sudo cp -a /opt/hospitalaccess/api /opt/hospitalaccess/api.anterior
+
+# Copia a nova por cima. SEM --delete: um arquivo local que exista na pasta (ex.: um
+# appsettings.Production.json) seria apagado.
+sudo rsync -a /tmp/publish/api/ /opt/hospitalaccess/api/     # de outra máquina: build:/tmp/publish/api/
+sudo chown -R hospitalaccess:hospitalaccess /opt/hospitalaccess/api
+
+# Só se houver migration nova:
+# psql "$CONNECTION_STRING" -f migracao.sql
+
+sudo systemctl start hospitalaccess-api
+```
+
+**3. Verificação:**
+```bash
+systemctl status hospitalaccess-api --no-pager            # active (running)
+journalctl -u hospitalaccess-api -n 100 --no-pager | grep -iE "DESATUALIZADO|fail|crit|exception"
+ldd /opt/hospitalaccess/api/libSkiaSharp.so | grep "not found"   # nada = biblioteca de imagem ok
+```
+E na tela: login, *Configurações → prévia da tela de boas-vindas* (exercita a biblioteca de
+imagem) e um cadastro com foto.
+
+**4. Volta rápida**, se algo der errado (vale para versão SEM migration; com migration,
+restaure também o banco a partir da cópia do passo 2):
 ```bash
 sudo systemctl stop hospitalaccess-api
-# rebuild do React (seção 4), publique de novo e sincronize para /opt/hospitalaccess/api
-# aplique a migração pelo método (a) ou (b) acima, se houver migration nova
+sudo rm -rf /opt/hospitalaccess/api.falhou && sudo mv /opt/hospitalaccess/api /opt/hospitalaccess/api.falhou
+sudo mv /opt/hospitalaccess/api.anterior /opt/hospitalaccess/api
 sudo systemctl start hospitalaccess-api
 ```
 
