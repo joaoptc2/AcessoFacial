@@ -35,6 +35,31 @@ public static class SyncRetryPolicy
             options.BackoffBaseMinutes * Math.Pow(options.BackoffFactor, Math.Max(0, retryCount - 1)),
             options.BackoffCapMinutes));
 
+    /// <summary>Folga mínima depois que a porta volta a aceitar comandos.</summary>
+    public static readonly TimeSpan UnhealthyPortMinDelay = TimeSpan.FromMinutes(1);
+
+    /// <summary>
+    /// Janela sobre a qual as novas tentativas adiadas se espalham. Cinco minutos é o ciclo do
+    /// monitoramento: dentro dela, a sonda barata dele já terá dito se a porta voltou.
+    /// </summary>
+    public static readonly TimeSpan UnhealthyPortJitter = TimeSpan.FromMinutes(5);
+
+    /// <summary>
+    /// Quando tentar de novo um cadastro adiado por porta sem condições: depois da reabertura do
+    /// circuito (ou de agora, se ele não está aberto), mais a folga, mais um sorteio na janela.
+    ///
+    /// O sorteio é o conserto de um defeito medido. A versão anterior marcava TODOS os usuários
+    /// para "reabertura + 1 min" — o mesmo instante —, então eles chegavam juntos e faziam fila
+    /// na porta: em nov/2026, 142 rajadas de até sete uploads de face no Quarto 9, 17,2 h numa
+    /// semana. Espalhados, eles chegam um a um, e o primeiro já diz aos outros se vale tentar.
+    /// </summary>
+    public static DateTime DeferForUnhealthyPort(DateTime nowUtc, DateTime? circuitOpenUntilUtc, Random random)
+    {
+        var desde = circuitOpenUntilUtc is { } ate && ate > nowUtc ? ate : nowUtc;
+        var sorteio = TimeSpan.FromMilliseconds(random.NextDouble() * UnhealthyPortJitter.TotalMilliseconds);
+        return desde + UnhealthyPortMinDelay + sorteio;
+    }
+
     /// <summary>
     /// Filtro dos status elegíveis à varredura automática: Pending sempre; Failed só quando o
     /// backoff venceu (NextRetryAtUtc no passado). Failed com NextRetryAtUtc null = quarentena

@@ -77,6 +77,32 @@ public sealed class FakeDeviceGateway : IDeviceGateway
 
     public DateTime? GetCircuitOpenUntilUtc(Guid controllerId) =>
         CircuitOpenUntil.TryGetValue(controllerId, out var until) ? until : null;
+
+    /// <summary>
+    /// Portas sem prova de vida com o circuito FECHADO — falharam e ainda não responderam com
+    /// sucesso, ou estão na meia-abertura. Circuito aberto também conta como sem prova de vida.
+    /// </summary>
+    public HashSet<Guid> UnhealthyControllers { get; } = new();
+
+    public bool IsControllerHealthy(Guid controllerId) =>
+        !UnhealthyControllers.Contains(controllerId) && !CircuitOpenUntil.ContainsKey(controllerId);
+
+    /// <summary>Sondas pedidas, na ordem.</summary>
+    public ConcurrentQueue<Guid> Probes { get; } = new();
+
+    /// <summary>
+    /// Portas que NÃO respondem à sonda. A sonda que responde reabilita a porta (como o sucesso
+    /// fecha o disjuntor de verdade); a que não responde a mantém sem prova de vida.
+    /// </summary>
+    public HashSet<Guid> ProbeFails { get; } = new();
+
+    public Task<bool> ProbeControllerAsync(Controller controller, CancellationToken ct = default)
+    {
+        Probes.Enqueue(controller.Id);
+        if (ProbeFails.Contains(controller.Id)) return Task.FromResult(false);
+        UnhealthyControllers.Remove(controller.Id);
+        return Task.FromResult(true);
+    }
     public DateTime? GetLastPushActivityUtc(string serialNumber) => null;
     public DateTime? GetLastEventPushUtc(string serialNumber) => null;
     public void EnsurePushChannel(Controller controller) { }

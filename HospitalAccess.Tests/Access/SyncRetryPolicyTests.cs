@@ -51,6 +51,49 @@ public class SyncRetryPolicyTests
         Assert.Equal(TimeSpan.FromMinutes(2), SyncRetryPolicy.Backoff(-1, Defaults));
     }
 
+    /// <summary>Random com sorteio fixo — NextDouble devolve sempre o mesmo valor.</summary>
+    private sealed class FixedRandom(double value) : Random
+    {
+        public override double NextDouble() => value;
+    }
+
+    private static readonly DateTime Now = new(2026, 11, 18, 12, 0, 0, DateTimeKind.Utc);
+
+    [Fact]
+    public void DeferForUnhealthyPort_OpenCircuit_StartsAfterReopenPlusMinimumDelay()
+    {
+        var reabre = Now.AddMinutes(8);
+
+        Assert.Equal(reabre.AddMinutes(1), SyncRetryPolicy.DeferForUnhealthyPort(Now, reabre, new FixedRandom(0)));
+        // Sorteio máximo: a janela inteira de 5 min depois da folga.
+        Assert.Equal(reabre.AddMinutes(6), SyncRetryPolicy.DeferForUnhealthyPort(Now, reabre, new FixedRandom(1)));
+    }
+
+    [Fact]
+    public void DeferForUnhealthyPort_ClosedOrExpiredCircuit_CountsFromNow()
+    {
+        // Porta sem prova de vida, mas com o circuito fechado (ou já vencido): a referência é agora.
+        Assert.Equal(Now.AddMinutes(1), SyncRetryPolicy.DeferForUnhealthyPort(Now, null, new FixedRandom(0)));
+        Assert.Equal(Now.AddMinutes(1), SyncRetryPolicy.DeferForUnhealthyPort(Now, Now.AddMinutes(-3), new FixedRandom(0)));
+    }
+
+    [Fact]
+    public void DeferForUnhealthyPort_UsersDeferredTogether_DoNotConverge()
+    {
+        // O defeito de nov/2026: todos os usuários de uma porta caíam no MESMO instante e chegavam
+        // juntos. Com o sorteio, 50 adiamentos feitos no mesmo momento se espalham pela janela.
+        var reabre = Now.AddMinutes(4);
+        var random = new Random(20261118);
+        var instantes = Enumerable.Range(0, 50)
+            .Select(_ => SyncRetryPolicy.DeferForUnhealthyPort(Now, reabre, random))
+            .ToList();
+
+        Assert.All(instantes, t => Assert.InRange(t, reabre.AddMinutes(1), reabre.AddMinutes(6)));
+        Assert.True(instantes.Distinct().Count() >= 45, "os adiamentos colidiram no mesmo instante");
+        Assert.True(instantes.Max() - instantes.Min() >= TimeSpan.FromMinutes(3),
+            $"espalhamento de só {(instantes.Max() - instantes.Min()).TotalSeconds:F0} s numa janela de 5 min");
+    }
+
     [Fact]
     public void EligibleForAutoRetry_SelectsExactlyPendingAndDueFailures()
     {

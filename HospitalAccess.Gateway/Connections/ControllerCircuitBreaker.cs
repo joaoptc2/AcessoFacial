@@ -35,6 +35,29 @@ public sealed class ControllerCircuitBreaker
         }
     }
 
+    /// <summary>
+    /// A porta provou que está viva desde a última falha? Verdadeiro só depois de um sucesso e
+    /// antes de qualquer nova falha — falso com falhas abaixo do limiar, com o circuito aberto e
+    /// também na meia-abertura (cooldown vencido, mas nenhum sucesso desde então).
+    ///
+    /// É a pergunta certa para decidir se vale mandar trabalho PESADO a uma porta. "O circuito
+    /// está aberto?" não basta: vencido o cooldown ele deixa de estar aberto sem que a porta tenha
+    /// respondido nada, e foi nessa janela que, na medição de nov/2026, sete uploads de face de
+    /// 22,5 s cada entravam juntos numa porta morta.
+    /// </summary>
+    public bool IsHealthy
+    {
+        get
+        {
+            lock (_lock)
+            {
+                // Ao abrir, o contador de falhas é zerado — quem guarda a memória da abertura é
+                // _openCount, que só um sucesso zera.
+                return _consecutiveFailures == 0 && _openCount == 0;
+            }
+        }
+    }
+
     /// <summary>Comando confirmado pelo aparelho: fecha o circuito e zera o histórico.</summary>
     public void RecordSuccess()
     {

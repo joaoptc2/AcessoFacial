@@ -9,7 +9,8 @@ namespace HospitalAccess.Gateway.Connections;
 /// de evento, 30 s × 3 tentativas), então um ReadWatchState de 148 ms segurava a fila por 180 s.
 ///
 /// A regra: cada comando espera o que ELE pede (timeout × tentativas) mais metade disso de
-/// folga para a rede. Derivar em vez de cravar é o que permite ser agressivo sem estrangular
+/// folga para a rede — ou, se carrega bytes, o tempo de transferi-los à vazão mínima, o que
+/// for maior. Derivar em vez de cravar é o que permite ser agressivo sem estrangular
 /// ninguém — qualquer número fixo baixo o bastante para o ReadWatchState mataria a foto.
 /// </summary>
 public static class CommandHardCap
@@ -23,10 +24,26 @@ public static class CommandHardCap
     /// <summary>Folga sobre o que o comando pede, para a rede e o processamento do aparelho.</summary>
     public const double SafetyFactor = 1.5;
 
-    public static TimeSpan For(int timeoutMs, int restartCount)
+    /// <summary>
+    /// Vazão mínima que ainda conta como "transferindo": 2 KB/s, quatro vezes abaixo da mediana
+    /// medida nos uploads de face que deram certo (~7,8 KB/s). Abaixo disso a porta está
+    /// inutilizável de qualquer jeito, e o próprio timeout por etapa do SDK já desiste.
+    /// </summary>
+    public const int MinTransferBytesPerSecond = 2048;
+
+    /// <param name="payloadBytes">
+    /// Bytes que o comando envia (0 = comando sem carga). O timeout do SDK vale por ETAPA, e um
+    /// upload grande vai em várias etapas; então "timeout × tentativas" subestima o tempo legítimo
+    /// dele. Em nov/2026, com o teto só por timeout (15 s × 1 × 1,5 = 22,5 s), 687 uploads de face
+    /// para portas VIVAS foram abandonados no teto com o SDK ainda transferindo — e reenviados
+    /// do zero depois. Com a carga no cálculo, ~104 KB ganham ~52 s.
+    /// </param>
+    public static TimeSpan For(int timeoutMs, int restartCount, int payloadBytes = 0)
     {
         var pedido = (long)Math.Max(1, timeoutMs) * Math.Max(1, restartCount);
         var comFolga = TimeSpan.FromMilliseconds(pedido * SafetyFactor);
-        return comFolga < Min ? Min : comFolga > Max ? Max : comFolga;
+        var transferencia = TimeSpan.FromSeconds((double)Math.Max(0, payloadBytes) / MinTransferBytesPerSecond);
+        var cap = comFolga > transferencia ? comFolga : transferencia;
+        return cap < Min ? Min : cap > Max ? Max : cap;
     }
 }

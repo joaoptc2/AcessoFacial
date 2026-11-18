@@ -1,4 +1,5 @@
 using HospitalAccess.Api.Options;
+using HospitalAccess.Application.Diagnostics;
 using HospitalAccess.Domain.Entities;
 using HospitalAccess.Gateway;
 using HospitalAccess.Infrastructure.Persistence;
@@ -73,6 +74,7 @@ public sealed class OfflineRecordCollectorBackgroundService : BackgroundService
 
     private async Task CollectAllAsync(CancellationToken ct)
     {
+        using var _trace = DeviceTraceContext.Use(DeviceTraceTrigger.OfflineCollection);
         List<Domain.Entities.Controller> controllers;
         using (var scope = _scopeFactory.CreateScope())
         {

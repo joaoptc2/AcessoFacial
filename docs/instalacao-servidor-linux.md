@@ -63,8 +63,12 @@ cd HospitalAccess
 cd HospitalAccess.Web.React && npm ci && npm run build && cd ..
 
 # 2) Publish da API (empacota também o wwwroot/ com o SPA já buildado)
-dotnet publish HospitalAccess.Api/HospitalAccess.Api.csproj -c Release -o /tmp/publish/api
+dotnet publish HospitalAccess.Api/HospitalAccess.Api.csproj -c Release -r linux-x64 --self-contained false -o /tmp/publish/api
 ```
+O `-r linux-x64` leva só o binário nativo de imagem (SkiaSharp) do servidor: sem ele, a
+publicação carrega o de todas as plataformas — ~450 MB em vez de ~25 MB, quase tudo símbolos
+de depuração de Windows. `--self-contained false` mantém o uso do runtime .NET instalado no
+servidor (passo 3). Servidor ARM: troque por `linux-arm64`.
 As DLLs do SDK do fabricante (`HospitalAccess.Gateway/lib/*.dll`) já estão versionadas
 no repositório e são copiadas automaticamente para a pasta de publicação — não precisa
 de nenhum passo extra para elas.

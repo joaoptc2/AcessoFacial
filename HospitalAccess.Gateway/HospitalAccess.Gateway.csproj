@@ -46,11 +46,17 @@
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.11" />
     <!--
-      ImageSharp: porta multiplataforma do ImageTool.ConvertImage do fabricante (que usa
-      System.Drawing/GDI+, Windows-only). Fixado em 2.x (Apache-2.0) — NÃO subir para 3.x
-      sem revisar a "Six Labors Split License" (uso comercial pode exigir licença paga).
+      SkiaSharp (MIT): decodificação, redimensionamento e JPEG da foto de rosto (porta do
+      ImageTool.ConvertImage do fabricante, que usa System.Drawing/GDI+, Windows-only) e o
+      desenho da tela de boas-vindas no Api. Substituiu o ImageSharp 2.1.13 em nov/2026: cinco
+      alertas de segurança sem correção na linha 2.x, e a 3.x/4.x corrigida muda para a licença
+      comercial "Six Labors Split License". O NativeAssets.Linux.NoDependencies traz o
+      libSkiaSharp.so sem exigir fontconfig no servidor (Windows/macOS já vêm no pacote base).
+      Manter atualizado: o binário nativo inclui libjpeg-turbo/libpng/libwebp, e o CI reprova
+      pacote com alerta conhecido.
     -->
-    <PackageReference Include="SixLabors.ImageSharp" Version="2.1.13" />
+    <PackageReference Include="SkiaSharp" Version="3.119.4" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux.NoDependencies" Version="3.119.4" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\HospitalAccess.Application\HospitalAccess.Application.csproj" />

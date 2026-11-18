@@ -38,10 +38,20 @@ que muda apenas o `ConnectType` em `ControllerConnectionFactory`, não o resto d
 Convertida para **480×640 px, ≤120 KB (122880 bytes)** antes do upload. O helper do
 fabricante (`ImageTool.ConvertImage`) usa `System.Drawing`/GDI+, que é **Windows-only** desde
 o .NET 7 — inviável para uma API ASP.NET Core multiplataforma. Reimplementado em
-`HospitalAccess.Gateway.Imaging.FaceImageConverter` com **ImageSharp** (mesma lógica: resize
+`HospitalAccess.Gateway.Imaging.FaceImageConverter` com **SkiaSharp** (mesma lógica: resize
 preservando aspect ratio, canvas branco 480×640, redução iterativa de qualidade JPEG até
-caber no limite). Qualquer formato que o ImageSharp decodifique é aceito na entrada (JPG,
-PNG, WebP...) — o conversor sempre re-encoda para **JPEG**, que é o que o aparelho exige.
+caber no limite). Entrada aceita: **JPEG, PNG e WebP** (`ImageDecoding`, porta única de
+imagens vindas de fora); o conversor sempre re-encoda para **JPEG**, que é o que o aparelho
+exige. Recusados já no upload, com mensagem para a tela: outros formatos (TIFF, BMP, GIF...),
+imagem acima de 50 megapixels (conferido no cabeçalho, antes de alocar) e arquivo incompleto
+(upload interrompido — o decodificador anterior completava o JPEG e a foto só falhava no
+aparelho, como "sem rosto"). PNG transparente é achatado sobre branco.
+
+> Até nov/2026 era **ImageSharp 2.1.13**: cinco alertas de segurança (GHSA-gwg2-r3hj-4w44,
+> GHSA-j3p4-wp97-rph4, GHSA-j9gm-c75j-xc9q, GHSA-wmxv-xphr-5c9g, GHSA-jjfr-hcj7-qf5w — quatro
+> deles em TIFF) sem correção na linha 2.x; as versões corrigidas (3.2.0/4.1.2) mudam para a
+> licença comercial "Six Labors Split License". O SkiaSharp é MIT. A tela de boas-vindas
+> reproduz a posição vertical do texto do ImageSharp, então o X/Y já configurado não muda.
 Retornos tratados: `2` (feature code não identificável),
 `3` (sem rosto), `4` (duplicada), `0`/outros (falha de CRC32), resultado nulo (handle 0 =
 usuário inexistente).
@@ -454,9 +464,10 @@ O que cada linha separa, e por que isso é o ponto todo:
 | `espera_fila_ms` | Quanto tempo o comando esperou a VEZ naquele controlador (os comandos são serializados por aparelho) |
 | `duracao_ms` | Quanto tempo o comando levou já com a vez garantida — o aparelho e a rede |
 | `fila_profundidade` | Quantos comandos estavam na frente quando este chegou |
-| `origem` | Quem pediu: fila de sincronização, comando manual da tela, gestão de leitos, health-check, monitoramento |
+| `origem` | Quem pediu: fila de sincronização, comando manual da tela, gestão de leitos, health-check, monitoramento, coleta offline, expiração de visitantes |
 | `desfecho` | `Success`, `Failed`, `Timeout`, `GateBusy` (a vez não chegou a tempo), `CircuitOpen`, `Canceled` |
 | `payload_bytes` | Bytes enviados — a face pesa ~120 KB, os demais comandos dezenas |
+| `timeout_ms` / `tentativas` | O timeout por etapa e as tentativas EFETIVOS do comando (o upload de face sobe para 15 s × 1), não os do cadastro do aparelho |
 
 Espera alta com duração baixa = a fila é nossa (concorrência do sistema). Espera zero com
 duração alta = o aparelho ou a rede. Sem essa separação, as duas causas parecem a mesma coisa.
@@ -468,6 +479,23 @@ comando passou a ser **derivado** do que cada comando pede (`CommandHardCap`) em
 fixo de 3 min — 290 comandos no teto somavam 14,5 h de espera pura — e a sincronização passou a
 **respeitar o disjuntor da porta**, para N usuários não redescobrirem o mesmo aparelho morto N
 vezes.
+
+**Achados da coleta de uma semana (nov/2026, 172 h, 67 mil comandos)** — duas delas regressões da
+correção anterior:
+
+- **Rebanho na reabertura.** A sincronização marcava todos os usuários de uma porta com o
+  disjuntor aberto para o MESMO instante ("reabertura + 1 min"), e o disjuntor era consultado
+  antes da fila — então, ao reabrir, até sete uploads de face entravam juntos numa porta que
+  continuava morta (142 rajadas, 17,2 h na semana, bloqueando o monitoramento). Correções: o
+  comando reconfere o disjuntor DEPOIS de conseguir a vez (os da fila caem na hora quando a
+  porta acabou de falhar); o adiamento é sorteado numa janela de 5 min; e porta sem **prova de
+  vida** (falhou e não respondeu desde então) recebe primeiro uma sonda barata (`ReadWatchState`,
+  ~150 ms, `SondaProvaDeVida` no CSV) — o upload de 100 KB só sai se ela responder. Visitante
+  (sem face) segue direto.
+- **Teto curto para upload.** O timeout do SDK vale por etapa, e o upload de face vai em várias;
+  o teto derivado (15 s × 1 × 1,5 = 22,5 s) abandonou 687 uploads para portas VIVAS com o SDK
+  ainda transferindo. O teto agora considera a carga (`CommandHardCap`, vazão mínima de 2 KB/s:
+  ~104 KB → ~52 s).
 
 **Custos e limites**: desligado, nem o registro é montado no caminho do comando. Ligado, a
 gravação é assíncrona (fila em memória + INSERT em lote) — o instrumento não pode virar parte do
@@ -555,8 +583,10 @@ controlador e usar "Testar conexão": se a senha for aceita, o chaveiro voltou c
 
 ### Pacotes NuGet (públicos, restauram normalmente)
 `Microsoft.EntityFrameworkCore` + `Npgsql.EntityFrameworkCore.PostgreSQL`, `QRCoder`,
-`SixLabors.ImageSharp` (fixado em `2.1.x`/Apache-2.0 — **não subir para 3.x** sem revisar a
-licença comercial "Six Labors Split License"), `Microsoft.AspNetCore.Authentication.JwtBearer`,
+`SkiaSharp` + `SkiaSharp.NativeAssets.Linux.NoDependencies` (MIT; o binário nativo traz
+libjpeg-turbo/libpng/libwebp — mantenha atualizado, o CI reprova pacote com alerta conhecido;
+não voltar ao ImageSharp 3.x/4.x sem revisar a "Six Labors Split License"),
+`Microsoft.AspNetCore.Authentication.JwtBearer`,
 `Swashbuckle.AspNetCore`, `xunit`.
 
 ### Segredos (nunca versionar)

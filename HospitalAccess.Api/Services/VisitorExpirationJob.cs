@@ -1,3 +1,4 @@
+using HospitalAccess.Application.Diagnostics;
 using HospitalAccess.Application.Sync;
 using HospitalAccess.Domain.Enums;
 using HospitalAccess.Infrastructure.Persistence;
@@ -28,6 +29,7 @@ public sealed class VisitorExpirationJob : IVisitorExpirationJob
 
     public async Task RunAsync(CancellationToken ct = default)
     {
+        using var _trace = DeviceTraceContext.Use(DeviceTraceTrigger.VisitorExpiration);
         var now = DateTime.UtcNow;
         // Só visitantes vencidos que ainda NÃO foram revogados — senão o job reprocessaria os
         // mesmos vencidos a cada execução, para sempre.

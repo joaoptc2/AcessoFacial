@@ -144,19 +144,18 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
     // falha/cancelamento/timeout.
     // ----------------------------------------------------------------------------------
 
-    /// <summary>
-    /// Tetos de segurança contra travamento SILENCIOSO do pipeline. Sem eles, um comando que o
-    /// SDK nunca completa (visto em produção: usuário 'Pending' eternamente, sem linha de status
-    /// nas demais portas e sem NENHUM log) segurava o gate do controlador e um worker da fila
-    /// PARA SEMPRE.
-    ///
-    /// O teto do COMANDO é derivado do que ele próprio pede (ver <see cref="HardCapFor"/>), e
-    /// não mais um valor fixo. A medição de 43h em 24 portas mostrou por que: um teto único de
-    /// 3 min dimensionado pelo comando mais pesado (foto de evento, 30s × 3 tentativas = 90s
-    /// legítimos) fazia um ReadWatchState — que precisa de 148 ms numa porta saudável — segurar
-    /// a fila por 180 s numa porta morta. Foram 290 comandos no teto, 14,5 h de espera pura:
-    /// 64% de TODO o tempo de comunicação do período.
-    /// </summary>
+    // Tetos de segurança contra travamento SILENCIOSO do pipeline. Sem eles, um comando que o
+    // SDK nunca completa (visto em produção: usuário 'Pending' eternamente, sem linha de status
+    // nas demais portas e sem NENHUM log) segurava o gate do controlador e um worker da fila
+    // PARA SEMPRE.
+    //
+    // O teto do COMANDO é derivado do que ele próprio pede (ver HardCapFor), e não mais um valor
+    // fixo. A medição de 43h em 24 portas mostrou por que: um teto único de 3 min dimensionado
+    // pelo comando mais pesado (foto de evento, 30s × 3 tentativas = 90s legítimos) fazia um
+    // ReadWatchState — que precisa de 148 ms numa porta saudável — segurar a fila por 180 s numa
+    // porta morta. Foram 290 comandos no teto, 14,5 h de espera pura: 64% de TODO o tempo de
+    // comunicação do período.
+
     /// <summary>
     /// Espera máxima pela VEZ no controlador. Menor que o teto máximo de comando porque o que a
     /// justifica é "há comandos legítimos na minha frente", não "o da frente travou" — esse caso
@@ -166,19 +165,20 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
 
     /// <summary>
     /// Quanto esperar por ESTE comando: o que ele mesmo pede (timeout × tentativas), com metade
-    /// disso de folga para a rede, preso entre 10 s e 3 min.
+    /// disso de folga para a rede — ou o tempo de transferir a carga dele, o que for maior —,
+    /// preso entre 10 s e 3 min.
     ///
     /// Derivar em vez de cravar é o que permite ser agressivo sem estrangular ninguém: o ReadSN
-    /// de uma porta morta desiste em ~13 s em vez de 180 s, e a foto de evento continua com os
-    /// ~135 s de que precisa. Um número fixo baixo o bastante para o primeiro mataria o segundo.
+    /// de uma porta morta desiste em ~13 s em vez de 180 s, a foto de evento continua com os
+    /// ~135 s de que precisa e o upload de face ganha o tempo da transferência em várias etapas.
     /// </summary>
-    private static TimeSpan HardCapFor(INCommand cmd)
+    private static TimeSpan HardCapFor(INCommand cmd, int payloadBytes)
     {
         var detail = cmd.CommandDetail;
         // Sem detalhe legível, cai no teto máximo — o comportamento antigo, nunca pior que ele.
         return detail is null
             ? CommandHardCap.Max
-            : CommandHardCap.For(detail.Timeout, detail.RestartCount);
+            : CommandHardCap.For(detail.Timeout, detail.RestartCount, payloadBytes);
     }
 
     /// <param name="ct">
@@ -208,7 +208,13 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
                 (int)Math.Min(int.MaxValue, (clock?.ElapsedMilliseconds ?? 0) - queueWaitMs),
                 queueDepth, outcome,
                 error is { Length: > 300 } ? error[..300] : error,
-                payloadBytes, controller.TimeoutMs, controller.RestartCount, userCode));
+                // O timeout e as tentativas EFETIVOS do comando, não os do cadastro do aparelho:
+                // o upload de face sobe o timeout para 15 s e as tentativas para 1, e o rastro
+                // de nov/2026 registrava 3000 × 3 nele — o que escondeu por que o teto era 22,5 s.
+                payloadBytes,
+                cmd.CommandDetail?.Timeout ?? controller.TimeoutMs,
+                cmd.CommandDetail?.RestartCount ?? controller.RestartCount,
+                userCode));
         }
 
         // Disjuntor: aparelho em cooldown (falhas consecutivas de protocolo) → falha rápida SEM
@@ -267,6 +273,24 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
                 $"{operation} não iniciou: o controlador '{controller.Name}' ({controller.IpAddress}:{controller.Port}) " +
                 $"está ocupado há mais de {GateWaitCap.TotalSeconds:F0}s com um comando anterior (possível comando pendurado no SDK).");
         }
+
+        // Reconfere o disjuntor JÁ COM A VEZ. A conferência da entrada não basta: na meia-abertura
+        // vários comandos passam por ela juntos e fazem fila; o primeiro falha e reabre o circuito,
+        // mas os outros já estavam do lado de dentro e executavam mesmo assim, um depois do outro.
+        // Foi o que a medição de nov/2026 mostrou no Quarto 9 — porta morta recebendo até sete
+        // uploads de face seguidos de 22,5 s cada, e bloqueando o monitoramento atrás deles.
+        // Recusar aqui conta como circuito aberto, não como falha: o aparelho não foi tocado.
+        if (!bypassCircuit && breaker.OpenUntil(DateTime.UtcNow) is { } reopenedUntil)
+        {
+            gate.Release();
+            LeaveQueue();
+            Trace(DeviceTraceOutcome.CircuitOpen, $"circuito reaberto na fila, aberto até {reopenedUntil:O}");
+            throw new DeviceCommandException(
+                $"{operation} não enviado: o circuito do controlador '{controller.Name}' ({controller.IpAddress}:{controller.Port}) " +
+                $"reabriu enquanto o comando aguardava a vez — a porta acabou de falhar com o comando anterior. " +
+                $"Nova tentativa após {ToDeviceWallClock(reopenedUntil):HH:mm:ss}.");
+        }
+
         try
         {
             try
@@ -280,7 +304,7 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
                 // comando bem-sucedido deixava um Task.Delay de 3 min vivo até disparar sozinho —
                 // com health-check e fila sobre 30 aparelhos, uma população constante de timers.
                 using var hardCap = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                var capDoComando = HardCapFor(cmd);
+                var capDoComando = HardCapFor(cmd, payloadBytes);
                 var timeoutTask = Task.Delay(capDoComando, hardCap.Token);
                 var finished = await Task.WhenAny(commandTask, timeoutTask);
                 hardCap.Cancel();
@@ -378,6 +402,10 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
     public DateTime? GetCircuitOpenUntilUtc(Guid controllerId) =>
         _circuitBreakers.TryGetValue(controllerId, out var breaker) ? breaker.OpenUntil(DateTime.UtcNow) : null;
 
+    /// <summary>Sem disjuntor criado = a porta nunca falhou, então conta como viva.</summary>
+    public bool IsControllerHealthy(Guid controllerId) =>
+        !_circuitBreakers.TryGetValue(controllerId, out var breaker) || breaker.IsHealthy;
+
     public async Task<AddFaceResult> AddPersonWithFaceAsync(Controller controller, User user, byte[] faceJpg, int timeGroup, CancellationToken ct = default)
     {
         // Requisito de hardware: JPG, 480x640, <= 120KB (Classe 11 / Appendix do protocolo).
@@ -392,7 +420,7 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             return new AddFaceResult(false, FaceUploadCode.InvalidImage,
-                $"A foto cadastrada não pôde ser preparada para o aparelho: {ex.Message} " +
+                $"A foto cadastrada não pôde ser preparada para o aparelho: {ex.Message.TrimEnd('.')}. " +
                 "Envie uma foto nova pelo cadastro do usuário.");
         }
 
@@ -1020,6 +1048,23 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
         var cmd = new ReadWatchState(_connections.CreateCommandDetail(controller));
         await RunAsync(cmd, "ReadWatchState", controller, ct: ct);
         return cmd.WatchState == 1;
+    }
+
+    public async Task<bool> ProbeControllerAsync(Controller controller, CancellationToken ct = default)
+    {
+        // ReadWatchState: só lê, não muda nada no aparelho, e é o comando mais barato medido.
+        // Nome de operação próprio para o rastro distinguir a sonda do monitoramento.
+        var cmd = new ReadWatchState(_connections.CreateCommandDetail(controller));
+        try
+        {
+            await RunAsync(cmd, "SondaProvaDeVida", controller, ct: ct);
+            return true;
+        }
+        catch (DeviceCommandException)
+        {
+            // O RunAsync já registrou a falha no disjuntor e no rastro.
+            return false;
+        }
     }
 
     /// <summary>Última atividade de push (inclusive keep-alive) recebida deste SN, se houver.</summary>

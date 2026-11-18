@@ -1,10 +1,7 @@
+using System.Diagnostics;
 using System.Text;
 using HospitalAccess.Gateway.Imaging;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Formats;
-using SixLabors.ImageSharp.Formats.Jpeg;
-using SixLabors.ImageSharp.Formats.Png;
-using SixLabors.ImageSharp.PixelFormats;
+using SkiaSharp;
 using Xunit;
 
 namespace HospitalAccess.Tests.Imaging;
@@ -15,18 +12,14 @@ namespace HospitalAccess.Tests.Imaging;
 /// </summary>
 public class FacePhotoValidatorTests
 {
-    private static byte[] Encode(int width, int height, IImageEncoder encoder)
-    {
-        using var image = new Image<Rgba32>(width, height, Color.CadetBlue);
-        using var ms = new MemoryStream();
-        image.Save(ms, encoder);
-        return ms.ToArray();
-    }
+    private static readonly SKColor CadetBlue = new(95, 158, 160);
+
+    private static byte[] Jpeg(int width, int height) => TestImages.Solid(width, height, CadetBlue, quality: 80);
 
     [Fact]
     public void Aceita_JpegNoTamanhoDoAparelho()
     {
-        var jpeg = Encode(480, 640, new JpegEncoder { Quality = 80 });
+        var jpeg = Jpeg(480, 640);
 
         Assert.True(FacePhotoValidator.TryValidate(jpeg, out var erro));
         Assert.Null(erro);
@@ -36,7 +29,7 @@ public class FacePhotoValidatorTests
     public void Aceita_PngGrande_QueSeraConvertido()
     {
         // O conversor reencoda para JPEG; a validação não pode recusar formato que o sistema aceita.
-        var png = Encode(1000, 1400, new PngEncoder());
+        var png = TestImages.Solid(1000, 1400, CadetBlue, SKEncodedImageFormat.Png);
 
         Assert.True(FacePhotoValidator.TryValidate(png, out var erro));
         Assert.Null(erro);
@@ -66,7 +59,7 @@ public class FacePhotoValidatorTests
     public void Recusa_ImagemPequenaDemais_ComAsMedidasNaMensagem()
     {
         // Um ícone nunca produz feature code: o aparelho sempre responderia "sem rosto".
-        var icone = Encode(32, 32, new JpegEncoder { Quality = 80 });
+        var icone = Jpeg(32, 32);
 
         Assert.False(FacePhotoValidator.TryValidate(icone, out var erro));
         Assert.Contains("32x32", erro);
@@ -76,28 +69,67 @@ public class FacePhotoValidatorTests
     [Fact]
     public void Aceita_ExatamenteNoPisoDeResolucao()
     {
-        var noPiso = Encode(FacePhotoValidator.MinWidth, FacePhotoValidator.MinHeight, new JpegEncoder { Quality = 80 });
+        var noPiso = Jpeg(FacePhotoValidator.MinWidth, FacePhotoValidator.MinHeight);
 
         Assert.True(FacePhotoValidator.TryValidate(noPiso, out var erro));
         Assert.Null(erro);
     }
 
     /// <summary>
-    /// LIMITE CONHECIDO, fixado de propósito: o ImageSharp 2.x é tolerante com JPEG truncado —
-    /// decodifica o que veio e completa o resto em vez de lançar. Um upload interrompido, então,
-    /// PASSA nesta validação e só é recusado pelo aparelho depois (como "sem rosto", que hoje
-    /// vira quarentena com mensagem clara — ver FaceUploadCode.NoFaceInPhoto).
-    ///
-    /// O teste existe para que isso seja uma decisão registrada e não uma surpresa: se um dia o
-    /// ImageSharp passar a ser estrito, este teste quebra e avisa que a validação ficou mais forte.
+    /// Upload interrompido. O ImageSharp 2.x completava o JPEG truncado e a foto seguia até o
+    /// aparelho, que respondia "sem rosto" — este teste fixava isso como limite conhecido. Com o
+    /// SkiaSharp, a recusa vem aqui, na tela, dizendo o que fazer.
     /// </summary>
     [Fact]
-    public void JpegTruncado_Passa_LimiteConhecidoDoDecodificador()
+    public void JpegTruncado_EhRecusado()
     {
-        var jpeg = Encode(480, 640, new JpegEncoder { Quality = 80 });
+        var jpeg = Jpeg(480, 640);
         var truncado = jpeg[..(jpeg.Length / 3)];
 
-        Assert.True(FacePhotoValidator.TryValidate(truncado, out var erro));
-        Assert.Null(erro);
+        Assert.False(FacePhotoValidator.TryValidate(truncado, out var erro));
+        Assert.Contains("incompleto", erro);
+    }
+
+    /// <summary>
+    /// Formatos que o ImageSharp 2.1 aceitava e o sistema nunca pediu (TIFF, GIF, BMP...) são
+    /// recusados pelo cabeçalho. Quatro dos cinco alertas que motivaram a troca eram de TIFF.
+    /// </summary>
+    [Fact]
+    public void FormatosForaDaLista_SaoRecusados()
+    {
+        Assert.False(FacePhotoValidator.TryValidate(TestImages.Gif1x1, out var erroGif));
+        Assert.Contains("JPG ou PNG", erroGif);
+        Assert.False(FacePhotoValidator.TryValidate(TestImages.TiffHeader, out var erroTiff));
+        Assert.Contains("JPG ou PNG", erroTiff);
+    }
+
+    /// <summary>
+    /// O caso do alerta GHSA-wmxv-xphr-5c9g: 24 bytes que prendiam a thread do decodificador por
+    /// mais de 5 s. Agora não é nem decodificado.
+    /// </summary>
+    [Fact]
+    public void BigTiffDoAlerta_EhRecusadoNaHora()
+    {
+        var relogio = Stopwatch.StartNew();
+
+        Assert.False(FacePhotoValidator.TryValidate(TestImages.BigTiffEntryCountLoop(), out var erro));
+        Assert.True(relogio.Elapsed < TimeSpan.FromSeconds(1), $"levou {relogio.Elapsed.TotalSeconds:F1} s");
+        Assert.Contains("não é uma imagem", erro);
+    }
+
+    /// <summary>
+    /// "Bomba" de memória: um PNG de 50 bytes que declara 30.000 × 30.000 pixels (3,6 GB se
+    /// alocado). O teto é conferido no cabeçalho, antes de alocar.
+    /// </summary>
+    [Fact]
+    public void ImagemQueDeclaraDimensoesGigantes_EhRecusadaSemAlocar()
+    {
+        var bomba = TestImages.PngDeclaring(30_000, 30_000);
+        var antes = GC.GetTotalAllocatedBytes(precise: true);
+
+        Assert.False(FacePhotoValidator.TryValidate(bomba, out var erro));
+        Assert.Contains("30000x30000", erro);
+        Assert.Contains("megapixels", erro);
+        Assert.True(GC.GetTotalAllocatedBytes(precise: true) - antes < 10_000_000, "alocou memória demais para recusar");
     }
 }

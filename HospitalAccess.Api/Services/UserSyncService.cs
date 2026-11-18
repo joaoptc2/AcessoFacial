@@ -178,25 +178,48 @@ public sealed class UserSyncService : IUserSyncService
             _db.SyncStatuses.Add(status);
         }
 
-        // Porta com o disjuntor ABERTO: alinha o backoff deste usuário ao relógio DA PORTA e sai
-        // sem tentar. É o que faz o recuo valer por porta e não por usuário × porta.
+        // Porta sem condições de receber este cadastro: adia e espalha a próxima tentativa. Duas
+        // regras, por peso do trabalho:
         //
-        // Antes, cada usuário mantinha a sua própria contagem contra a mesma porta morta, então
-        // um aparelho fora do ar era redescoberto uma vez por usuário, e cada usuário novo
-        // recomeçava do zero. A medição de 43 h pegou isso: dois cadastros somaram 135 tentativas
-        // martelando a mesma leitura que nunca respondeu. O disjuntor já barrava no gateway, mas
-        // só depois de a tentativa atravessar fila, worker e banco para ser recusada no fim.
-        if (_gateway.GetCircuitOpenUntilUtc(controllerId) is { } circuitOpenUntil)
+        // - Circuito ABERTO bloqueia qualquer cadastro, sem tocar o aparelho. Faz o recuo valer por
+        //   porta, e não por usuário × porta: sem isso, um aparelho fora do ar era redescoberto uma
+        //   vez por usuário (set/2026: dois cadastros somaram 135 tentativas contra uma leitora morta).
+        // - Porta SEM PROVA DE VIDA (falhou e não respondeu desde então) recebe primeiro uma sonda
+        //   barata; o cadastro com face só vai se ela responder. O upload de ~100 KB é o comando
+        //   mais caro que existe e não deve ser a sonda da meia-abertura — em nov/2026 era, e sete
+        //   deles de 22,5 s entravam juntos numa porta morta. A sonda é desta rotina, e não só do
+        //   monitoramento, porque porta com push recente é pulada por ele e nunca voltaria.
+        //   Visitante é comando leve e segue direto: atrasar a liberação dele na recepção por uma
+        //   falha transitória custaria caro, e o sucesso dele já é prova de vida.
+        //
+        // O adiamento é sorteado numa janela (SyncRetryPolicy.DeferForUnhealthyPort). Marcar todos
+        // para o mesmo instante, como a versão anterior fazia, juntava os usuários em rajada. Não
+        // conta como falha do usuário: o backoff dele (RetryCount) não anda.
+        var circuitOpenUntil = _gateway.GetCircuitOpenUntilUtc(controllerId);
+        var cadastroPesado = user.Type != UserType.Visitor;
+        var semResposta = false;
+        if (circuitOpenUntil is null && cadastroPesado && !_gateway.IsControllerHealthy(controllerId)
+            && !await _gateway.ProbeControllerAsync(controller, ct))
         {
+            semResposta = true;
+            // A falha da sonda pode ter reaberto o circuito (meia-abertura): conta a partir dele.
+            circuitOpenUntil = _gateway.GetCircuitOpenUntilUtc(controllerId);
+        }
+
+        if (circuitOpenUntil is not null || semResposta)
+        {
+            var proxima = SyncRetryPolicy.DeferForUnhealthyPort(DateTime.UtcNow, circuitOpenUntil, Random.Shared);
+            var proximaLocal = TimeZoneInfo.ConvertTimeFromUtc(proxima, _deviceTimeZone);
             status.State = SyncState.Failed;
-            status.LastError = $"Porta sem resposta ao protocolo — nova tentativa após {TimeZoneInfo.ConvertTimeFromUtc(circuitOpenUntil, _deviceTimeZone):HH:mm:ss}.";
-            // Um minuto de folga: tentar no instante exato da reabertura perderia a corrida com
-            // o próprio disjuntor e gastaria a sonda de meia-abertura à toa.
-            status.NextRetryAtUtc = circuitOpenUntil.AddMinutes(1);
+            status.LastError = circuitOpenUntil is not null
+                ? $"Porta sem resposta ao protocolo — nova tentativa após {proximaLocal:HH:mm:ss}."
+                : $"Porta instável: não respondeu à sonda que antecede o cadastro com face — nova tentativa após {proximaLocal:HH:mm:ss}.";
+            status.NextRetryAtUtc = proxima;
             await _db.SaveChangesAsync(ct);
             _logger.LogDebug(
-                "Sincronização de {Code} na porta {Controller} adiada: disjuntor aberto até {Until:HH:mm:ss}.",
-                user.UserCode, controller.Name, circuitOpenUntil);
+                "Sincronização de {Code} na porta {Controller} adiada até {Next:HH:mm:ss} ({Motivo}).",
+                user.UserCode, controller.Name, proxima,
+                circuitOpenUntil is not null ? "circuito aberto" : "sonda sem resposta");
             return;
         }
 

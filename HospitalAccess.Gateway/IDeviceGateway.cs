@@ -151,6 +151,23 @@ public interface IDeviceGateway
     /// </summary>
     DateTime? GetCircuitOpenUntilUtc(Guid controllerId);
 
+    /// <summary>
+    /// A porta respondeu com sucesso desde a sua última falha de protocolo? Porta que nunca
+    /// falhou conta como viva. Falso também na meia-abertura do disjuntor — quando ele já não
+    /// está aberto, mas a porta ainda não provou nada. Use antes de mandar trabalho pesado
+    /// (cadastro com face): a sonda da meia-abertura deve ser um comando barato.
+    /// </summary>
+    bool IsControllerHealthy(Guid controllerId);
+
+    /// <summary>
+    /// Sonda barata (uma leitura de estado, ~150 ms numa porta saudável) que serve de prova de
+    /// vida: sucesso fecha o disjuntor, falha conta como falha — inclusive reabrindo-o na
+    /// meia-abertura. Devolve se a porta respondeu. Existe para que um cadastro com face não
+    /// precise ser a sonda de uma porta duvidosa, e para não depender do monitoramento: porta
+    /// com push de evento recente é pulada por ele e ficaria sem nenhum comando que a reabilitasse.
+    /// </summary>
+    Task<bool> ProbeControllerAsync(Controller controller, CancellationToken ct = default);
+
     /// <summary>Limpa o estado local (gate, monitoramento, push, conexão) de um controlador excluído do cadastro.</summary>
     void ForgetController(Controller controller);
 
