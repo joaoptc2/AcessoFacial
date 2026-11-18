@@ -1,5 +1,3 @@
-using SixLabors.ImageSharp;
-
 namespace HospitalAccess.Gateway.Imaging;
 
 /// <summary>
@@ -15,10 +13,9 @@ namespace HospitalAccess.Gateway.Imaging;
 /// é que os casos GROSSEIROS (PDF renomeado, ícone de 32x32) param aqui.
 /// </para>
 /// <para>
-/// OUTRO LIMITE, medido: o ImageSharp 2.x é tolerante com JPEG truncado — decodifica o que
-/// chegou e completa o resto em vez de falhar. Upload interrompido, portanto, passa por aqui e
-/// só é barrado pelo aparelho (como "sem rosto", que já vira quarentena com mensagem clara).
-/// Está fixado em teste (<c>JpegTruncado_Passa_LimiteConhecidoDoDecodificador</c>).
+/// Upload interrompido (JPEG truncado) é recusado aqui desde a troca do ImageSharp 2.x pelo
+/// SkiaSharp: o decodificador antigo completava o arquivo e deixava a foto seguir até o
+/// aparelho, que respondia "sem rosto". Fixado em teste (<c>JpegTruncado_EhRecusado</c>).
 /// </para>
 /// </summary>
 public static class FacePhotoValidator
@@ -49,18 +46,9 @@ public static class FacePhotoValidator
             return false;
         }
 
-        // ImageSharp 2.x: Identify devolve null quando não reconhece o formato (não lança); o
-        // catch cobre o arquivo reconhecido mas corrompido no cabeçalho.
-        IImageInfo? info;
-        try
-        {
-            info = Image.Identify(bytes);
-        }
-        catch (Exception)
-        {
-            info = null;
-        }
-
+        // Só o cabeçalho: formato e dimensões, sem decodificar. Null = não é imagem, ou é de um
+        // formato fora da lista aceita (TIFF, BMP, GIF...).
+        var info = ImageDecoding.Identify(bytes);
         if (info is null)
         {
             error = "O arquivo enviado não é uma imagem que o sistema consiga abrir. " +
@@ -68,19 +56,25 @@ public static class FacePhotoValidator
             return false;
         }
 
-        if (info.Width < MinWidth || info.Height < MinHeight)
+        if (info.Value.Width < MinWidth || info.Value.Height < MinHeight)
         {
-            error = $"A foto tem {info.Width}x{info.Height} pixels, pequena demais para o leitor " +
+            error = $"A foto tem {info.Value.Width}x{info.Value.Height} pixels, pequena demais para o leitor " +
                     $"reconhecer um rosto (mínimo {MinWidth}x{MinHeight}). Envie uma foto maior.";
             return false;
         }
 
         // Última prova: a conversão real para o formato do aparelho. Pega o que só aparece ao
-        // decodificar de fato — arquivo truncado, imagem que não comprime até o teto — e evita
-        // gravar no banco uma foto que só falharia na sincronização.
+        // decodificar de fato — arquivo truncado ou corrompido, imagem grande demais, imagem que
+        // não comprime até o teto — e evita gravar no banco uma foto que só falharia na
+        // sincronização.
         try
         {
             FaceImageConverter.ConvertImage(bytes, TargetWidth, TargetHeight, MaxBytes);
+        }
+        catch (ImageDecodeException ex)
+        {
+            error = $"Não foi possível usar esta foto: {ex.Message}.";
+            return false;
         }
         catch (Exception ex)
         {

@@ -4,10 +4,8 @@ using HospitalAccess.Infrastructure.Devices;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Formats;
-using SixLabors.ImageSharp.Formats.Jpeg;
-using SixLabors.ImageSharp.PixelFormats;
+using HospitalAccess.Tests.Imaging;
+using SkiaSharp;
 using Xunit;
 
 namespace HospitalAccess.Tests.Beds;
@@ -28,12 +26,11 @@ public sealed class WelcomeImageServiceTests : IDisposable
         FontCandidates.FirstOrDefault(File.Exists)
         ?? throw new InvalidOperationException("Nenhuma fonte TTF conhecida encontrada para o teste.");
 
-    private string CreateBaseImage(int width = 800, int height = 600)
+    private string CreateBaseImage(int width = 800, int height = 600, SKColor? color = null)
     {
         Directory.CreateDirectory(_root);
         var path = Path.Combine(_root, "base.jpg");
-        using var image = new Image<Rgba32>(width, height, Color.DarkSlateBlue);
-        image.Save(path, new JpegEncoder { Quality = 90 });
+        TestImages.SaveSolid(path, width, height, color ?? new SKColor(72, 61, 139));
         return path;
     }
 
@@ -75,8 +72,8 @@ public sealed class WelcomeImageServiceTests : IDisposable
         var outputPath = Path.Combine(_root, "out", WelcomeImageService.FileNameFor(controllerId));
         Assert.True(File.Exists(outputPath));
 
-        using var generated = Image.Load(outputPath, out IImageFormat format);
-        Assert.Equal("JPEG", format.Name);
+        var generated = TestImages.Header(outputPath);
+        Assert.Equal(SKEncodedImageFormat.Jpeg, generated.Format);
         Assert.Equal(800, generated.Width);
         Assert.Equal(600, generated.Height);
 
@@ -94,7 +91,7 @@ public sealed class WelcomeImageServiceTests : IDisposable
 
         await service.GenerateAsync(controllerId, "Maria da Silva");
 
-        using var generated = Image.Load(Path.Combine(_root, "out", WelcomeImageService.FileNameFor(controllerId)));
+        var generated = TestImages.Header(Path.Combine(_root, "out", WelcomeImageService.FileNameFor(controllerId)));
         Assert.Equal(1280, generated.Width);
         Assert.Equal(720, generated.Height);
     }
@@ -108,8 +105,7 @@ public sealed class WelcomeImageServiceTests : IDisposable
 
         var bytes = await service.RenderPreviewAsync("Nome de Exemplo");
 
-        using var ms = new MemoryStream(bytes);
-        using var generated = Image.Load(ms);
+        var generated = TestImages.Header(bytes);
         Assert.Equal(1280, generated.Width);
         Assert.Equal(720, generated.Height);
     }
@@ -130,8 +126,7 @@ public sealed class WelcomeImageServiceTests : IDisposable
         Assert.Single(files);
         Assert.Equal(WelcomeImageService.FileNameFor(controllerId), Path.GetFileName(files[0]));
 
-        using var generated = Image.Load(files[0], out IImageFormat format);
-        Assert.Equal("JPEG", format.Name);
+        Assert.Equal(SKEncodedImageFormat.Jpeg, TestImages.Header(files[0]).Format);
     }
 
     [Fact]
@@ -142,9 +137,8 @@ public sealed class WelcomeImageServiceTests : IDisposable
 
         var bytes = await service.RenderPreviewAsync("Nome de Exemplo");
 
-        using var ms = new MemoryStream(bytes);
-        using var generated = Image.Load(ms, out IImageFormat format);
-        Assert.Equal("JPEG", format.Name);
+        var generated = TestImages.Header(bytes);
+        Assert.Equal(SKEncodedImageFormat.Jpeg, generated.Format);
         Assert.Equal(640, generated.Width);
         Assert.Equal(480, generated.Height);
         // A prévia não pode poluir o diretório público servido em /welcome/*.
@@ -156,13 +150,7 @@ public sealed class WelcomeImageServiceTests : IDisposable
     {
         var service = CreateService();
 
-        byte[] png;
-        using (var source = new Image<Rgba32>(300, 200, Color.DarkGreen))
-        using (var ms = new MemoryStream())
-        {
-            source.Save(ms, new SixLabors.ImageSharp.Formats.Png.PngEncoder());
-            png = ms.ToArray();
-        }
+        var png = TestImages.Solid(300, 200, new SKColor(0, 100, 0), SKEncodedImageFormat.Png);
 
         using var upload = new MemoryStream(png);
         var (path, width, height) = await service.SaveBaseImageAsync(upload);
@@ -171,8 +159,7 @@ public sealed class WelcomeImageServiceTests : IDisposable
         Assert.Equal(200, height);
         // Salva no PAI do diretório público (não em /welcome/*).
         Assert.Equal(Path.Combine(_root, "welcome-base.jpg"), path);
-        using var saved = Image.Load(path, out IImageFormat format);
-        Assert.Equal("JPEG", format.Name);
+        Assert.Equal(SKEncodedImageFormat.Jpeg, TestImages.Header(path).Format);
     }
 
     [Fact]
@@ -264,6 +251,98 @@ public sealed class WelcomeImageServiceTests : IDisposable
 
         Assert.True(File.Exists(Path.Combine(_root, "out", WelcomeImageService.FileNameFor(controllerId))));
         Assert.Contains($"/welcome/leito-{controllerId:N}.jpg", url);
+    }
+
+    /// <summary>
+    /// A troca de biblioteca não pode mover o nome na arte já ajustada pelo hospital. Valores
+    /// medidos com o ImageSharp.Drawing 1.0 (a versão substituída) desenhando "HIxH" a 96 pt em
+    /// X=100, Y=100: topo do H em 111 px e base em 180 px com a DejaVu Sans Bold.
+    /// </summary>
+    [SkippableFact]
+    public async Task Posicao_do_texto_e_a_mesma_do_ImageSharp()
+    {
+        const string dejavu = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf";
+        Skip.IfNot(File.Exists(dejavu), "DejaVu Sans Bold não instalada");
+        CreateBaseImage(1200, 400, SKColors.Black);
+        var service = CreateService(o =>
+        {
+            o.FontPath = dejavu;
+            o.FontSize = 96;
+            o.CenterHorizontally = false;
+            o.TextX = 100;
+            o.TextY = 100;
+            o.FontColorHex = "#FFFFFF";
+        });
+
+        using var preview = TestImages.Decode(await service.RenderPreviewAsync("HIxH"));
+
+        int top = int.MaxValue, bottom = 0, left = int.MaxValue;
+        for (var y = 0; y < preview.Height; y++)
+        for (var x = 0; x < preview.Width; x++)
+        {
+            if (preview.GetPixel(x, y).Red <= 128) continue;
+            top = Math.Min(top, y);
+            bottom = Math.Max(bottom, y);
+            left = Math.Min(left, x);
+        }
+
+        Assert.InRange(top, 109, 113);
+        Assert.InRange(bottom, 178, 182);
+        Assert.InRange(left, 100, 112);
+    }
+
+    /// <summary>Linha de base por fonte, contra o medido no ImageSharp a 200 pt.</summary>
+    [SkippableTheory]
+    [InlineData("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 169)]           // métricas hhea
+    [InlineData("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf", 166)]   // hhea com espaçamento
+    [InlineData("/usr/share/fonts/truetype/freefont/FreeSansBold.ttf", 150)]            // USE_TYPO_METRICS
+    public void Linha_de_base_reproduz_o_layout_do_ImageSharp(string fontPath, float medidoNoImageSharp)
+    {
+        Skip.IfNot(File.Exists(fontPath), $"{fontPath} não instalada");
+        using var typeface = SKTypeface.FromFile(fontPath);
+
+        Assert.InRange(WelcomeImageService.BaselineOffset(typeface, 200), medidoNoImageSharp - 1, medidoNoImageSharp + 1);
+    }
+
+    [Theory]
+    [InlineData("#FFFFFF", 255, 255, 255, 255)]
+    [InlineData("1E90FF", 30, 144, 255, 255)]
+    [InlineData("#0F0", 0, 255, 0, 255)]
+    [InlineData("#FF000080", 255, 0, 0, 128)] // alfa no FIM, como no ImageSharp (o Skia leria #AARRGGBB)
+    public void Cor_aceita_os_formatos_do_ImageSharp(string hex, byte r, byte g, byte b, byte a)
+    {
+        Assert.Equal(new SKColor(r, g, b, a), WelcomeImageService.ParseHexColor(hex));
+    }
+
+    [Fact]
+    public void Cor_invalida_lanca_erro_claro()
+    {
+        var ex = Assert.Throws<InvalidOperationException>(() => WelcomeImageService.ParseHexColor("#XYZ123"));
+        Assert.Contains("Cor do texto", ex.Message);
+    }
+
+    /// <summary>Base em formato fora da lista (aqui, GIF) é recusada com a mensagem de imagem inválida.</summary>
+    [Fact]
+    public async Task Upload_da_base_em_formato_fora_da_lista_e_recusado()
+    {
+        var service = CreateService();
+        using var gif = new MemoryStream(TestImages.Gif1x1);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => service.SaveBaseImageAsync(gif));
+        Assert.Contains("não é uma imagem válida", ex.Message);
+        Assert.Contains("GIF", ex.Message);
+    }
+
+    /// <summary>Nome com acento DECOMPOSTO (letra + acento combinante) é desenhado sem erro.</summary>
+    [Fact]
+    public async Task Nome_com_acento_decomposto_e_desenhado()
+    {
+        CreateBaseImage();
+        var service = CreateService();
+
+        var bytes = await service.RenderPreviewAsync("Joa\u0303o Conceic\u0327a\u0303o");
+
+        Assert.Equal(SKEncodedImageFormat.Jpeg, TestImages.Header(bytes).Format);
     }
 
     public void Dispose()

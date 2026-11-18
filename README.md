@@ -38,10 +38,20 @@ que muda apenas o `ConnectType` em `ControllerConnectionFactory`, não o resto d
 Convertida para **480×640 px, ≤120 KB (122880 bytes)** antes do upload. O helper do
 fabricante (`ImageTool.ConvertImage`) usa `System.Drawing`/GDI+, que é **Windows-only** desde
 o .NET 7 — inviável para uma API ASP.NET Core multiplataforma. Reimplementado em
-`HospitalAccess.Gateway.Imaging.FaceImageConverter` com **ImageSharp** (mesma lógica: resize
+`HospitalAccess.Gateway.Imaging.FaceImageConverter` com **SkiaSharp** (mesma lógica: resize
 preservando aspect ratio, canvas branco 480×640, redução iterativa de qualidade JPEG até
-caber no limite). Qualquer formato que o ImageSharp decodifique é aceito na entrada (JPG,
-PNG, WebP...) — o conversor sempre re-encoda para **JPEG**, que é o que o aparelho exige.
+caber no limite). Entrada aceita: **JPEG, PNG e WebP** (`ImageDecoding`, porta única de
+imagens vindas de fora); o conversor sempre re-encoda para **JPEG**, que é o que o aparelho
+exige. Recusados já no upload, com mensagem para a tela: outros formatos (TIFF, BMP, GIF...),
+imagem acima de 50 megapixels (conferido no cabeçalho, antes de alocar) e arquivo incompleto
+(upload interrompido — o decodificador anterior completava o JPEG e a foto só falhava no
+aparelho, como "sem rosto"). PNG transparente é achatado sobre branco.
+
+> Até nov/2026 era **ImageSharp 2.1.13**: cinco alertas de segurança (GHSA-gwg2-r3hj-4w44,
+> GHSA-j3p4-wp97-rph4, GHSA-j9gm-c75j-xc9q, GHSA-wmxv-xphr-5c9g, GHSA-jjfr-hcj7-qf5w — quatro
+> deles em TIFF) sem correção na linha 2.x; as versões corrigidas (3.2.0/4.1.2) mudam para a
+> licença comercial "Six Labors Split License". O SkiaSharp é MIT. A tela de boas-vindas
+> reproduz a posição vertical do texto do ImageSharp, então o X/Y já configurado não muda.
 Retornos tratados: `2` (feature code não identificável),
 `3` (sem rosto), `4` (duplicada), `0`/outros (falha de CRC32), resultado nulo (handle 0 =
 usuário inexistente).
@@ -573,8 +583,10 @@ controlador e usar "Testar conexão": se a senha for aceita, o chaveiro voltou c
 
 ### Pacotes NuGet (públicos, restauram normalmente)
 `Microsoft.EntityFrameworkCore` + `Npgsql.EntityFrameworkCore.PostgreSQL`, `QRCoder`,
-`SixLabors.ImageSharp` (fixado em `2.1.x`/Apache-2.0 — **não subir para 3.x** sem revisar a
-licença comercial "Six Labors Split License"), `Microsoft.AspNetCore.Authentication.JwtBearer`,
+`SkiaSharp` + `SkiaSharp.NativeAssets.Linux.NoDependencies` (MIT; o binário nativo traz
+libjpeg-turbo/libpng/libwebp — mantenha atualizado, o CI reprova pacote com alerta conhecido;
+não voltar ao ImageSharp 3.x/4.x sem revisar a "Six Labors Split License"),
+`Microsoft.AspNetCore.Authentication.JwtBearer`,
 `Swashbuckle.AspNetCore`, `xunit`.
 
 ### Segredos (nunca versionar)

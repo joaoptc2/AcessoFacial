@@ -1,8 +1,6 @@
-using SixLabors.Fonts;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Drawing.Processing;
-using SixLabors.ImageSharp.Formats.Jpeg;
-using SixLabors.ImageSharp.Processing;
+using System.Text;
+using HospitalAccess.Gateway.Imaging;
+using SkiaSharp;
 
 namespace HospitalAccess.Api.Services;
 
@@ -13,6 +11,13 @@ namespace HospitalAccess.Api.Services;
 /// Home Assistant recebe a URL e exibe na TV do quarto. A configuração (imagem base, posição,
 /// fonte, cor, URL pública) é lida POR CHAMADA do <see cref="RuntimeSettingsProvider"/> —
 /// salvar na tela de Configurações vale imediatamente, sem restart.
+///
+/// <para>
+/// Desenho com SkiaSharp (MIT) desde nov/2026; antes, ImageSharp.Drawing 1.0 sobre o ImageSharp
+/// 2.1, trocado por alertas de segurança sem correção na linha 2.x. A posição vertical do texto
+/// reproduz a do ImageSharp (<see cref="BaselineOffset"/>) para que o X/Y já configurado sobre a
+/// arte do hospital continue caindo no mesmo lugar.
+/// </para>
 /// </summary>
 public sealed class WelcomeImageService
 {
@@ -29,7 +34,8 @@ public sealed class WelcomeImageService
     private readonly object _fontLock = new();
     // Cache sensível a mudanças: a fonte agora pode ser TROCADA em runtime (upload pela tela),
     // inclusive sobrescrevendo o mesmo caminho — o cache invalida por caminho E data do arquivo.
-    private FontFamily? _fontFamily;
+    // A fonte anterior não é descartada na troca: uma geração em andamento pode estar usando-a.
+    private SKTypeface? _typeface;
     private string? _cachedFontPath;
     private DateTime _cachedFontWriteUtc;
 
@@ -64,7 +70,7 @@ public sealed class WelcomeImageService
         // Sempre JPG (requisito): grava num temporário e move por cima — o HA nunca busca um
         // arquivo pela metade.
         var tempPath = outputPath + ".tmp";
-        await image.SaveAsync(tempPath, new JpegEncoder { Quality = 90 }, ct);
+        await File.WriteAllBytesAsync(tempPath, ImageDecoding.EncodeJpeg(image, 90), ct);
         File.Move(tempPath, outputPath, overwrite: true);
 
         _logger.LogInformation("Tela de boas-vindas gerada para o leito {ControllerId}: {Path} (\"{Name}\").",
@@ -80,9 +86,7 @@ public sealed class WelcomeImageService
     public async Task<byte[]> RenderPreviewAsync(string patientName, CancellationToken ct = default)
     {
         using var image = await RenderAsync(_settings.Welcome, patientName, ct);
-        using var ms = new MemoryStream();
-        await image.SaveAsync(ms, new JpegEncoder { Quality = 90 }, ct);
-        return ms.ToArray();
+        return ImageDecoding.EncodeJpeg(image, 90);
     }
 
     /// <summary>
@@ -92,14 +96,17 @@ public sealed class WelcomeImageService
     /// </summary>
     public async Task<(string Path, int Width, int Height)> SaveBaseImageAsync(Stream content, CancellationToken ct = default)
     {
-        Image image;
+        using var buffer = new MemoryStream();
+        await content.CopyToAsync(buffer, ct);
+
+        SKBitmap image;
         try
         {
-            image = await Image.LoadAsync(content, ct);
+            image = ImageDecoding.Decode(buffer.ToArray(), out _);
         }
-        catch (Exception ex) when (ex is UnknownImageFormatException or InvalidImageContentException)
+        catch (ImageDecodeException ex)
         {
-            throw new InvalidOperationException("O arquivo enviado não é uma imagem válida — envie um JPG ou PNG.", ex);
+            throw new InvalidOperationException($"O arquivo enviado não é uma imagem válida — {ex.Message}.", ex);
         }
 
         using (image)
@@ -109,8 +116,11 @@ public sealed class WelcomeImageService
             var basePath = Path.Combine(string.IsNullOrEmpty(parentDir) ? cfg.OutputDirectory : parentDir, "welcome-base.jpg");
             Directory.CreateDirectory(Path.GetDirectoryName(basePath)!);
 
+            // Achatada sobre branco: a base de um PNG transparente não pode virar fundo preto.
+            using var flat = ImageDecoding.DrawOnWhite(image, image.Width, image.Height,
+                SKRect.Create(0, 0, image.Width, image.Height));
             var tempPath = basePath + ".tmp";
-            await image.SaveAsync(tempPath, new JpegEncoder { Quality = 95 }, ct);
+            await File.WriteAllBytesAsync(tempPath, ImageDecoding.EncodeJpeg(flat, 95), ct);
             File.Move(tempPath, basePath, overwrite: true);
 
             _logger.LogInformation("Imagem base de boas-vindas atualizada: {Path} ({W}x{H}).", basePath, image.Width, image.Height);
@@ -119,7 +129,7 @@ public sealed class WelcomeImageService
     }
 
     /// <summary>Núcleo compartilhado: carrega a base e desenha o nome (validações com mensagens claras).</summary>
-    private async Task<Image> RenderAsync(RuntimeSettingsProvider.WelcomeSettings cfg, string patientName, CancellationToken ct)
+    private async Task<SKBitmap> RenderAsync(RuntimeSettingsProvider.WelcomeSettings cfg, string patientName, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(cfg.BaseImagePath))
             throw new InvalidOperationException(
@@ -128,26 +138,47 @@ public sealed class WelcomeImageService
             throw new InvalidOperationException(
                 $"Imagem base da tela de boas-vindas não encontrada: {cfg.BaseImagePath}");
 
-        var image = await Image.LoadAsync(cfg.BaseImagePath, ct);
+        SKBitmap image;
         try
         {
-            var font = GetFontFamily(cfg.FontPath).CreateFont(cfg.FontSize, FontStyle.Bold);
-            var color = Color.ParseHex(string.IsNullOrWhiteSpace(cfg.FontColorHex) ? "#FFFFFF" : cfg.FontColorHex);
+            image = ImageDecoding.Decode(await File.ReadAllBytesAsync(cfg.BaseImagePath, ct), out _);
+        }
+        catch (ImageDecodeException ex)
+        {
+            throw new InvalidOperationException(
+                $"A imagem base da tela de boas-vindas ({cfg.BaseImagePath}) não pôde ser aberta: {ex.Message}.", ex);
+        }
 
-            var textOptions = new TextOptions(font);
-            var size = TextMeasurer.MeasureSize(patientName, textOptions);
+        try
+        {
+            var typeface = GetTypeface(cfg.FontPath);
+            var color = ParseHexColor(string.IsNullOrWhiteSpace(cfg.FontColorHex) ? "#FFFFFF" : cfg.FontColorHex);
+            // NFC: sem um motor de shaping, um acento DECOMPOSTO (letra + acento combinante, como
+            // alguns teclados e cópias de PDF produzem) sairia deslocado. Composto, é um glifo só.
+            var text = patientName.Normalize(NormalizationForm.FormC);
+
+            using var font = new SKFont(typeface, cfg.FontSize) { Edging = SKFontEdging.Antialias, Subpixel = true };
+            using var paint = new SKPaint { Color = color, IsAntialias = true };
+            var textWidth = font.MeasureText(text, paint);
             var x = cfg.CenterHorizontally
-                ? Math.Max(0, (image.Width - size.Width) / 2f)
+                ? Math.Max(0, (image.Width - textWidth) / 2f)
                 : cfg.TextX;
+            var baseline = cfg.TextY + BaselineOffset(typeface, cfg.FontSize);
 
-            image.Mutate(ctx => ctx.DrawText(patientName, font, color, new PointF(x, cfg.TextY)));
+            using (var canvas = new SKCanvas(image))
+            {
+                canvas.DrawText(text, x, baseline, SKTextAlign.Left, font, paint);
+                canvas.Flush();
+            }
 
             if (image.Width > CastMaxWidth || image.Height > CastMaxHeight)
             {
                 var scale = Math.Min((double)CastMaxWidth / image.Width, (double)CastMaxHeight / image.Height);
                 var width = Math.Max(1, (int)Math.Round(image.Width * scale));
                 var height = Math.Max(1, (int)Math.Round(image.Height * scale));
-                image.Mutate(ctx => ctx.Resize(width, height));
+                var reduced = ImageDecoding.DrawOnWhite(image, width, height, SKRect.Create(0, 0, width, height));
+                image.Dispose();
+                image = reduced;
             }
 
             return image;
@@ -157,6 +188,64 @@ public sealed class WelcomeImageService
             image.Dispose();
             throw;
         }
+    }
+
+    /// <summary>
+    /// Distância do topo configurado (TextY) até a linha de base do texto, reproduzindo o
+    /// layout do SixLabors.Fonts 1.0 usado até nov/2026: a linha tem a altura de 1 em, e a
+    /// altura de linha da fonte (ascendente − descendente + espaçamento) é centralizada nela.
+    /// As métricas vêm da tabela OS/2 ("typo") quando a fonte marca USE_TYPO_METRICS, e da
+    /// hhea nos demais casos — a mesma escolha do ImageSharp.
+    ///
+    /// Medido contra o ImageSharp a 200 pt: DejaVu Sans Bold 169 px, Liberation Sans Bold 166,
+    /// FreeSans Bold 150 — o Skia com a ascendente própria dele desenharia 10 a 17 px mais baixo,
+    /// e o nome sairia da posição já ajustada sobre a arte do hospital.
+    /// </summary>
+    internal static float BaselineOffset(SKTypeface typeface, float fontSize)
+    {
+        var unitsPerEm = typeface.UnitsPerEm;
+        var os2 = TryGetTable(typeface, "OS/2");
+        var hhea = TryGetTable(typeface, "hhea");
+        if (unitsPerEm > 0 && (hhea is { Length: >= 10 } || os2 is { Length: >= 74 }))
+        {
+            var useTypo = os2 is { Length: >= 74 } && ((ReadUInt16(os2, 62) & 0x80) != 0 || hhea is not { Length: >= 10 });
+            var (ascender, descender, lineGap) = useTypo
+                ? (ReadInt16(os2!, 68), ReadInt16(os2!, 70), ReadInt16(os2!, 72))
+                : (ReadInt16(hhea!, 4), ReadInt16(hhea!, 6), ReadInt16(hhea!, 8));
+            var lineHeight = ascender - descender + lineGap;
+            return fontSize * (ascender - (lineHeight - unitsPerEm) / 2f) / unitsPerEm;
+        }
+
+        // Fonte sem as tabelas (raro): a ascendente que o próprio Skia calcula.
+        using var font = new SKFont(typeface, fontSize);
+        font.GetFontMetrics(out var metrics);
+        return -metrics.Ascent;
+    }
+
+    private static byte[]? TryGetTable(SKTypeface typeface, string tag)
+    {
+        var code = (uint)((tag[0] << 24) | (tag[1] << 16) | (tag[2] << 8) | tag[3]);
+        return typeface.TryGetTableData(code, out var data) ? data : null;
+    }
+
+    private static short ReadInt16(byte[] table, int offset) => (short)((table[offset] << 8) | table[offset + 1]);
+    private static ushort ReadUInt16(byte[] table, int offset) => (ushort)((table[offset] << 8) | table[offset + 1]);
+
+    /// <summary>
+    /// Cor no formato que o ImageSharp aceitava: #RGB, #RGBA, #RRGGBB ou #RRGGBBAA (alfa no FIM —
+    /// o parser do Skia lê #AARRGGBB, com o alfa no começo, e trocaria as cores de 8 dígitos).
+    /// </summary>
+    internal static SKColor ParseHexColor(string hex)
+    {
+        var digits = hex.Trim().TrimStart('#');
+        if (digits.Length is 3 or 4)
+            digits = string.Concat(digits.Select(c => $"{c}{c}"));
+        if (digits.Length == 6)
+            digits += "FF";
+        if (digits.Length != 8 || !uint.TryParse(digits, System.Globalization.NumberStyles.HexNumber, null, out var rgba))
+            throw new InvalidOperationException(
+                $"Cor do texto da tela de boas-vindas inválida: '{hex}'. Use um hex de 6 dígitos (ex.: #FFFFFF).");
+        return new SKColor((byte)(rgba >> 24), (byte)(rgba >> 16), (byte)(rgba >> 8), (byte)rgba);
     }
 
     public static string FileNameFor(Guid controllerId) => $"leito-{controllerId:N}.jpg";
@@ -189,15 +278,14 @@ public sealed class WelcomeImageService
         await content.CopyToAsync(buffer, ct);
 
         string familyName;
-        try
+        buffer.Position = 0;
+        using (var probe = SKTypeface.FromStream(buffer))
         {
-            buffer.Position = 0;
-            var probe = new FontCollection();
-            familyName = probe.Add(buffer).Name;
-        }
-        catch (Exception ex)
-        {
-            throw new InvalidOperationException("O arquivo enviado não é uma fonte TTF/OTF válida.", ex);
+            // Null = o motor de fontes não reconheceu o arquivo; sem família = fonte sem nome
+            // legível, que não daria para confirmar na tela.
+            if (probe is null || string.IsNullOrWhiteSpace(probe.FamilyName))
+                throw new InvalidOperationException("O arquivo enviado não é uma fonte TTF/OTF válida.");
+            familyName = probe.FamilyName;
         }
 
         var cfg = _settings.Welcome;
@@ -213,7 +301,7 @@ public sealed class WelcomeImageService
         return (fontPath, familyName);
     }
 
-    private FontFamily GetFontFamily(string fontPath)
+    private SKTypeface GetTypeface(string fontPath)
     {
         lock (_fontLock)
         {
@@ -225,7 +313,7 @@ public sealed class WelcomeImageService
                     "tela de Configurações ou aponte BedManagement:FontPath para um .ttf existente.");
 
             var writeUtc = File.GetLastWriteTimeUtc(resolved);
-            if (_fontFamily is { } cached &&
+            if (_typeface is { } cached &&
                 string.Equals(_cachedFontPath, resolved, StringComparison.Ordinal) &&
                 _cachedFontWriteUtc == writeUtc)
                 return cached;
@@ -235,12 +323,14 @@ public sealed class WelcomeImageService
                     "Fonte configurada '{Configured}' não existe — usando '{Resolved}' no lugar (instale fonts-dejavu-core, envie uma fonte pela tela ou ajuste BedManagement:FontPath).",
                     fontPath, resolved);
 
-            var collection = new FontCollection();
-            var family = collection.Add(resolved);
-            _fontFamily = family;
+            // Lida para a memória (e não FromFile): o upload pela tela sobrescreve o arquivo no
+            // mesmo caminho, e um typeface mapeado no arquivo antigo não deve depender dele.
+            var typeface = SKTypeface.FromData(SKData.CreateCopy(File.ReadAllBytes(resolved)))
+                ?? throw new InvalidOperationException($"A fonte '{resolved}' não pôde ser carregada (arquivo TTF/OTF inválido).");
+            _typeface = typeface;
             _cachedFontPath = resolved;
             _cachedFontWriteUtc = writeUtc;
-            return family;
+            return typeface;
         }
     }
 

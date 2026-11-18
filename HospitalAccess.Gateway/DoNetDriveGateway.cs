@@ -420,7 +420,7 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             return new AddFaceResult(false, FaceUploadCode.InvalidImage,
-                $"A foto cadastrada não pôde ser preparada para o aparelho: {ex.Message} " +
+                $"A foto cadastrada não pôde ser preparada para o aparelho: {ex.Message.TrimEnd('.')}. " +
                 "Envie uma foto nova pelo cadastro do usuário.");
         }
 
