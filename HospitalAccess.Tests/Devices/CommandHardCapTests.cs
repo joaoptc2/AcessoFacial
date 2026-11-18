@@ -87,4 +87,36 @@ public class CommandHardCapTests
         Assert.True(cap >= pedido,
             $"pedido {pedido.TotalSeconds}s mas o teto foi {cap.TotalSeconds}s — abandonaria o comando no prazo");
     }
+
+    /// <summary>
+    /// O caso medido em nov/2026: upload de face de ~104 KB com 15 s × 1 tentativa. Só pelo
+    /// timeout o teto dava 22,5 s, e 687 uploads para portas vivas morreram nele com o SDK ainda
+    /// transferindo. Os que deram certo levaram até 21,9 s — colados no teto, ou seja, cortados.
+    /// </summary>
+    [Fact]
+    public void Upload_de_face_ganha_o_tempo_da_transferencia()
+    {
+        var soPeloTimeout = CommandHardCap.For(timeoutMs: 15000, restartCount: 1);
+        var comCarga = CommandHardCap.For(timeoutMs: 15000, restartCount: 1, payloadBytes: 104 * 1024);
+
+        Assert.Equal(22.5, soPeloTimeout.TotalSeconds, precision: 1);
+        Assert.Equal(52, comCarga.TotalSeconds, precision: 0);
+    }
+
+    /// <summary>Carga pequena não encolhe o teto: vale o maior entre timeout e transferência.</summary>
+    [Fact]
+    public void Carga_pequena_nao_reduz_o_teto_do_timeout()
+    {
+        Assert.Equal(
+            CommandHardCap.For(timeoutMs: 30000, restartCount: 3),
+            CommandHardCap.For(timeoutMs: 30000, restartCount: 3, payloadBytes: 4096));
+    }
+
+    /// <summary>Uma foto absurda também não ressuscita a espera infinita.</summary>
+    [Fact]
+    public void Carga_enorme_respeita_o_teto()
+    {
+        Assert.Equal(CommandHardCap.Max, CommandHardCap.For(15000, 1, payloadBytes: 50 * 1024 * 1024));
+        Assert.Equal(CommandHardCap.For(3000, 3), CommandHardCap.For(3000, 3, payloadBytes: -1));
+    }
 }

@@ -88,4 +88,57 @@ public class ControllerCircuitBreakerTests
         Assert.Null(breaker.RecordFailure(T0));
         Assert.NotNull(breaker.RecordFailure(T0));
     }
+
+    // ---- Prova de vida (IsHealthy): decide se vale mandar trabalho PESADO à porta.
+
+    [Fact]
+    public void Healthy_FromTheStart()
+    {
+        Assert.True(new ControllerCircuitBreaker().IsHealthy);
+    }
+
+    /// <summary>
+    /// Uma falha já basta para perder a prova de vida, mesmo sem abrir o circuito: numa porta onde
+    /// leituras leves passam e o upload de face falha, é isso que impede o próximo upload de ir
+    /// antes de a porta responder de novo.
+    /// </summary>
+    [Fact]
+    public void NotHealthy_AfterASingleFailure_EvenWithCircuitClosed()
+    {
+        var breaker = new ControllerCircuitBreaker();
+        breaker.RecordFailure(T0);
+
+        Assert.Null(breaker.OpenUntil(T0));
+        Assert.False(breaker.IsHealthy);
+    }
+
+    /// <summary>
+    /// O caso que originou a propriedade: vencido o cooldown, o circuito deixa de estar aberto —
+    /// mas a porta não provou nada. Ao abrir, o disjuntor zera o contador de falhas; se a prova de
+    /// vida olhasse só para ele, a meia-abertura passaria por porta saudável.
+    /// </summary>
+    [Fact]
+    public void NotHealthy_InHalfOpen_AfterCooldownExpires()
+    {
+        var breaker = new ControllerCircuitBreaker();
+        breaker.RecordFailure(T0);
+        breaker.RecordFailure(T0);
+        breaker.RecordFailure(T0); // abre
+
+        var depoisDoCooldown = T0 + ControllerCircuitBreaker.BaseCooldown + TimeSpan.FromSeconds(1);
+        Assert.Null(breaker.OpenUntil(depoisDoCooldown));
+        Assert.False(breaker.IsHealthy);
+    }
+
+    [Fact]
+    public void Healthy_AgainAfterSuccess()
+    {
+        var breaker = new ControllerCircuitBreaker();
+        breaker.RecordFailure(T0);
+        breaker.RecordFailure(T0);
+        breaker.RecordFailure(T0);
+        breaker.RecordSuccess();
+
+        Assert.True(breaker.IsHealthy);
+    }
 }

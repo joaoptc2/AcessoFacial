@@ -160,17 +160,169 @@ public sealed class UserSyncServiceTests
 
         await service.SyncUserAsync(user.Id);
 
-        // O aparelho não foi tocado: nem o upload de 120 KB saiu da fila.
+        // O aparelho não foi tocado: nem o upload de 120 KB, nem sequer a sonda.
         Assert.Empty(gateway.FaceUploads);
+        Assert.Empty(gateway.Probes);
 
         var status = await db.SyncStatuses.AsNoTracking().SingleAsync(s => s.UserId == user.Id);
         Assert.Equal(SyncState.Failed, status.State);
         Assert.NotNull(status.NextRetryAtUtc);
-        // Alinhado à reabertura da PORTA (com a folga de 1 min), não a um backoff próprio deste
-        // usuário — é isso que impede N usuários de redescobrirem a mesma porta morta N vezes.
-        Assert.True(status.NextRetryAtUtc >= reabreEm,
-            $"nova tentativa em {status.NextRetryAtUtc:O} seria ANTES da reabertura da porta ({reabreEm:O})");
-        Assert.True(status.NextRetryAtUtc <= reabreEm.AddMinutes(2));
+        // Alinhado à reabertura da PORTA (folga de 1 min + sorteio de até 5 min), não a um backoff
+        // próprio deste usuário — é isso que impede N usuários de redescobrirem a mesma porta
+        // morta N vezes. O sorteio impede que eles cheguem todos juntos na reabertura.
+        Assert.InRange(status.NextRetryAtUtc!.Value, reabreEm.AddMinutes(1), reabreEm.AddMinutes(6));
+        Assert.Equal(0, status.RetryCount);
+    }
+
+    /// <summary>
+    /// Porta que falhou e ainda não respondeu (circuito fechado ou meia-abertura), e que segue
+    /// muda: a sonda barata falha e o upload de face NÃO sai. Na medição de nov/2026 era nessa
+    /// janela que sete uploads de 22,5 s entravam juntos numa porta morta — o upload fazia papel
+    /// de sonda, e a sonda mais cara possível.
+    /// </summary>
+    [SkippableFact]
+    public async Task PortaSemProvaDeVida_QueNaoRespondeASonda_NaoRecebeUploadDeFace()
+    {
+        Skip.IfNot(_pg.Available, _pg.SkipReason);
+        var (service, gateway, db) = BuildService();
+        await using var _ = db;
+
+        var controller = NewController("Quarto 9 (meia-abertura)");
+        var user = NewPermanentUser(NextCode());
+        user.Permissions.Add(new AccessPermission { ControllerId = controller.Id });
+        db.Controllers.Add(controller);
+        db.Users.Add(user);
+        await db.SaveChangesAsync();
+
+        gateway.UnhealthyControllers.Add(controller.Id);
+        gateway.ProbeFails.Add(controller.Id);
+        var antes = DateTime.UtcNow;
+
+        await service.SyncUserAsync(user.Id);
+
+        Assert.Single(gateway.Probes);
+        Assert.Empty(gateway.FaceUploads);
+        var status = await db.SyncStatuses.AsNoTracking().SingleAsync(s => s.UserId == user.Id);
+        Assert.Equal(SyncState.Failed, status.State);
+        Assert.InRange(status.NextRetryAtUtc!.Value, antes.AddMinutes(1), DateTime.UtcNow.AddMinutes(6));
+        // Adiamento não é falha do usuário: o backoff dele não anda.
+        Assert.Equal(0, status.RetryCount);
+        Assert.Contains("sonda", status.LastError);
+    }
+
+    /// <summary>
+    /// A outra metade: porta sem prova de vida que RESPONDE à sonda recebe o cadastro na mesma
+    /// passada. Sem a sonda aqui, uma porta com push recente (pulada pelo monitoramento) nunca
+    /// recuperaria a prova de vida depois de uma falha, e o cadastro ficaria adiado para sempre.
+    /// </summary>
+    [SkippableFact]
+    public async Task PortaSemProvaDeVida_QueRespondeASonda_RecebeOCadastro()
+    {
+        Skip.IfNot(_pg.Available, _pg.SkipReason);
+        var (service, gateway, db) = BuildService();
+        await using var _ = db;
+
+        var controller = NewController("Quarto 14 (oscilando)");
+        var user = NewPermanentUser(NextCode());
+        user.Permissions.Add(new AccessPermission { ControllerId = controller.Id });
+        db.Controllers.Add(controller);
+        db.Users.Add(user);
+        await db.SaveChangesAsync();
+
+        gateway.UnhealthyControllers.Add(controller.Id);
+
+        await service.SyncUserAsync(user.Id);
+
+        Assert.Single(gateway.Probes);
+        Assert.Single(gateway.FaceUploads);
+        var status = await db.SyncStatuses.AsNoTracking().SingleAsync(s => s.UserId == user.Id);
+        Assert.Equal(SyncState.Synced, status.State);
+    }
+
+    /// <summary>Porta saudável não paga a sonda: o caminho comum continua com um comando só.</summary>
+    [SkippableFact]
+    public async Task PortaSaudavel_NaoESondada()
+    {
+        Skip.IfNot(_pg.Available, _pg.SkipReason);
+        var (service, gateway, db) = BuildService();
+        await using var _ = db;
+
+        var controller = NewController("Quarto 2 (saudável)");
+        var user = NewPermanentUser(NextCode());
+        user.Permissions.Add(new AccessPermission { ControllerId = controller.Id });
+        db.Controllers.Add(controller);
+        db.Users.Add(user);
+        await db.SaveChangesAsync();
+
+        await service.SyncUserAsync(user.Id);
+
+        Assert.Empty(gateway.Probes);
+        Assert.Single(gateway.FaceUploads);
+    }
+
+    /// <summary>
+    /// Visitante é comando leve (sem face): segue para a porta instável — o sucesso dele é, aliás,
+    /// a prova de vida que destrava os cadastros pesados. Atrasar a liberação na recepção por uma
+    /// falha transitória custaria caro.
+    /// </summary>
+    [SkippableFact]
+    public async Task PortaSemProvaDeVida_AindaRecebeVisitante()
+    {
+        Skip.IfNot(_pg.Available, _pg.SkipReason);
+        var (service, gateway, db) = BuildService();
+        await using var _ = db;
+
+        var controller = NewController("Quarto 9 (meia-abertura)");
+        var visitor = new User
+        {
+            UserCode = NextCode(),
+            Name = "Acompanhante",
+            Type = UserType.Visitor,
+            ValidUntil = DateTime.UtcNow.AddDays(1),
+        };
+        visitor.Permissions.Add(new AccessPermission { ControllerId = controller.Id });
+        db.Controllers.Add(controller);
+        db.Users.Add(visitor);
+        await db.SaveChangesAsync();
+
+        gateway.UnhealthyControllers.Add(controller.Id);
+
+        await service.SyncUserAsync(visitor.Id);
+
+        Assert.Empty(gateway.Probes);
+        Assert.Single(gateway.FacelessUploads);
+        var status = await db.SyncStatuses.AsNoTracking().SingleAsync(s => s.UserId == visitor.Id);
+        Assert.Equal(SyncState.Synced, status.State);
+    }
+
+    /// <summary>Circuito aberto barra até o visitante: nenhum comando passaria mesmo.</summary>
+    [SkippableFact]
+    public async Task PortaComCircuitoAberto_TambemAdiaVisitante()
+    {
+        Skip.IfNot(_pg.Available, _pg.SkipReason);
+        var (service, gateway, db) = BuildService();
+        await using var _ = db;
+
+        var controller = NewController("Quarto 9 (morta)");
+        var visitor = new User
+        {
+            UserCode = NextCode(),
+            Name = "Acompanhante",
+            Type = UserType.Visitor,
+            ValidUntil = DateTime.UtcNow.AddDays(1),
+        };
+        visitor.Permissions.Add(new AccessPermission { ControllerId = controller.Id });
+        db.Controllers.Add(controller);
+        db.Users.Add(visitor);
+        await db.SaveChangesAsync();
+
+        gateway.CircuitOpenUntil[controller.Id] = DateTime.UtcNow.AddMinutes(4);
+
+        await service.SyncUserAsync(visitor.Id);
+
+        Assert.Empty(gateway.FacelessUploads);
+        var status = await db.SyncStatuses.AsNoTracking().SingleAsync(s => s.UserId == visitor.Id);
+        Assert.Equal(SyncState.Failed, status.State);
     }
 
     /// <summary>Disjuntor fechado (o caso normal) segue sincronizando — o atalho não pode engolir o fluxo bom.</summary>

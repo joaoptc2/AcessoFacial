@@ -454,9 +454,10 @@ O que cada linha separa, e por que isso é o ponto todo:
 | `espera_fila_ms` | Quanto tempo o comando esperou a VEZ naquele controlador (os comandos são serializados por aparelho) |
 | `duracao_ms` | Quanto tempo o comando levou já com a vez garantida — o aparelho e a rede |
 | `fila_profundidade` | Quantos comandos estavam na frente quando este chegou |
-| `origem` | Quem pediu: fila de sincronização, comando manual da tela, gestão de leitos, health-check, monitoramento |
+| `origem` | Quem pediu: fila de sincronização, comando manual da tela, gestão de leitos, health-check, monitoramento, coleta offline, expiração de visitantes |
 | `desfecho` | `Success`, `Failed`, `Timeout`, `GateBusy` (a vez não chegou a tempo), `CircuitOpen`, `Canceled` |
 | `payload_bytes` | Bytes enviados — a face pesa ~120 KB, os demais comandos dezenas |
+| `timeout_ms` / `tentativas` | O timeout por etapa e as tentativas EFETIVOS do comando (o upload de face sobe para 15 s × 1), não os do cadastro do aparelho |
 
 Espera alta com duração baixa = a fila é nossa (concorrência do sistema). Espera zero com
 duração alta = o aparelho ou a rede. Sem essa separação, as duas causas parecem a mesma coisa.
@@ -468,6 +469,23 @@ comando passou a ser **derivado** do que cada comando pede (`CommandHardCap`) em
 fixo de 3 min — 290 comandos no teto somavam 14,5 h de espera pura — e a sincronização passou a
 **respeitar o disjuntor da porta**, para N usuários não redescobrirem o mesmo aparelho morto N
 vezes.
+
+**Achados da coleta de uma semana (nov/2026, 172 h, 67 mil comandos)** — duas delas regressões da
+correção anterior:
+
+- **Rebanho na reabertura.** A sincronização marcava todos os usuários de uma porta com o
+  disjuntor aberto para o MESMO instante ("reabertura + 1 min"), e o disjuntor era consultado
+  antes da fila — então, ao reabrir, até sete uploads de face entravam juntos numa porta que
+  continuava morta (142 rajadas, 17,2 h na semana, bloqueando o monitoramento). Correções: o
+  comando reconfere o disjuntor DEPOIS de conseguir a vez (os da fila caem na hora quando a
+  porta acabou de falhar); o adiamento é sorteado numa janela de 5 min; e porta sem **prova de
+  vida** (falhou e não respondeu desde então) recebe primeiro uma sonda barata (`ReadWatchState`,
+  ~150 ms, `SondaProvaDeVida` no CSV) — o upload de 100 KB só sai se ela responder. Visitante
+  (sem face) segue direto.
+- **Teto curto para upload.** O timeout do SDK vale por etapa, e o upload de face vai em várias;
+  o teto derivado (15 s × 1 × 1,5 = 22,5 s) abandonou 687 uploads para portas VIVAS com o SDK
+  ainda transferindo. O teto agora considera a carga (`CommandHardCap`, vazão mínima de 2 KB/s:
+  ~104 KB → ~52 s).
 
 **Custos e limites**: desligado, nem o registro é montado no caminho do comando. Ligado, a
 gravação é assíncrona (fila em memória + INSERT em lote) — o instrumento não pode virar parte do

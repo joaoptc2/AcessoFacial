@@ -38,6 +38,12 @@ public static class DeviceTraceTrigger
     public const string BedManagement = "gestao-leitos";
     public const string HealthCheck = "health-check";
     public const string Monitoring = "monitoramento";
+    /// <summary>
+    /// Coleta periódica dos registros guardados no aparelho (ReadTransactionDatabase). Sem esta
+    /// marca, os 248 timeouts de 67,5 s da coleta em nov/2026 (4,6 h) apareceram como "desconhecido".
+    /// </summary>
+    public const string OfflineCollection = "coleta-offline";
+    public const string VisitorExpiration = "expiracao-visitantes";
     public const string Unknown = "desconhecido";
 }
 
