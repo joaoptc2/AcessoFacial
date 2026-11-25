@@ -6,6 +6,7 @@ import {
   type ControllerConnectionMode,
   type ControllerDto,
   type DiscoveredController,
+  type EventChannel,
   type PersonnelAuditAllResult,
   type PersonnelAuditSnapshot,
   type SyncStatusDto,
@@ -23,6 +24,7 @@ interface FormModel {
   communicationPassword: string;
   supportsWaitRepeatMessage: boolean;
   connectionMode: ControllerConnectionMode;
+  eventChannel: EventChannel;
   timeoutMs: number;
   restartCount: number;
   apiBaseUrl: string;
@@ -42,6 +44,7 @@ const emptyForm: FormModel = {
   communicationPassword: "", // vazio = usa a senha padrão dos aparelhos (Configurações)
   supportsWaitRepeatMessage: false,
   connectionMode: "TcpClient",
+  eventChannel: "Sdk",
   timeoutMs: 3000,
   restartCount: 3,
   apiBaseUrl: "",
@@ -127,6 +130,7 @@ export function ControllersPage() {
           communicationPassword: form.communicationPassword || undefined,
           supportsWaitRepeatMessage: form.supportsWaitRepeatMessage,
           connectionMode: form.connectionMode,
+          eventChannel: form.eventChannel,
           apiBaseUrl: form.apiBaseUrl || undefined,
           apiPassword: form.apiPassword || undefined,
           homeAssistantRoomId: form.homeAssistantRoomId || undefined,
@@ -149,6 +153,7 @@ export function ControllersPage() {
           communicationPassword: form.communicationPassword ? form.communicationPassword : undefined,
           supportsWaitRepeatMessage: form.supportsWaitRepeatMessage,
           connectionMode: form.connectionMode,
+          eventChannel: form.eventChannel,
           timeoutMs: form.timeoutMs,
           restartCount: form.restartCount,
           apiBaseUrl: apiBaseUrl || undefined,
@@ -205,6 +210,7 @@ export function ControllersPage() {
       communicationPassword: "", // não retornada pela API; em branco = manter a atual
       supportsWaitRepeatMessage: detail.supportsWaitRepeatMessage,
       connectionMode: detail.connectionMode,
+      eventChannel: detail.eventChannel,
       timeoutMs: detail.timeoutMs,
       restartCount: detail.restartCount,
       apiBaseUrl: detail.apiBaseUrl ?? "",
@@ -574,6 +580,21 @@ export function ControllersPage() {
                   <option value="Udp">UDP</option>
                 </select>
               </div>
+              <div className="form-field" style={{ minWidth: 200 }}>
+                <label>Canal de eventos</label>
+                <select
+                  value={form.eventChannel}
+                  onChange={(e) => setForm({ ...form, eventChannel: e.target.value as EventChannel })}
+                >
+                  <option value="Sdk">SDK (TCP) — padrão</option>
+                  <option value="HttpPhoneHome">HTTP phone-home (piloto)</option>
+                </select>
+                <p className="text-muted" style={{ fontSize: "0.8rem", marginTop: "0.25rem", marginBottom: 0 }}>
+                  Só decide de onde vêm os registros de acesso deste controlador — abrir porta e
+                  cadastro continuam sempre pelo SDK. Mudar aqui NÃO reconfigura o aparelho: ele
+                  precisa estar configurado localmente para discar nesse modo.
+                </p>
+              </div>
               {editingId !== null && (
                 <>
                   <div className="form-field" style={{ minWidth: 100 }}>
@@ -666,7 +687,12 @@ export function ControllersPage() {
             {filtered.map((c) => (
               <tr key={c.id}>
                 <td>
-                  {c.name} {c.isRoom && <span className="pill">Quarto</span>}
+                  {c.name} {c.isRoom && <span className="pill">Quarto</span>}{" "}
+                  {c.eventChannel === "HttpPhoneHome" && (
+                    <span className="pill" title="Eventos via HTTP phone-home (piloto) — comando continua pelo SDK">
+                      HTTP
+                    </span>
+                  )}
                 </td>
                 <td>
                   {c.ipAddress}:{c.port}

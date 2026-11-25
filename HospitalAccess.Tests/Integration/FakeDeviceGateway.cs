@@ -118,6 +118,7 @@ public sealed class FakeDeviceGateway : IDeviceGateway
 
     public Task<string> ReadSerialNumberAsync(Controller controller, CancellationToken ct = default) => NotUsed<string>();
     public Task TriggerFireAlarmAsync(Controller controller, CancellationToken ct = default) => NotUsed();
+    public Task RebootAsync(Controller controller, CancellationToken ct = default) => NotUsed();
     public Task<IReadOnlyList<DeviceAccessEvent>> CollectAccessRecordsAsync(Controller controller, CancellationToken ct = default) => NotUsed<IReadOnlyList<DeviceAccessEvent>>();
     public Task OpenDoorAsync(Controller controller, CancellationToken ct = default) => NotUsed();
     public Task CloseDoorAsync(Controller controller, CancellationToken ct = default) => NotUsed();

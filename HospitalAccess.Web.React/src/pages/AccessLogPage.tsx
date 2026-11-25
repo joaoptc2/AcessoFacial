@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, downloadBlob, type AccessLogPage as AccessLogPageData, type ControllerDto } from "../lib/api";
+import { api, downloadBlob, type AccessLogPage as AccessLogPageData, type ControllerDto, type EventChannel } from "../lib/api";
 
 const PAGE_SIZE = 25;
 
@@ -10,6 +10,7 @@ export function AccessLogPage() {
   const [userCode, setUserCode] = useState("");
   const [controllerId, setControllerId] = useState("");
   const [method, setMethod] = useState("");
+  const [source, setSource] = useState<EventChannel | "">("");
   const [currentPage, setCurrentPage] = useState(1);
   const [page, setPage] = useState<AccessLogPageData | null>(null);
 
@@ -26,6 +27,7 @@ export function AccessLogPage() {
       userCode: userCode ? Number(userCode) : undefined,
       controllerId: controllerId || undefined,
       method: method || undefined,
+      source: source || undefined,
     };
   }
 
@@ -82,6 +84,14 @@ export function AccessLogPage() {
           </select>
         </div>
         <div className="form-field">
+          <label>Origem</label>
+          <select value={source} onChange={(e) => setSource(e.target.value as EventChannel | "")}>
+            <option value="">(todas)</option>
+            <option value="Sdk">SDK (TCP)</option>
+            <option value="HttpPhoneHome">HTTP phone-home (piloto)</option>
+          </select>
+        </div>
+        <div className="form-field">
           <button className="btn btn-primary" onClick={search}>
             Filtrar
           </button>
@@ -108,6 +118,7 @@ export function AccessLogPage() {
                   <th>Método</th>
                   <th>Direção</th>
                   <th>Concedido</th>
+                  <th>Origem</th>
                 </tr>
               </thead>
               <tbody>
@@ -119,6 +130,7 @@ export function AccessLogPage() {
                     <td>{item.method}</td>
                     <td>{item.direction === 1 ? "Entrada" : item.direction === 2 ? "Saída" : "—"}</td>
                     <td>{item.granted ? "Sim" : "Não"}</td>
+                    <td>{item.source === "HttpPhoneHome" ? "HTTP" : "SDK"}</td>
                   </tr>
                 ))}
               </tbody>

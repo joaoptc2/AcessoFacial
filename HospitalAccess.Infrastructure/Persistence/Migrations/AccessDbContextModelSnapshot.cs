@@ -55,6 +55,9 @@ namespace HospitalAccess.Infrastructure.Persistence.Migrations
                     b.Property<long?>("RecordSerialNumber")
                         .HasColumnType("bigint");
 
+                    b.Property<int>("Source")
+                        .HasColumnType("integer");
+
                     b.Property<DateTime>("TimestampUtc")
                         .HasColumnType("timestamp with time zone");
 
@@ -207,6 +210,9 @@ namespace HospitalAccess.Infrastructure.Persistence.Migrations
                         .HasColumnType("text");
 
                     b.Property<int>("ConnectionMode")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("EventChannel")
                         .HasColumnType("integer");
 
                     b.Property<string>("HomeAssistantRoomId")

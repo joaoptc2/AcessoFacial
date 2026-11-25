@@ -328,6 +328,26 @@ export function ControllerDetailPage() {
     }
   }
 
+  async function reboot() {
+    if (!id) return;
+    if (!(await confirm({
+      title: "Reiniciar este controlador agora?",
+      text: "O aparelho fica fora do ar por alguns instantes (boot físico). Portas e reconhecimento facial não funcionam até ele voltar.",
+      confirmLabel: "Reiniciar",
+      danger: true,
+    })))
+      return;
+    setBusy(true);
+    try {
+      await api.rebootController(id);
+      toastSuccess("Comando de reinício enviado ao controlador.");
+    } catch (err) {
+      toastError(`Falha ao reiniciar: ${err instanceof ApiError ? err.message : "erro inesperado"}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (!controller) return <p className="text-muted">Carregando...</p>;
 
   return (
@@ -810,6 +830,17 @@ export function ControllerDetailPage() {
           </p>
           <button className="btn btn-danger-outline" onClick={resyncAll} disabled={busy}>
             Resincronizar (forçar)
+          </button>
+
+          <hr className="divider" />
+
+          <h4>Reiniciar controlador</h4>
+          <p className="text-muted" style={{ marginTop: 0 }}>
+            Reinicia o aparelho remotamente. Útil para destravar um controlador travado sem precisar de
+            acesso físico. Portas e reconhecimento ficam fora do ar durante o boot.
+          </p>
+          <button className="btn btn-danger-outline" onClick={reboot} disabled={busy}>
+            Reiniciar controlador
           </button>
 
           <hr className="divider" />

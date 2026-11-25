@@ -579,6 +579,17 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
     }
 
     /// <summary>
+    /// Reinicia o controlador agora (comando RequireRestart do SDK). O aparelho fica fora do ar
+    /// por um tempo (reboot físico) — qualquer comando enviado nessa janela falha normalmente e
+    /// o disjuntor por controlador cuida do backoff. Não validado contra hardware real.
+    /// </summary>
+    public async Task RebootAsync(Controller controller, CancellationToken ct = default)
+    {
+        var cmd = new RequireRestart(_connections.CreateCommandDetail(controller));
+        await RunAsync(cmd, "RequireRestart", controller, ct: ct);
+    }
+
+    /// <summary>
     /// Drena os registros de autenticação armazenados no controlador (Classe VIII) que ainda não
     /// foram coletados, avançando o ponteiro de leitura (AutoWriteReadIndex) — defesa em
     /// profundidade para não perder eventos ocorridos com o servidor fora do ar. Retorna os

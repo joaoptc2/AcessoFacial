@@ -33,4 +33,7 @@ public class AccessLog
     public int? Direction { get; set; }
 
     public bool Granted { get; set; }
+
+    /// <summary>Canal que capturou este evento (SDK/TCP ou phone-home HTTP) — ver <see cref="EventChannel"/>.</summary>
+    public EventChannel Source { get; set; } = EventChannel.Sdk;
 }

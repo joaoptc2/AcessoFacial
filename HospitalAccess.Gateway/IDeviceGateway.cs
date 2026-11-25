@@ -39,6 +39,9 @@ public interface IDeviceGateway
     /// <summary>Dispara o alarme de incêndio no controlador (protocolo §5) — acionamento de emergência.</summary>
     Task TriggerFireAlarmAsync(Controller controller, CancellationToken ct = default);
 
+    /// <summary>Reinicia o controlador agora (comando RequireRestart do SDK).</summary>
+    Task RebootAsync(Controller controller, CancellationToken ct = default);
+
     /// <summary>
     /// Drena os registros de autenticação armazenados no controlador (Classe VIII) ainda não
     /// coletados, avançando o ponteiro de leitura — recupera eventos ocorridos com o servidor

@@ -3,7 +3,7 @@
 // da aplicação continuam sendo `from "../lib/api"`.
 
 import { buildQuery, request, requestBlob } from "./http";
-import type { AlarmSettings, ControllerDetailDto, ControllerDto, ControllerNetworkInfo, CreateControllerRequest, DiscoveredController, EventPhotoListItem, KioskSettings, PersonnelAudit, PersonnelAuditSnapshot, RelocateResult, SyncOverviewDto, SyncStatusDto, UpdateControllerRequest } from "./types.controllers";
+import type { AlarmSettings, ControllerDetailDto, ControllerDto, ControllerNetworkInfo, CreateControllerRequest, DiscoveredController, EventChannel, EventPhotoListItem, KioskSettings, PersonnelAudit, PersonnelAuditSnapshot, RelocateResult, SyncOverviewDto, SyncStatusDto, UpdateControllerRequest } from "./types.controllers";
 import type { CreateVisitorRequest, LoginResponse, StaffRole, StaffUserDto, UserAccessReport, UserAuditLogEntry, UserDetailDto, UserGroupDto, UserGroupRequest, UserListPage, VisitorListItemDto } from "./types.people";
 import type { DeviceTraceSummary, AccessLogPage, DoorScheduleDto, ScheduleWindowDto, AlarmEventPage, BackupFileDto, BackupListDto, BedActionResult, BedDto, BedHistoryPage, DashboardDto, DevLogsResponse, EmergencyResultDto, HolidayDto, HolidayRequest, SystemSettingsDto, TvStatusDto, UpdateSettingsRequest } from "./types.operations";
 
@@ -43,6 +43,8 @@ export const api = {
   resyncAllController: (id: string) => request<{ message: string }>(`/controllers/${id}/resync-all`, { method: "POST" }),
   // Dispara o alarme de incêndio neste controlador.
   triggerFireAlarm: (id: string) => request<void>(`/controllers/${id}/alarm-fire`, { method: "POST" }),
+  // Reinicia o controlador agora (fica fora do ar durante o boot físico).
+  rebootController: (id: string) => request<void>(`/controllers/${id}/reboot`, { method: "POST" }),
   // Exclui uma pessoa específica (por código) do controlador (auditoria / conflito).
   deletePersonFromDevice: (id: string, userCode: number) =>
     request<void>(`/controllers/${id}/persons/${userCode}`, { method: "DELETE" }),
@@ -160,10 +162,11 @@ export const api = {
     userCode?: number;
     controllerId?: string;
     method?: string;
+    source?: EventChannel;
     page: number;
     pageSize: number;
   }) => request<AccessLogPage>(`/accesslog${buildQuery(params)}`),
-  exportAccessLogCsv: (params: { from?: string; to?: string; userCode?: number; controllerId?: string; method?: string }) =>
+  exportAccessLogCsv: (params: { from?: string; to?: string; userCode?: number; controllerId?: string; method?: string; source?: EventChannel }) =>
     requestBlob(`/accesslog/export${buildQuery({ ...params, format: "csv" })}`),
 
   // ---- Log de alarmes ----

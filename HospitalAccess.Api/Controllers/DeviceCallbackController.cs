@@ -23,7 +23,7 @@ namespace HospitalAccess.Api.Controllers;
 /// SEGURANÇA: os aparelhos AI Series NÃO conseguem enviar cabeçalhos HTTP customizados, então não dá
 /// para autenticar por token aqui. Este endpoint é <c>[AllowAnonymous]</c> e deve ser protegido por
 /// REDE (VLAN/firewall) — exponha-o só à sub-rede dos controladores. Como isso é uma garantia
-/// EXTERNA ao software, três defesas ficam aqui dentro:
+/// EXTERNA ao software, quatro defesas ficam aqui dentro:
 /// <list type="bullet">
 /// <item>teto de requisições por IP de origem (política <c>device-callback</c>, ver Program.cs) —
 /// sem ele, qualquer coisa na VLAN podia inflar a tabela de auditoria até esgotar o disco;</item>
@@ -33,6 +33,10 @@ namespace HospitalAccess.Api.Controllers;
 /// (casado por número de série). Divergência sempre vira Warning; com
 /// <c>Device:RestrictCallbackToKnownIps=true</c> o evento é recusado. O padrão é só avisar para
 /// não derrubar instalação com NAT/DHCP no meio — ligue depois de conferir os avisos no log.</item>
+/// <item>conferência de <see cref="Domain.Entities.Controller.EventChannel"/> (piloto 2026-11,
+/// ver docs/comparativo-zkbio-melhorias.md §7.4): um controlador que não está marcado para o
+/// canal HTTP e mesmo assim empurra um evento é estranho. Mesmo tratamento — Warning por padrão,
+/// 403 com <c>Device:RestrictCallbackToPilotControllers=true</c>.</item>
 /// </list>
 /// </summary>
 [ApiController]
@@ -111,6 +115,30 @@ public sealed class DeviceCallbackController : ControllerBase
                 return Ok(new ProtocolOk());
             }
 
+            // Piloto 2026-11 (ver docs/comparativo-zkbio-melhorias.md §7.4): só controladores
+            // explicitamente marcados para o canal HTTP deveriam estar discando phone-home. Um
+            // evento de um controlador ainda no SDK/TCP é estranho — mesmo tratamento "avisa, e
+            // só recusa se a chave estiver ligada" da conferência de IP abaixo, para não
+            // atrapalhar o piloto com falso-positivo de configuração local incompleta.
+            if (controller.EventChannel != Domain.Enums.EventChannel.HttpPhoneHome)
+            {
+                if (_config.GetValue<bool>("Device:RestrictCallbackToPilotControllers"))
+                {
+                    _logger.LogWarning(
+                        "[insertNoteFace] RECUSADO: controlador {Controller} (SN {Sn}) não está marcado para o canal " +
+                        "HTTP (EventChannel={Channel}) mas empurrou um evento por phone-home.",
+                        controller.Name, deviceKey, controller.EventChannel);
+                    return StatusCode(StatusCodes.Status403Forbidden);
+                }
+
+                _logger.LogWarning(
+                    "[insertNoteFace] controlador {Controller} (SN {Sn}) empurrou um evento por phone-home HTTP mas " +
+                    "está com EventChannel={Channel} (SDK) no cadastro — aceito porque " +
+                    "Device:RestrictCallbackToPilotControllers está desligado. Se isto não for esperado, confira a " +
+                    "configuração local do aparelho ou marque-o como piloto na tela do controlador.",
+                    controller.Name, deviceKey, controller.EventChannel);
+            }
+
             // O evento alega vir deste controlador; o IP de origem confere com o cadastrado?
             if (!DeviceCallbackRules.SourceIpMatches(HttpContext.Connection.RemoteIpAddress, controller.IpAddress))
             {
@@ -155,6 +183,7 @@ public sealed class DeviceCallbackController : ControllerBase
                 RawEventCode = notePass,
                 // notePass: 1 = liberado (0 = negado) — NÃO é contíguo (ver DeviceErrorCodes.AccessResult).
                 Granted = notePass == 1,
+                Source = Domain.Enums.EventChannel.HttpPhoneHome,
             };
             _db.AccessLogs.Add(log);
             await _db.SaveChangesAsync(ct);

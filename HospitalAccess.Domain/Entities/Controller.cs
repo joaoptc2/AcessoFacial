@@ -105,6 +105,16 @@ public class Controller
     /// </summary>
     public ControllerConnectionMode ConnectionMode { get; set; } = ControllerConnectionMode.TcpClient;
 
+    /// <summary>
+    /// Qual canal CAPTURA os eventos de acesso deste controlador — <see cref="EventChannel.Sdk"/>
+    /// (padrão, push/coleta pelo SDK TCP) ou <see cref="EventChannel.HttpPhoneHome"/> (piloto
+    /// 2026-11: o aparelho empurra por HTTP em vez de TCP). O comando (abrir porta, cadastro)
+    /// continua sempre pelo SDK/TCP nos dois casos — isto só decide a origem do log de acesso.
+    /// Trocar aqui NÃO reconfigura o aparelho: ele precisa estar configurado localmente para
+    /// discar no modo escolhido (não há comando remoto no SDK para isso).
+    /// </summary>
+    public EventChannel EventChannel { get; set; } = EventChannel.Sdk;
+
     /// <summary>Última vez que o relógio deste controlador foi sincronizado com o servidor.</summary>
     public DateTime? LastClockSyncAtUtc { get; set; }
 

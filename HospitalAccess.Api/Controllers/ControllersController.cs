@@ -21,6 +21,8 @@ public record CreateControllerRequest(
     string? CommunicationPassword = null, bool SupportsWaitRepeatMessage = false,
     ControllerConnectionMode ConnectionMode = ControllerConnectionMode.TcpClient,
     string? ApiBaseUrl = null, string? ApiPassword = null,
+    // Qual canal captura os eventos de acesso deste controlador — ver EventChannel.
+    EventChannel EventChannel = EventChannel.Sdk,
     // Slug do quarto no Home Assistant (gestão de leitos). Vazio = sem integração HA.
     string? HomeAssistantRoomId = null,
     // Este controlador é um quarto/leito? Só os marcados aparecem na Gestão de Leitos.
@@ -39,6 +41,8 @@ public record UpdateControllerRequest(
     int TimeoutMs, int RestartCount,
     ControllerConnectionMode ConnectionMode = ControllerConnectionMode.TcpClient,
     string? ApiBaseUrl = null, string? ApiPassword = null,
+    // Qual canal captura os eventos de acesso deste controlador — ver EventChannel.
+    EventChannel EventChannel = EventChannel.Sdk,
     string? HomeAssistantRoomId = null,
     bool IsRoom = false,
     string? TvIpAddress = null,
@@ -118,7 +122,7 @@ public sealed class ControllersController : ControllerEndpointBase
 
         var rows = await Db.Controllers.AsNoTracking()
             .OrderBy(c => c.Name)
-            .Select(c => new { c.Id, c.Name, c.IpAddress, c.LastSeenUtc, c.LastReachError })
+            .Select(c => new { c.Id, c.Name, c.IpAddress, c.LastSeenUtc, c.LastReachError, c.EventChannel })
             .ToListAsync(ct);
 
         var controllers = rows.Select(c => new
@@ -126,6 +130,7 @@ public sealed class ControllersController : ControllerEndpointBase
             c.Id,
             c.Name,
             c.IpAddress,
+            c.EventChannel,
             c.LastSeenUtc,
             c.LastReachError,
             Online = c.LastSeenUtc != null && c.LastSeenUtc >= onlineThreshold,
@@ -162,7 +167,7 @@ public sealed class ControllersController : ControllerEndpointBase
         return Ok(new
         {
             controller.Id, controller.Name, controller.IpAddress, controller.Port, controller.SerialNumber,
-            controller.SupportsWaitRepeatMessage, controller.ConnectionMode,
+            controller.SupportsWaitRepeatMessage, controller.ConnectionMode, controller.EventChannel,
             controller.TimeoutMs, controller.RestartCount, controller.LastClockSyncAtUtc,
             controller.HomeAssistantRoomId,
             controller.IsRoom,
@@ -213,6 +218,7 @@ public sealed class ControllersController : ControllerEndpointBase
             CommunicationPassword = request.CommunicationPassword ?? string.Empty,
             SupportsWaitRepeatMessage = request.SupportsWaitRepeatMessage,
             ConnectionMode = request.ConnectionMode,
+            EventChannel = request.EventChannel,
             // O painel web mora no MESMO IP do protocolo — deriva quando não informado.
             ApiBaseUrl = string.IsNullOrWhiteSpace(request.ApiBaseUrl) ? $"http://{ip}" : request.ApiBaseUrl.TrimEnd('/'),
             ApiPassword = request.ApiPassword ?? string.Empty,
@@ -258,6 +264,7 @@ public sealed class ControllersController : ControllerEndpointBase
             controller.CommunicationPassword = request.CommunicationPassword;
         controller.SupportsWaitRepeatMessage = request.SupportsWaitRepeatMessage;
         controller.ConnectionMode = request.ConnectionMode;
+        controller.EventChannel = request.EventChannel;
         controller.TimeoutMs = request.TimeoutMs;
         controller.RestartCount = request.RestartCount;
         controller.HomeAssistantRoomId = (request.HomeAssistantRoomId ?? string.Empty).Trim();

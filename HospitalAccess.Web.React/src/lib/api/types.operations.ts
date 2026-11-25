@@ -2,6 +2,8 @@
 // Parte do cliente HTTP da HospitalAccess.Api. O barril fica em ../api.ts — os imports
 // da aplicação continuam sendo `from "../lib/api"`.
 
+import type { EventChannel } from "./types.controllers";
+
 // ---- Cópias de segurança ----
 export interface BackupFileDto {
   fileName: string;
@@ -258,6 +260,8 @@ export interface AccessLogItem {
   rawEventCode: number;
   direction: number | null;
   granted: boolean;
+  // De qual canal este registro chegou — "Sdk" (push/coleta TCP) ou "HttpPhoneHome" (piloto).
+  source: EventChannel;
 }
 
 export interface AccessLogPage {

@@ -64,6 +64,7 @@ public class AccessDbContext : DbContext
         b.Entity<Controller>().HasIndex(c => c.SerialNumber).IsUnique();
         UseXminAsConcurrencyToken(b.Entity<Controller>());
         b.Entity<Controller>().Property(c => c.ConnectionMode).HasConversion<int>();
+        b.Entity<Controller>().Property(c => c.EventChannel).HasConversion<int>();
 
         // Porta do ADB do stick de TV. O padrão fica no BANCO, e não só na entidade, para que as
         // linhas já existentes recebam 5555 em vez de 0 ao aplicar a migration — 0 é porta
@@ -103,6 +104,7 @@ public class AccessDbContext : DbContext
             .HasIndex(s => new { s.UserId, s.ControllerId }).IsUnique();
 
         b.Entity<AccessLog>().HasIndex(l => l.TimestampUtc);
+        b.Entity<AccessLog>().Property(l => l.Source).HasConversion<int>();
         // Deduplicação entre o push em tempo real e a coleta offline: um mesmo registro do
         // controlador (SN + nº de série) só entra uma vez. Índice parcial (só quando há nº de série).
         b.Entity<AccessLog>()

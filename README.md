@@ -267,14 +267,25 @@ e receber eventos. Todo esse código vive em **`HospitalAccess.Infrastructure/De
   um `AccessLog`. É um **canal alternativo** ao `TransactionMessage` do SDK (seção 2) — útil se o
   push por TCP não funcionar no hardware real. Responde `{"success":0,"msg":"OK"}` (0 = OK).
   Como o firmware não envia cabeçalho de autenticação, a rota é anônima e depende de isolamento
-  de rede (VLAN/firewall) — garantia EXTERNA ao software. Por isso três defesas ficam no código:
+  de rede (VLAN/firewall) — garantia EXTERNA ao software. Por isso quatro defesas ficam no código:
   **teto por IP de origem** (`Device:CallbackRateLimitPerMinute`, padrão 120/min — com IP fixo
   por controlador a partição é por aparelho), **teto de corpo de 4 MB** (o corpo é lido inteiro
-  para memória) e **conferência do IP de origem** contra o `IpAddress` cadastrado do controlador
-  que o evento alega ser (casado por SN). A divergência sempre vira Warning no log; com
-  `Device:RestrictCallbackToKnownIps=true` o evento é recusado com 403. O padrão é só avisar,
-  para não derrubar instalação com NAT/DHCP no meio — ligue depois de confirmar que o aviso não
-  aparece em operação normal.
+  para memória), **conferência do IP de origem** contra o `IpAddress` cadastrado do controlador
+  que o evento alega ser (casado por SN) e **conferência do canal esperado** (`Controller.EventChannel`,
+  ver abaixo). Qualquer divergência sempre vira Warning no log; com `Device:RestrictCallbackToKnownIps=true`
+  (IP) ou `Device:RestrictCallbackToPilotControllers=true` (canal) o evento é recusado com 403. O
+  padrão é só avisar, para não derrubar instalação com NAT/DHCP no meio ou piloto em configuração —
+  ligue depois de confirmar que o aviso não aparece em operação normal.
+- **Canal de eventos por controlador (piloto, 2026-11)** — `Controller.EventChannel` (`Sdk` padrão
+  ou `HttpPhoneHome`) decide só de onde vêm os registros de acesso de UM controlador específico;
+  comando (abrir porta, cadastro de usuário) continua sempre pelo SDK/TCP nos dois casos. Editável
+  na tela de Controladores (bloco avançado). Cada `AccessLog` grava `Source` (`Sdk`/`HttpPhoneHome`),
+  filtrável/exportável na tela de Log de Acessos — é o jeito de comparar perda de evento numa porta
+  que cai muito, com e sem o canal HTTP. **Importante:** trocar o valor aqui NÃO reconfigura o
+  aparelho — ele precisa estar configurado FISICAMENTE/localmente para discar phone-home HTTP
+  para a URL desta API; não há comando no SDK para fazer isso remotamente (`WriteThirdpartyAPI`
+  configura só 3 integrações chinesas fixas, não um endpoint arbitrário — ver
+  [`docs/comparativo-zkbio-melhorias.md` §7.4](docs/comparativo-zkbio-melhorias.md)).
 - **Mapa de erros** — `DeviceErrorCodes` traduz os `errCode` do painel (ex.: `11` =
   `ExpirationDate` fora da faixa) para mensagens legíveis; as falhas viram `DeviceHttpException`
   e o endpoint devolve 502/422 com a causa.

@@ -159,6 +159,7 @@ public sealed class OfflineRecordCollectorBackgroundService : BackgroundService
                 RawEventCode = e.RawEventCode,
                 Direction = e.Direction,
                 Granted = e.Granted,
+                Source = Domain.Enums.EventChannel.Sdk,
             });
             added++;
         }

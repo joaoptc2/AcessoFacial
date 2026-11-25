@@ -4,6 +4,13 @@
 
 export type ControllerConnectionMode = "TcpClient" | "TcpServerClient" | "Udp";
 
+// Canal que CAPTURA os eventos de acesso deste controlador. "Sdk" (padrão) = push/coleta pelo
+// SDK binário por TCP. "HttpPhoneHome" = piloto 2026-11: o aparelho empurra os eventos por HTTP
+// (POST /note/insertNoteFace) em vez de TCP. O comando (abrir porta, cadastro) sempre vai pelo
+// SDK/TCP nos dois casos — isto só decide a origem do log de acesso. Trocar aqui NÃO reconfigura
+// o aparelho: ele precisa estar configurado localmente para discar no modo escolhido.
+export type EventChannel = "Sdk" | "HttpPhoneHome";
+
 export interface ControllerDto {
   id: string;
   name: string;
@@ -15,6 +22,7 @@ export interface ControllerDto {
   restartCount: number;
   isRoom: boolean;
   userCount: number;
+  eventChannel: EventChannel;
 }
 
 export interface ControllerDetailDto {
@@ -27,6 +35,7 @@ export interface ControllerDetailDto {
   timeoutMs: number;
   restartCount: number;
   connectionMode: ControllerConnectionMode;
+  eventChannel: EventChannel;
   lastClockSyncAtUtc: string | null;
   // A senha de comunicação NÃO é retornada pela API (segredo). Apenas indica se há uma definida.
   hasCommunicationPassword: boolean;
@@ -55,6 +64,7 @@ export interface CreateControllerRequest {
   connectionMode?: ControllerConnectionMode;
   apiBaseUrl?: string;
   apiPassword?: string;
+  eventChannel?: EventChannel;
   homeAssistantRoomId?: string;
   isRoom?: boolean;
   tvIpAddress?: string;
@@ -70,6 +80,7 @@ export interface UpdateControllerRequest {
   communicationPassword?: string;
   supportsWaitRepeatMessage: boolean;
   connectionMode: ControllerConnectionMode;
+  eventChannel: EventChannel;
   timeoutMs: number;
   restartCount: number;
   apiBaseUrl?: string;

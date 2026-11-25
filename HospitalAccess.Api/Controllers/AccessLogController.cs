@@ -28,12 +28,13 @@ public class AccessLogController : ControllerBase
     public async Task<IActionResult> Query(
         [FromQuery] DateTime? from, [FromQuery] DateTime? to,
         [FromQuery] uint? userCode, [FromQuery] Guid? controllerId, [FromQuery] AccessMethod? method,
+        [FromQuery] EventChannel? source,
         [FromQuery] int page = 1, [FromQuery] int pageSize = 50, CancellationToken ct = default)
     {
         pageSize = Math.Clamp(pageSize, 1, MaxPageSize);
         page = Math.Max(page, 1);
 
-        var query = BuildFilteredQuery(from, to, userCode, controllerId, method);
+        var query = BuildFilteredQuery(from, to, userCode, controllerId, method, source);
 
         var total = await query.CountAsync(ct);
         var items = await query
@@ -50,17 +51,18 @@ public class AccessLogController : ControllerBase
     public async Task<IActionResult> Export(
         [FromQuery] DateTime? from, [FromQuery] DateTime? to,
         [FromQuery] uint? userCode, [FromQuery] Guid? controllerId, [FromQuery] AccessMethod? method,
+        [FromQuery] EventChannel? source,
         [FromQuery] string format = "csv", CancellationToken ct = default)
     {
         if (!string.Equals(format, "csv", StringComparison.OrdinalIgnoreCase))
             return StatusCode(501, "Exportação em PDF ainda não implementada. Use format=csv.");
 
-        var items = await BuildFilteredQuery(from, to, userCode, controllerId, method)
+        var items = await BuildFilteredQuery(from, to, userCode, controllerId, method, source)
             .OrderByDescending(l => l.TimestampUtc)
             .ToListAsync(ct);
 
         var csv = new StringBuilder();
-        csv.AppendLine("TimestampUtc,UserCode,UserName,ControllerName,Method,RawEventCode,Direction,Granted");
+        csv.AppendLine("TimestampUtc,UserCode,UserName,ControllerName,Method,RawEventCode,Direction,Granted,Source");
         foreach (var log in items)
         {
             csv.AppendLine(string.Join(',',
@@ -71,7 +73,8 @@ public class AccessLogController : ControllerBase
                 log.Method.ToString(),
                 log.RawEventCode.ToString(CultureInfo.InvariantCulture),
                 log.Direction?.ToString(CultureInfo.InvariantCulture) ?? "",
-                log.Granted.ToString()));
+                log.Granted.ToString(),
+                log.Source.ToString()));
         }
 
         var bytes = Encoding.UTF8.GetBytes(csv.ToString());
@@ -79,7 +82,7 @@ public class AccessLogController : ControllerBase
     }
 
     private IQueryable<Domain.Entities.AccessLog> BuildFilteredQuery(
-        DateTime? from, DateTime? to, uint? userCode, Guid? controllerId, AccessMethod? method)
+        DateTime? from, DateTime? to, uint? userCode, Guid? controllerId, AccessMethod? method, EventChannel? source = null)
     {
         // Normaliza para UTC: um filtro sem offset (Kind=Unspecified) faz o Npgsql rejeitar o
         // parâmetro em coluna timestamptz.
@@ -92,6 +95,8 @@ public class AccessLogController : ControllerBase
         if (userCode is not null) query = query.Where(l => l.UserCode == userCode);
         if (controllerId is not null) query = query.Where(l => l.ControllerId == controllerId);
         if (method is not null) query = query.Where(l => l.Method == method);
+        // Fonte do evento (piloto de canal HTTP vs SDK) — ver EventChannel.
+        if (source is not null) query = query.Where(l => l.Source == source);
         return query;
     }
 
