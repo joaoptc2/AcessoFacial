@@ -88,6 +88,9 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
     /// </summary>
     private readonly ConcurrentDictionary<Guid, ControllerCircuitBreaker> _circuitBreakers = new();
 
+    /// <summary>Sonda de prova de vida em andamento por controlador (ver <see cref="ProbeControllerAsync"/>).</summary>
+    private readonly SharedInFlight<Guid, bool> _probes = new();
+
     /// <summary>
     /// Quantos comandos esperam a vez em cada controlador. O SemaphoreSlim não expõe a fila, e
     /// essa é justamente a informação que separa "o aparelho é lento" de "a fila é nossa".
@@ -198,6 +201,12 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
         var queueWaitMs = 0;
         var queueDepth = 0;
 
+        // Timeout e tentativas EFETIVOS, lidos ANTES de executar: o SDK altera o CommandDetail
+        // durante a execução. Lidos no fim, como antes, todo upload de face bem-sucedido aparecia
+        // no rastro de nov/2026 com 6000 ms (e os que falhavam com os 15000 pedidos).
+        var effectiveTimeoutMs = cmd.CommandDetail?.Timeout ?? controller.TimeoutMs;
+        var effectiveRetries = cmd.CommandDetail?.RestartCount ?? controller.RestartCount;
+
         void Trace(string outcome, string? error)
         {
             if (!tracing) return;
@@ -208,13 +217,9 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
                 (int)Math.Min(int.MaxValue, (clock?.ElapsedMilliseconds ?? 0) - queueWaitMs),
                 queueDepth, outcome,
                 error is { Length: > 300 } ? error[..300] : error,
-                // O timeout e as tentativas EFETIVOS do comando, não os do cadastro do aparelho:
-                // o upload de face sobe o timeout para 15 s e as tentativas para 1, e o rastro
-                // de nov/2026 registrava 3000 × 3 nele — o que escondeu por que o teto era 22,5 s.
-                payloadBytes,
-                cmd.CommandDetail?.Timeout ?? controller.TimeoutMs,
-                cmd.CommandDetail?.RestartCount ?? controller.RestartCount,
-                userCode));
+                // Os do comando, não os do cadastro do aparelho: o upload de face sobe o timeout
+                // para 15 s e as tentativas para 1.
+                payloadBytes, effectiveTimeoutMs, effectiveRetries, userCode));
         }
 
         // Disjuntor: aparelho em cooldown (falhas consecutivas de protocolo) → falha rápida SEM
@@ -295,6 +300,9 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
         {
             try
             {
+                // Teto calculado ANTES de entregar o comando ao SDK, que altera o CommandDetail
+                // durante a execução (ver effectiveTimeoutMs).
+                var capDoComando = HardCapFor(cmd, payloadBytes);
                 var commandTask = _allocator.AddCommandAsync(cmd);
 
                 // Teto DURO independente do timeout interno do SDK: se a promessa nunca completar,
@@ -304,7 +312,6 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
                 // comando bem-sucedido deixava um Task.Delay de 3 min vivo até disparar sozinho —
                 // com health-check e fila sobre 30 aparelhos, uma população constante de timers.
                 using var hardCap = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                var capDoComando = HardCapFor(cmd, payloadBytes);
                 var timeoutTask = Task.Delay(capDoComando, hardCap.Token);
                 var finished = await Task.WhenAny(commandTask, timeoutTask);
                 hardCap.Cancel();
@@ -1050,7 +1057,16 @@ public sealed class DoNetDriveGateway : IDeviceGateway, IDisposable
         return cmd.WatchState == 1;
     }
 
-    public async Task<bool> ProbeControllerAsync(Controller controller, CancellationToken ct = default)
+    /// <remarks>
+    /// Uma sonda por porta de cada vez: quem pede enquanto outra está em andamento recebe o
+    /// resultado dela (<see cref="SharedInFlight{TKey, TResult}"/>). Sem isso, os workers da
+    /// sincronização enfileiravam sondas na mesma porta morta e ficavam parados esperando a vez
+    /// só para serem recusados pelo disjuntor que a primeira acabara de reabrir.
+    /// </remarks>
+    public Task<bool> ProbeControllerAsync(Controller controller, CancellationToken ct = default) =>
+        _probes.RunAsync(controller.Id, () => ProbeOnceAsync(controller, ct), ct);
+
+    private async Task<bool> ProbeOnceAsync(Controller controller, CancellationToken ct)
     {
         // ReadWatchState: só lê, não muda nada no aparelho, e é o comando mais barato medido.
         // Nome de operação próprio para o rastro distinguir a sonda do monitoramento.
