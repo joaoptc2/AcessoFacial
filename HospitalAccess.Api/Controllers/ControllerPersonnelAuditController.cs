@@ -336,6 +336,11 @@ public sealed class ControllerPersonnelAuditController : ControllerEndpointBase
         var controller = await Db.Controllers.FirstOrDefaultAsync(c => c.Id == id, ct);
         if (controller is null) return NotFound();
 
+        // Em manutenção, o reenvio que vem depois do "apagar tudo" ficaria inteiro em espera: o
+        // aparelho terminaria vazio, sem ninguém cadastrado, até a porta sair da manutenção.
+        if (controller.MaintenanceSinceUtc is not null)
+            return Conflict(new { error = "Porta em manutenção: tire-a da manutenção antes de resincronizar (senão o aparelho ficaria vazio até ela voltar)." });
+
         // Single-flight por controlador: cliques repetidos empilhavam ClearAllPersons +
         // re-upload COMPLETO concorrentes no mesmo aparelho — a operação mais cara que existe.
         var flightKey = $"resync:{id}";

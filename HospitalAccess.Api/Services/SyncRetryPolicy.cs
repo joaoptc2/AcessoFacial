@@ -61,6 +61,13 @@ public static class SyncRetryPolicy
     }
 
     /// <summary>
+    /// De quanto em quanto tempo um cadastro adiado por porta EM MANUTENÇÃO é reavaliado. A saída
+    /// da manutenção já reenfileira tudo na hora (ControllerMaintenanceService); este prazo é só a
+    /// rede de segurança, e a reavaliação não toca o aparelho — é uma consulta ao banco.
+    /// </summary>
+    public static readonly TimeSpan MaintenanceRecheck = TimeSpan.FromHours(6);
+
+    /// <summary>
     /// Filtro dos status elegíveis à varredura automática: Pending sempre; Failed só quando o
     /// backoff venceu (NextRetryAtUtc no passado). Failed com NextRetryAtUtc null = quarentena
     /// de falha permanente — fica de fora até uma ação manual resetar.

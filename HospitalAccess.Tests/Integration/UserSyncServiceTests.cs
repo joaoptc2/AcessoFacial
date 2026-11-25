@@ -325,6 +325,103 @@ public sealed class UserSyncServiceTests
         Assert.Equal(SyncState.Failed, status.State);
     }
 
+    // ---------------------------------------------------------------- modo manutenção
+
+    /// <summary>
+    /// Porta em manutenção: nem o upload, nem a sonda — nada toca o aparelho. O cadastro espera,
+    /// sem contar como falha do usuário, e a mensagem diz o porquê.
+    /// </summary>
+    [SkippableFact]
+    public async Task PortaEmManutencao_NaoRecebeCadastro_NemSonda()
+    {
+        Skip.IfNot(_pg.Available, _pg.SkipReason);
+        var (service, gateway, db) = BuildService();
+        await using var _ = db;
+
+        var controller = NewController("Quarto 9 (manutenção)");
+        controller.MaintenanceSinceUtc = DateTime.UtcNow.AddHours(-2);
+        var user = NewPermanentUser(NextCode());
+        user.Permissions.Add(new AccessPermission { ControllerId = controller.Id });
+        db.Controllers.Add(controller);
+        db.Users.Add(user);
+        await db.SaveChangesAsync();
+        gateway.UnhealthyControllers.Add(controller.Id); // mesmo "sem prova de vida", não sonda
+
+        await service.SyncUserAsync(user.Id);
+
+        Assert.Empty(gateway.FaceUploads);
+        Assert.Empty(gateway.Probes);
+        var status = await db.SyncStatuses.AsNoTracking().SingleAsync(s => s.UserId == user.Id);
+        Assert.Equal(SyncState.Failed, status.State);
+        Assert.Equal(0, status.RetryCount);
+        Assert.Contains("manutenção", status.LastError);
+        // Rede de segurança: reavaliado em horas, não a cada varredura de 2 min.
+        Assert.InRange(status.NextRetryAtUtc!.Value,
+            DateTime.UtcNow + SyncRetryPolicy.MaintenanceRecheck - TimeSpan.FromMinutes(1),
+            DateTime.UtcNow + SyncRetryPolicy.MaintenanceRecheck + TimeSpan.FromMinutes(1));
+    }
+
+    /// <summary>Diferente da porta instável, aqui nem o visitante (comando leve) é enviado.</summary>
+    [SkippableFact]
+    public async Task PortaEmManutencao_TambemAdiaVisitante()
+    {
+        Skip.IfNot(_pg.Available, _pg.SkipReason);
+        var (service, gateway, db) = BuildService();
+        await using var _ = db;
+
+        var controller = NewController("Quarto 9 (manutenção)");
+        controller.MaintenanceSinceUtc = DateTime.UtcNow;
+        var visitor = new User
+        {
+            UserCode = NextCode(),
+            Name = "Acompanhante",
+            Type = UserType.Visitor,
+            ValidUntil = DateTime.UtcNow.AddDays(1),
+        };
+        visitor.Permissions.Add(new AccessPermission { ControllerId = controller.Id });
+        db.Controllers.Add(controller);
+        db.Users.Add(visitor);
+        await db.SaveChangesAsync();
+
+        await service.SyncUserAsync(visitor.Id);
+
+        Assert.Empty(gateway.FacelessUploads);
+        var status = await db.SyncStatuses.AsNoTracking().SingleAsync(s => s.UserId == visitor.Id);
+        Assert.Equal(SyncState.Failed, status.State);
+    }
+
+    /// <summary>
+    /// Remoção numa porta em manutenção fica PENDENTE e visível — nunca marcada como Revoked, porque
+    /// a credencial pode continuar no aparelho até ele voltar.
+    /// </summary>
+    [SkippableFact]
+    public async Task PortaEmManutencao_RemocaoFicaPendente_SemTocarOAparelho()
+    {
+        Skip.IfNot(_pg.Available, _pg.SkipReason);
+        var (service, gateway, db) = BuildService();
+        await using var _ = db;
+
+        var controller = NewController("Quarto 9 (manutenção)");
+        var user = NewPermanentUser(NextCode());
+        user.Permissions.Add(new AccessPermission { ControllerId = controller.Id });
+        db.Controllers.Add(controller);
+        db.Users.Add(user);
+        await db.SaveChangesAsync();
+        await service.SyncUserAsync(user.Id); // cadastrado com a porta em operação
+
+        controller.MaintenanceSinceUtc = DateTime.UtcNow;
+        user.RevokedAtUtc = DateTime.UtcNow;
+        await db.SaveChangesAsync();
+
+        await service.RevokeUserAsync(user.Id);
+
+        Assert.Empty(gateway.Deletions);
+        var status = await db.SyncStatuses.AsNoTracking().SingleAsync(s => s.UserId == user.Id);
+        Assert.Equal(SyncState.Failed, status.State);
+        Assert.Equal(0, status.RetryCount);
+        Assert.Contains("remoção", status.LastError);
+    }
+
     /// <summary>Disjuntor fechado (o caso normal) segue sincronizando — o atalho não pode engolir o fluxo bom.</summary>
     [SkippableFact]
     public async Task PortaComDisjuntorFechado_SincronizaNormalmente()

@@ -666,7 +666,12 @@ export function ControllersPage() {
             {filtered.map((c) => (
               <tr key={c.id}>
                 <td>
-                  {c.name} {c.isRoom && <span className="pill">Quarto</span>}
+                  {c.name} {c.isRoom && <span className="pill">Quarto</span>}{" "}
+                  {c.maintenanceSinceUtc && (
+                    <span className="pill pill-warning" title={c.maintenanceNote ?? "Tráfego automático pausado"}>
+                      Em manutenção
+                    </span>
+                  )}
                 </td>
                 <td>
                   {c.ipAddress}:{c.port}

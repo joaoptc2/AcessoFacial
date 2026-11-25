@@ -182,6 +182,7 @@ builder.Services.AddSingleton<AdbClient>();
 // Grades de horário por controladora: aloca as 64 posições do aparelho, libera as órfãs e
 // reescreve a tabela. Scoped porque usa o DbContext.
 builder.Services.AddScoped<ControllerTimeGroupService>();
+builder.Services.AddScoped<ControllerMaintenanceService>();
 
 // Reprocessa sincronizações pendentes/falhas: reenfileira na fila serial (não processa em paralelo).
 // O heartbeat guarda a última varredura — a tela de Sincronizações usa como prova de vida.

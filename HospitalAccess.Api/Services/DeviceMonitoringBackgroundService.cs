@@ -65,7 +65,11 @@ public sealed class DeviceMonitoringBackgroundService : BackgroundService
         {
             using var scope = _scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<AccessDbContext>();
-            controllers = await db.Controllers.AsNoTracking().ToListAsync(ct);
+            // Porta em manutenção não é sondada nem rearmada: é o tráfego que mais pesava numa
+            // porta morta (ReadWatchState/BeginWatch a cada ciclo, para sempre).
+            controllers = await db.Controllers.AsNoTracking()
+                .Where(c => c.MaintenanceSinceUtc == null)
+                .ToListAsync(ct);
         }
         catch (Exception ex)
         {

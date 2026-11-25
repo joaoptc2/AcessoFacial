@@ -134,6 +134,16 @@ public sealed class UserSyncQueueWorker : BackgroundService
             {
                 var controller = await db.Controllers.FirstOrDefaultAsync(c => c.Id == controllerId, ct);
                 if (controller is null) continue;
+                if (controller.MaintenanceSinceUtc is not null)
+                {
+                    // Usuário excluído não deixa linha de status para re-tentar depois — o mesmo que
+                    // já acontecia com qualquer porta fora do ar. Na volta da manutenção, a Auditoria
+                    // de pessoal mostra e remove do aparelho quem não existe mais no sistema.
+                    _logger.LogWarning(
+                        "Usuário excluído {UserCode} não foi removido do controlador {Controller}: porta em manutenção. " +
+                        "Rode a Auditoria de pessoal quando ela voltar.", work.UserCode, controller.Name);
+                    continue;
+                }
                 await gateway.DeletePersonAsync(controller, work.UserCode, ct);
             }
             catch (Exception ex)

@@ -118,6 +118,9 @@ export function HomePage() {
           <StatCard icon="device" value={dashboard.total} label="Controladores" />
           <StatCard icon="check" value={dashboard.online} label="Online" tone="success" />
           <StatCard icon="alert" value={dashboard.offline} label="Offline" tone={dashboard.offline > 0 ? "danger" : "neutro"} />
+          {dashboard.maintenance > 0 && (
+            <StatCard icon="device" value={dashboard.maintenance} label="Em manutenção" tone="warning" />
+          )}
           <StatCard icon="sync" value={pendentes} label="Sync pendente" tone={pendentes > 0 ? "warning" : "neutro"} />
           <StatCard icon="alarm" value={alarmes} label="Alarmes ativos" tone={alarmes > 0 ? "danger" : "neutro"} />
         </div>
@@ -190,9 +193,18 @@ export function HomePage() {
                           <code>{c.ipAddress}</code>
                         </td>
                         <td>
-                          <span className={c.online ? "pill pill-success" : "pill pill-danger"}>
-                            {c.online ? "Online" : "Offline"}
-                          </span>
+                          {c.maintenanceSinceUtc ? (
+                            <span
+                              className="pill pill-warning"
+                              title={`Em manutenção desde ${new Date(c.maintenanceSinceUtc).toLocaleString()}${c.maintenanceNote ? ` — ${c.maintenanceNote}` : ""}`}
+                            >
+                              Em manutenção{c.online ? " · responde à rede" : ""}
+                            </span>
+                          ) : (
+                            <span className={c.online ? "pill pill-success" : "pill pill-danger"}>
+                              {c.online ? "Online" : "Offline"}
+                            </span>
+                          )}
                           {c.circuitOpenUntilUtc && (
                             <span
                               className="pill pill-warning"

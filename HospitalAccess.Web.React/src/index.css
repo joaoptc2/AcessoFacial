@@ -752,6 +752,12 @@ input[type="radio"] {
   color: var(--success);
 }
 
+.alert-warning {
+  background: var(--warning-soft);
+  border-color: var(--warning);
+  color: var(--warning);
+}
+
 .pill {
   display: inline-block;
   font-size: 0.72rem;

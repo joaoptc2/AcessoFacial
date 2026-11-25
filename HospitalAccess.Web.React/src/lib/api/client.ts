@@ -3,7 +3,7 @@
 // da aplicação continuam sendo `from "../lib/api"`.
 
 import { buildQuery, request, requestBlob } from "./http";
-import type { AlarmSettings, ControllerDetailDto, ControllerDto, ControllerNetworkInfo, CreateControllerRequest, DiscoveredController, EventPhotoListItem, KioskSettings, PersonnelAudit, PersonnelAuditSnapshot, RelocateResult, SyncOverviewDto, SyncStatusDto, UpdateControllerRequest } from "./types.controllers";
+import type { AlarmSettings, ControllerDetailDto, ControllerDto, ControllerNetworkInfo, CreateControllerRequest, DiscoveredController, EventPhotoListItem, KioskSettings, MaintenanceState, PersonnelAudit, PersonnelAuditSnapshot, RelocateResult, SyncOverviewDto, SyncStatusDto, UpdateControllerRequest } from "./types.controllers";
 import type { CreateVisitorRequest, LoginResponse, StaffRole, StaffUserDto, UserAccessReport, UserAuditLogEntry, UserDetailDto, UserGroupDto, UserGroupRequest, UserListPage, VisitorListItemDto } from "./types.people";
 import type { DeviceTraceSummary, AccessLogPage, DoorScheduleDto, ScheduleWindowDto, AlarmEventPage, BackupFileDto, BackupListDto, BedActionResult, BedDto, BedHistoryPage, DashboardDto, DevLogsResponse, EmergencyResultDto, HolidayDto, HolidayRequest, SystemSettingsDto, TvStatusDto, UpdateSettingsRequest } from "./types.operations";
 
@@ -20,6 +20,8 @@ export const api = {
   updateController: (id: string, body: UpdateControllerRequest) =>
     request<void>(`/controllers/${id}`, { method: "PUT", body: JSON.stringify(body) }),
   deleteController: (id: string) => request<void>(`/controllers/${id}`, { method: "DELETE" }),
+  setMaintenance: (id: string, body: { enabled: boolean; note?: string }) =>
+    request<MaintenanceState>(`/controllers/${id}/maintenance`, { method: "PUT", body: JSON.stringify(body) }),
 
   // Sem udpPort: o servidor varre as portas padrão (8101 de fábrica + 60000 legado) e mescla.
   discoverControllers: (udpPort?: number, scanSeconds?: number) =>

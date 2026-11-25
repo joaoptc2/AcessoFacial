@@ -176,6 +176,19 @@ public sealed class ControllerTimeGroupService
     /// </summary>
     public async Task<bool> TryPushAsync(Guid controllerId, CancellationToken ct = default)
     {
+        // Porta em manutenção: nem tenta (o operador esperaria o teto inteiro por nada). A saída
+        // da manutenção reenvia a tabela (ControllerMaintenanceService).
+        var emManutencao = await _db.Controllers.AsNoTracking()
+            .Where(c => c.Id == controllerId)
+            .Select(c => c.MaintenanceSinceUtc != null)
+            .FirstOrDefaultAsync(ct);
+        if (emManutencao)
+        {
+            _logger.LogInformation(
+                "Controlador {Controller} em manutenção: a tabela de grades será enviada na saída da manutenção.", controllerId);
+            return false;
+        }
+
         // Teto de tempo: uma porta offline leva MINUTOS para desistir (a conexão tenta várias
         // vezes antes de falhar), e o operador ficaria olhando a tela travada por causa de um
         // aparelho que nem é o dele. Passado o teto, a gravação vale e o retorno diz que a porta

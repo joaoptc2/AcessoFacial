@@ -15,6 +15,22 @@ export interface ControllerDto {
   restartCount: number;
   isRoom: boolean;
   userCount: number;
+  /** Em manutenção desde (UTC); null = em operação. */
+  maintenanceSinceUtc: string | null;
+  maintenanceNote: string | null;
+}
+
+/**
+ * Estado depois de ligar/desligar a manutenção. Na saída: `requeued` = usuários devolvidos à fila
+ * desta porta; `timeGroupsPushed` = se a porta recebeu as grades de horário (false = ainda não
+ * responde, reaplique as grades quando ela voltar).
+ */
+export interface MaintenanceState {
+  inMaintenance: boolean;
+  sinceUtc: string | null;
+  note: string | null;
+  requeued: number;
+  timeGroupsPushed: boolean | null;
 }
 
 export interface ControllerDetailDto {
@@ -41,6 +57,9 @@ export interface ControllerDetailDto {
   tvIpAddress: string;
   tvPort: number;
   tvLastSeenUtc: string | null;
+  /** Em manutenção desde (UTC); null = em operação. Ver MaintenanceState. */
+  maintenanceSinceUtc: string | null;
+  maintenanceNote: string | null;
 }
 
 // Cadastro simplificado: só nome + IP + SN obrigatórios; o resto tem default no servidor

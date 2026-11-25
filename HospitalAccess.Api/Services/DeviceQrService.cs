@@ -56,6 +56,15 @@ public sealed class DeviceQrService
         var httpControllers = controllers.Where(_factory.CanUseHttp).ToList();
         if (httpControllers.Count == 0) return null;
 
+        // O QR é cunhado e guardado pelo PRÓPRIO aparelho: porta em manutenção não tem como
+        // entregá-lo, e tentar só faria a recepção esperar um timeout.
+        var emOperacao = httpControllers.Where(c => c.MaintenanceSinceUtc is null).ToList();
+        if (emOperacao.Count == 0)
+            throw new DeviceHttpException(
+                $"a porta '{httpControllers[0].Name}' está em manutenção — o QR é gerado pelo próprio aparelho " +
+                "e só pode ser lido quando ela voltar a operar");
+        httpControllers = emOperacao;
+
         DeviceHttpException? lastError = null;
         foreach (var controller in httpControllers)
         {
@@ -92,7 +101,11 @@ public sealed class DeviceQrService
         var ids = controllerIds.Distinct().ToList();
         if (ids.Count == 0) return;
 
-        var controllers = await _db.Controllers.Where(c => ids.Contains(c.Id)).ToListAsync(ct);
+        // Portas em manutenção ficam de fora: a tentativa só esperaria o timeout de uma porta que
+        // se sabe parada. A pessoa que sobrar no aparelho sai pela Auditoria de pessoal na volta.
+        var controllers = await _db.Controllers
+            .Where(c => ids.Contains(c.Id) && c.MaintenanceSinceUtc == null)
+            .ToListAsync(ct);
         foreach (var controller in controllers.Where(_factory.CanUseHttp))
         {
             try

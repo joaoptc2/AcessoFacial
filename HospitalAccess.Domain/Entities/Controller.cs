@@ -114,5 +114,19 @@ public class Controller
     /// <summary>Mensagem do último erro de comunicação no health-check (quando offline).</summary>
     public string? LastReachError { get; set; }
 
+    /// <summary>
+    /// Em manutenção desde (UTC). Null = em operação. Porta em manutenção não recebe tráfego
+    /// AUTOMÁTICO — monitoramento, coleta de registros, cadastros e remoções ficam em espera, sem
+    /// tocar o aparelho — e volta ao normal ao sair da manutenção, sem perder permissões. Comandos
+    /// manuais da tela continuam liberados ("Testar conexão" é como se confere que ela voltou).
+    ///
+    /// Existe por causa do Quarto 9: morto por semanas, ele sozinho consumia 20% de todo o tempo
+    /// de comunicação (nov/2026) só para o sistema redescobrir, a cada ciclo, que não respondia.
+    /// </summary>
+    public DateTime? MaintenanceSinceUtc { get; set; }
+
+    /// <summary>Motivo da manutenção, livre (ex.: "aguardando troca da fonte"). Até 200 caracteres.</summary>
+    public string? MaintenanceNote { get; set; }
+
     public ICollection<AccessPermission> Permissions { get; set; } = new List<AccessPermission>();
 }

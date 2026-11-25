@@ -87,6 +87,17 @@ public sealed class FakeDeviceGateway : IDeviceGateway
     public bool IsControllerHealthy(Guid controllerId) =>
         !UnhealthyControllers.Contains(controllerId) && !CircuitOpenUntil.ContainsKey(controllerId);
 
+    /// <summary>Envios da tabela de grades de horário, na ordem (usado na saída da manutenção).</summary>
+    public ConcurrentQueue<Guid> TimeGroupPushes { get; } = new();
+
+    public Task SyncTimeGroupsAsync(Controller controller, IReadOnlyList<TimeGroupEntry> groups, CancellationToken ct = default)
+    {
+        if (ThrowingControllers.TryGetValue(controller.Id, out var message))
+            throw new DeviceCommandException(message);
+        TimeGroupPushes.Enqueue(controller.Id);
+        return Task.CompletedTask;
+    }
+
     /// <summary>Sondas pedidas, na ordem.</summary>
     public ConcurrentQueue<Guid> Probes { get; } = new();
 
@@ -130,7 +141,7 @@ public sealed class FakeDeviceGateway : IDeviceGateway
     public Task<DateTime> ReadControllerTimeAsync(Controller controller, CancellationToken ct = default) => NotUsed<DateTime>();
     public Task SyncControllerTimeAsync(Controller controller, CancellationToken ct = default) => NotUsed();
     public Task SyncHolidaysAsync(Controller controller, IReadOnlyList<HolidayEntry> holidays, CancellationToken ct = default) => NotUsed();
-    public Task SyncTimeGroupsAsync(Controller controller, IReadOnlyList<TimeGroupEntry> groups, CancellationToken ct = default) => NotUsed();
+
     public Task<AlarmSettingsSnapshot> ReadAlarmSettingsAsync(Controller controller, CancellationToken ct = default) => NotUsed<AlarmSettingsSnapshot>();
     public Task WriteAlarmSettingsAsync(Controller controller, AlarmSettingsSnapshot settings, CancellationToken ct = default) => NotUsed();
     public Task ClearAlarmAsync(Controller controller, CancellationToken ct = default) => NotUsed();

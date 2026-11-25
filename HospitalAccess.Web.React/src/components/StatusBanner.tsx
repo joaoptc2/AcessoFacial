@@ -13,9 +13,12 @@ export function StatusBanner() {
   if (!dashboard) return null;
 
   const offline = dashboard.offline;
-  const manualSync = dashboard.controllers.reduce((sum, c) => sum + (c.awaitingManualSync ?? 0), 0);
+  // Porta em manutenção fica de fora: pendência nela é o esperado até ela voltar (aparece na
+  // tabela do painel). Sem isso, a faixa ficaria acesa a manutenção inteira.
+  const operando = dashboard.controllers.filter((c) => !c.maintenanceSinceUtc);
+  const manualSync = operando.reduce((sum, c) => sum + (c.awaitingManualSync ?? 0), 0);
   // "Pendente" de verdade = o que o retry automático ainda vai tentar; quarentena vai em separado.
-  const pendingSync = dashboard.controllers.reduce((sum, c) => sum + c.pendingSync, 0) - manualSync;
+  const pendingSync = operando.reduce((sum, c) => sum + c.pendingSync, 0) - manualSync;
   const activeAlarms = dashboard.controllers.reduce((sum, c) => sum + c.activeAlarms, 0);
   const pendingMigrations = dashboard.pendingMigrations ?? [];
 

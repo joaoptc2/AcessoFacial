@@ -47,13 +47,18 @@ export interface ControllerStatusItem {
   activeAlarms: number;
   /** Disjuntor de comandos aberto até este horário (UTC): rede OK, mas o protocolo não responde — comandos em espera para proteger o aparelho. null = normal. */
   circuitOpenUntilUtc: string | null;
+  /** Em manutenção desde (UTC): fora do alerta de offline. `online` continua valendo — mostra que voltou a responder à rede. */
+  maintenanceSinceUtc: string | null;
+  maintenanceNote: string | null;
 }
 
 export interface DashboardDto {
   generatedAtUtc: string;
   total: number;
   online: number;
+  /** Offline FORA de manutenção — as em manutenção estão em `maintenance`. */
   offline: number;
+  maintenance: number;
   // Não-vazio = o binário subiu na frente do banco (migration não aplicada — docs §13).
   pendingMigrations: string[];
   controllers: ControllerStatusItem[];

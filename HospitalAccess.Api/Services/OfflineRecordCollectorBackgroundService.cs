@@ -79,7 +79,11 @@ public sealed class OfflineRecordCollectorBackgroundService : BackgroundService
         using (var scope = _scopeFactory.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<AccessDbContext>();
-            controllers = await db.Controllers.AsNoTracking().ToListAsync(ct);
+            // Porta em manutenção fica de fora; os registros guardados nela são coletados quando
+            // ela voltar (o aparelho os mantém).
+            controllers = await db.Controllers.AsNoTracking()
+                .Where(c => c.MaintenanceSinceUtc == null)
+                .ToListAsync(ct);
         }
 
         foreach (var controller in controllers)

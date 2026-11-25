@@ -144,6 +144,7 @@ public sealed class UserSyncService : IUserSyncService
         {
             try
             {
+                // Portas em manutenção ficam de fora no próprio DeviceQrService.
                 await _deviceQr.RemoveFromControllersAsync(
                     user.UserCode, statuses.Select(s => s.ControllerId).Distinct().ToList(), ct);
             }
@@ -176,6 +177,14 @@ public sealed class UserSyncService : IUserSyncService
         {
             status = new DeviceSyncStatus { UserId = user.Id, ControllerId = controllerId };
             _db.SyncStatuses.Add(status);
+        }
+
+        // Porta EM MANUTENÇÃO: nem tenta. O cadastro espera a saída da manutenção, que o reenfileira.
+        if (controller.MaintenanceSinceUtc is not null)
+        {
+            AdiarPorManutencao(status, controller, "o cadastro será feito");
+            await _db.SaveChangesAsync(ct);
+            return;
         }
 
         // Porta sem condições de receber este cadastro: adia e espalha a próxima tentativa. Duas
@@ -377,6 +386,16 @@ public sealed class UserSyncService : IUserSyncService
         var controller = await _db.Controllers.FirstOrDefaultAsync(c => c.Id == status.ControllerId, ct);
         if (controller is null) return;
 
+        // Porta em manutenção: a remoção fica PENDENTE (Failed, com a mensagem dizendo por quê) —
+        // a credencial pode continuar no aparelho até ele voltar, e a tela precisa mostrar isso.
+        if (controller.MaintenanceSinceUtc is not null)
+        {
+            AdiarPorManutencao(status, controller, "a remoção será feita");
+            status.UpdatedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync(ct);
+            return;
+        }
+
         try
         {
             await _gateway.DeletePersonAsync(controller, userCode, ct);
@@ -402,5 +421,20 @@ public sealed class UserSyncService : IUserSyncService
 
         status.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>
+    /// Adiamento por porta em manutenção. Não conta como falha do usuário (RetryCount não anda) e
+    /// não é quarentena: a reavaliação é periódica e barata, e a saída da manutenção antecipa tudo.
+    /// </summary>
+    private void AdiarPorManutencao(DeviceSyncStatus status, Controller controller, string oQueSeraFeito)
+    {
+        var desde = TimeZoneInfo.ConvertTimeFromUtc(controller.MaintenanceSinceUtc!.Value, _deviceTimeZone);
+        status.State = SyncState.Failed;
+        status.NextRetryAtUtc = DateTime.UtcNow + SyncRetryPolicy.MaintenanceRecheck;
+        status.LastError = $"Porta em manutenção desde {desde:dd/MM HH:mm} — {oQueSeraFeito} quando ela voltar a operar.";
+        status.UpdatedAt = DateTime.UtcNow;
+        _logger.LogDebug("Usuário {UserId} na porta {Controller}: {Adiamento} quando a manutenção acabar.",
+            status.UserId, controller.Name, oQueSeraFeito);
     }
 }

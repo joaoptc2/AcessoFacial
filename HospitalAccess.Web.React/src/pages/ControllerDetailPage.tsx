@@ -12,6 +12,7 @@ import {
   type KioskSettings,
   type PersonnelAudit,
 } from "../lib/api";
+import { refreshControllerStatus, useControllerStatus } from "../lib/controllerStatusStore";
 import { useFeedback } from "../lib/feedback";
 
 const TABS = ["Rede", "Relógio", "Alarmes", "Ajustes Locais", "Auditoria", "Fotos de Evento", "Log de Acessos", "Manutenção"] as const;
@@ -21,6 +22,11 @@ export function ControllerDetailPage() {
   const { confirm, toastSuccess, toastError } = useFeedback();
   const { id } = useParams<{ id: string }>();
   const [controller, setController] = useState<ControllerDetailDto | null>(null);
+  const [maintenanceNote, setMaintenanceNote] = useState("");
+  // Estado vivo (polling compartilhado do painel): mostra se a porta em manutenção voltou a
+  // responder à rede — o sinal para conferir com "Testar conexão" e tirá-la da manutenção.
+  const { dashboard } = useControllerStatus();
+  const live = dashboard?.controllers.find((c) => c.id === id) ?? null;
   const [activeTab, setActiveTab] = useState<Tab>("Rede");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -308,6 +314,53 @@ export function ControllerDetailPage() {
     }
   }
 
+  async function enterMaintenance() {
+    if (!id) return;
+    if (!(await confirm({
+      title: "Colocar esta porta em manutenção?",
+      text:
+        "O sistema para de mandar trabalho automático a ela: cadastros, remoções, monitoramento e coleta de registros " +
+        "ficam em espera, sem tocar o aparelho, até você tirá-la da manutenção. Remoção em espera significa que uma " +
+        "credencial revogada pode continuar no aparelho até ele voltar.",
+      confirmLabel: "Colocar em manutenção",
+    })))
+      return;
+    setBusy(true);
+    try {
+      await api.setMaintenance(id, { enabled: true, note: maintenanceNote.trim() || undefined });
+      setController(await api.getController(id));
+      void refreshControllerStatus();
+      toastSuccess("Porta em manutenção. O tráfego automático para ela está pausado.");
+    } catch (err) {
+      toastError(`Falha ao colocar em manutenção: ${err instanceof ApiError ? err.message : "erro inesperado"}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function leaveMaintenance() {
+    if (!id) return;
+    setBusy(true);
+    try {
+      const r = await api.setMaintenance(id, { enabled: false });
+      setController(await api.getController(id));
+      setMaintenanceNote("");
+      void refreshControllerStatus();
+      const grades =
+        r.timeGroupsPushed === false
+          ? " A porta ainda não respondeu: as grades de horário não chegaram — reaplique-as quando ela voltar."
+          : "";
+      toastSuccess(
+        `Porta de volta à operação: ${r.requeued} usuário(s) devolvido(s) à fila.${grades} ` +
+          "Rode a Auditoria para conferir se alguém excluído do sistema durante a manutenção ficou no aparelho.",
+      );
+    } catch (err) {
+      toastError(`Falha ao tirar da manutenção: ${err instanceof ApiError ? err.message : "erro inesperado"}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function resyncAll() {
     if (!id) return;
     if (!(await confirm({
@@ -339,6 +392,18 @@ export function ControllerDetailPage() {
       <Link to="/controllers" className="btn btn-outline btn-sm" style={{ marginBottom: "1rem", display: "inline-block" }}>
         ← Voltar para controladores
       </Link>
+
+      {controller.maintenanceSinceUtc && (
+        <div className="alert alert-warning">
+          <strong>Porta em manutenção</strong> desde {new Date(controller.maintenanceSinceUtc).toLocaleString()}
+          {controller.maintenanceNote && <> — {controller.maintenanceNote}</>}. Cadastros, remoções, monitoramento e
+          coleta estão em espera.{" "}
+          {live?.online && <strong>Ela voltou a responder à rede: confira com "Testar conexão" e tire-a da manutenção. </strong>}
+          <button className="btn btn-outline btn-sm" onClick={() => selectTab("Manutenção")}>
+            Gerenciar
+          </button>
+        </div>
+      )}
 
       <div className="btn-group" style={{ borderBottom: "1px solid var(--border-color)", marginBottom: "1rem", paddingBottom: "0.5rem" }}>
         {TABS.map((tab) => (
@@ -803,12 +868,57 @@ export function ControllerDetailPage() {
 
       {activeTab === "Manutenção" && (
         <div className="card" style={{ maxWidth: 640 }}>
-          <h4 style={{ marginTop: 0 }}>Resincronização forçada</h4>
+          <h4 style={{ marginTop: 0 }}>Modo manutenção</h4>
+          {controller.maintenanceSinceUtc ? (
+            <>
+              <p style={{ marginTop: 0 }}>
+                Em manutenção desde <strong>{new Date(controller.maintenanceSinceUtc).toLocaleString()}</strong>
+                {controller.maintenanceNote && <> — {controller.maintenanceNote}</>}.{" "}
+                {live && (live.online ? "Responde à rede agora." : "Sem resposta de rede.")}
+              </p>
+              <p className="text-muted">
+                Ao sair, as grades de horário são reenviadas e todos os cadastros e remoções que ficaram em espera voltam
+                para a fila na hora.
+              </p>
+              <button className="btn btn-primary" onClick={leaveMaintenance} disabled={busy}>
+                Tirar da manutenção
+              </button>
+            </>
+          ) : (
+            <>
+              <p className="text-muted" style={{ marginTop: 0 }}>
+                Para uma porta sabidamente fora do ar, à espera de conserto. O sistema para de mandar trabalho automático
+                a ela — monitoramento, coleta de registros, cadastros e remoções ficam em espera, sem tocar o aparelho — e
+                nada se perde: ao sair, tudo volta para a fila. Os comandos manuais desta tela continuam funcionando.
+              </p>
+              <div className="form-field" style={{ marginBottom: "0.75rem" }}>
+                <label>Motivo (opcional)</label>
+                <input
+                  value={maintenanceNote}
+                  maxLength={200}
+                  placeholder="ex.: aguardando troca da fonte"
+                  onChange={(e) => setMaintenanceNote(e.target.value)}
+                />
+              </div>
+              <button className="btn btn-primary" onClick={enterMaintenance} disabled={busy}>
+                Colocar em manutenção
+              </button>
+            </>
+          )}
+
+          <hr className="divider" />
+
+          <h4>Resincronização forçada</h4>
           <p className="text-muted" style={{ marginTop: 0 }}>
             Apaga <strong>todas</strong> as pessoas deste controlador e reenvia os usuários cadastrados no
             sistema com permissão nele. Útil para corrigir divergências ou faces duplicadas.
           </p>
-          <button className="btn btn-danger-outline" onClick={resyncAll} disabled={busy}>
+          <button
+            className="btn btn-danger-outline"
+            onClick={resyncAll}
+            disabled={busy || !!controller.maintenanceSinceUtc}
+            title={controller.maintenanceSinceUtc ? "Tire a porta da manutenção antes: senão o aparelho ficaria vazio até ela voltar." : undefined}
+          >
             Resincronizar (forçar)
           </button>
 

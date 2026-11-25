@@ -229,6 +229,13 @@ namespace HospitalAccess.Infrastructure.Persistence.Migrations
                     b.Property<DateTime?>("LastSeenUtc")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("MaintenanceNote")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<DateTime?>("MaintenanceSinceUtc")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasColumnType("text");

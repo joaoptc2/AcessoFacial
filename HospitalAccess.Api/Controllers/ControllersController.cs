@@ -79,6 +79,7 @@ public sealed class ControllersController : ControllerEndpointBase
                 c.Id, c.Name, c.IpAddress, c.Port, c.SerialNumber, c.SupportsWaitRepeatMessage,
                 c.TimeoutMs, c.RestartCount, c.IsRoom,
                 UserCount = c.Permissions.Count,
+                c.MaintenanceSinceUtc, c.MaintenanceNote,
             })
             .ToListAsync(ct);
         return Ok(controllers);
@@ -118,7 +119,7 @@ public sealed class ControllersController : ControllerEndpointBase
 
         var rows = await Db.Controllers.AsNoTracking()
             .OrderBy(c => c.Name)
-            .Select(c => new { c.Id, c.Name, c.IpAddress, c.LastSeenUtc, c.LastReachError })
+            .Select(c => new { c.Id, c.Name, c.IpAddress, c.LastSeenUtc, c.LastReachError, c.MaintenanceSinceUtc, c.MaintenanceNote })
             .ToListAsync(ct);
 
         var controllers = rows.Select(c => new
@@ -129,6 +130,10 @@ public sealed class ControllersController : ControllerEndpointBase
             c.LastSeenUtc,
             c.LastReachError,
             Online = c.LastSeenUtc != null && c.LastSeenUtc >= onlineThreshold,
+            // Em manutenção: fora do alerta de offline (estar parada é o esperado), mas o Online
+            // continua valendo — é como a tela mostra que ela voltou a responder à rede.
+            c.MaintenanceSinceUtc,
+            c.MaintenanceNote,
             PendingSync = pendingByController.TryGetValue(c.Id, out var p) ? p.Count : 0,
             AwaitingManualSync = pendingByController.TryGetValue(c.Id, out var m) ? m.AwaitingManual : 0,
             ActiveAlarms = alarmsByController.GetValueOrDefault(c.Id),
@@ -142,7 +147,8 @@ public sealed class ControllersController : ControllerEndpointBase
             generatedAtUtc = now,
             total = controllers.Count,
             online = controllers.Count(c => c.Online),
-            offline = controllers.Count(c => !c.Online),
+            offline = controllers.Count(c => !c.Online && c.MaintenanceSinceUtc == null),
+            maintenance = controllers.Count(c => c.MaintenanceSinceUtc != null),
             // Snapshot do boot (custo zero por request): não-vazio = o deploy esqueceu de
             // aplicar migration — o StatusBanner mostra a faixa vermelha com a instrução.
             pendingMigrations = _schemaState.PendingMigrations,
@@ -172,7 +178,30 @@ public sealed class ControllersController : ControllerEndpointBase
             HasCommunicationPassword = !string.IsNullOrEmpty(controller.CommunicationPassword),
             controller.ApiBaseUrl,
             HasApiPassword = !string.IsNullOrEmpty(controller.ApiPassword),
+            controller.MaintenanceSinceUtc,
+            controller.MaintenanceNote,
         });
+    }
+
+    public sealed record SetMaintenanceRequest(bool Enabled, string? Note);
+
+    /// <summary>
+    /// Liga/desliga o modo manutenção da porta. Ligado: o sistema para o tráfego AUTOMÁTICO para
+    /// ela (monitoramento, coleta, cadastros, remoções), sem tocar o aparelho. Desligado: reenvia
+    /// as grades de horário e devolve à fila o que ficou esperando. Auditado.
+    /// </summary>
+    [HttpPut("{id:guid}/maintenance")]
+    [Authorize(Roles = "Admin,Operator")]
+    public async Task<IActionResult> SetMaintenance(Guid id, [FromBody] SetMaintenanceRequest request,
+        [FromServices] ControllerMaintenanceService maintenance, CancellationToken ct)
+    {
+        if (request.Note is { Length: > ControllerMaintenanceService.MaxNoteLength })
+            return BadRequest($"O motivo da manutenção aceita no máximo {ControllerMaintenanceService.MaxNoteLength} caracteres.");
+
+        var state = request.Enabled
+            ? await maintenance.EnterAsync(id, request.Note, User.Identity?.Name, ct)
+            : await maintenance.LeaveAsync(id, User.Identity?.Name, ct);
+        return state is null ? NotFound() : Ok(state);
     }
 
     /// <summary>Status de sincronização (DeviceSyncStatus) de todos os usuários neste controlador.</summary>

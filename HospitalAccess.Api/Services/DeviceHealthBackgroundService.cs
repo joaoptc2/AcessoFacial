@@ -107,37 +107,44 @@ public sealed class DeviceHealthBackgroundService : BackgroundService
         });
         await Task.WhenAll(tasks);
         sw.Stop();
-        var unreachable = offlineControllers.Select(c => $"{c.Name} ({c.IpAddress})").ToList();
+        // Porta em manutenção continua sendo verificada (ping/tcp, fora da fila do protocolo) — é
+        // assim que a tela mostra que ela voltou a responder —, mas não entra no alerta de offline
+        // nem na suspeita de gargalo local: estar fora do ar é o esperado dela.
+        var emOperacao = controllers.Where(c => c.MaintenanceSinceUtc is null).ToList();
+        var offlineEmOperacao = offlineControllers.Where(c => c.MaintenanceSinceUtc is null).ToList();
+        var unreachable = offlineEmOperacao.Select(c => $"{c.Name} ({c.IpAddress})").ToList();
 
-        var offline = controllers.Count - reachable;
+        var offline = offlineEmOperacao.Count;
+        var reachableEmOperacao = emOperacao.Count - offline;
         // Nomeia os inalcançáveis na própria linha (até 5) — sem isso o operador via a contagem
         // mas precisava abrir o painel para descobrir QUAL aparelho olhar.
         var offlineNames = string.Join(", ", unreachable.Take(5))
             + (unreachable.Count > 5 ? $" (+{unreachable.Count - 5})" : "");
 
-        if (HealthProbeHeuristics.SuspectLocalBottleneck(offline, controllers.Count))
+        if (HealthProbeHeuristics.SuspectLocalBottleneck(offline, emOperacao.Count))
         {
             // Muitos caindo DE UMA VEZ = sinal de gargalo LOCAL (não dos aparelhos). Loga o estado
             // do thread pool para diagnóstico — essa é a instrumentação para "ver" o problema.
             ThreadPool.GetAvailableThreads(out var worker, out var io);
             _logger.LogWarning(
                 "Health-check: {Reach}/{Total} alcançáveis em {Ms}ms (⚠ {Off} inalcançáveis DE UMA VEZ — suspeita de gargalo local). Inalcançáveis: {Names}. ThreadPool: worker livres={W}, IO livres={IO}, threads={Count}.",
-                reachable, controllers.Count, sw.ElapsedMilliseconds, offline, offlineNames, worker, io, ThreadPool.ThreadCount);
+                reachableEmOperacao, emOperacao.Count, sw.ElapsedMilliseconds, offline, offlineNames, worker, io, ThreadPool.ThreadCount);
         }
         else if (offline > 0)
         {
             // Caso comum: um ou poucos aparelhos realmente fora (energia/cabo/IP) — sem alarde
             // de gargalo, mas em Warning e dizendo quem é.
             _logger.LogWarning("Health-check: {Reach}/{Total} alcançáveis em {Ms}ms. Inalcançáveis: {Names}.",
-                reachable, controllers.Count, sw.ElapsedMilliseconds, offlineNames);
+                reachableEmOperacao, emOperacao.Count, sw.ElapsedMilliseconds, offlineNames);
         }
         else
         {
             _logger.LogInformation("Health-check: {Reach}/{Total} alcançáveis em {Ms}ms.",
-                reachable, controllers.Count, sw.ElapsedMilliseconds);
+                reachableEmOperacao, emOperacao.Count, sw.ElapsedMilliseconds);
         }
 
-        if (offline > 0) await TryRelocateOfflineAsync(offlineControllers.ToList(), ct);
+        // Relocalização vale também para porta em manutenção: se ela reaparecer em outro IP, melhor saber.
+        if (!offlineControllers.IsEmpty) await TryRelocateOfflineAsync(offlineControllers.ToList(), ct);
     }
 
     /// <summary>

@@ -497,6 +497,17 @@ correção anterior:
   ainda transferindo. O teto agora considera a carga (`CommandHardCap`, vazão mínima de 2 KB/s:
   ~104 KB → ~52 s).
 
+**Achados da coleta de 18 a 24/11/2026** (depois das correções acima): o tempo de aparelho caiu
+para a metade (0,183 h por hora), as rajadas sumiram e os 60 cadastros com face do período
+terminaram sincronizados, 45 na primeira tentativa. Três ajustes saíram dela:
+
+- **Sonda única por porta.** Cada worker fazia a sua sonda na mesma porta morta, e até 6 dos 8
+  ficaram parados esperando a vez (2,2 h). Agora quem chega enquanto uma sonda está em andamento
+  recebe o resultado dela.
+- **Timeout do rastro lido antes de executar.** O SDK altera o timeout durante a execução, e todo
+  upload bem-sucedido aparecia com 6000 ms.
+- **Modo manutenção** para porta fora do ar por dias (ver Troubleshooting, item 5).
+
 **Custos e limites**: desligado, nem o registro é montado no caminho do comando. Ligado, a
 gravação é assíncrona (fila em memória + INSERT em lote) — o instrumento não pode virar parte do
 que está medindo. A fila é limitada e DESCARTA quando cheia; o total descartado aparece no
@@ -780,6 +791,23 @@ erro — vira timeout do nosso lado). Cheque nesta ordem:
    martelar o aparelho doente; um "Testar conexão" bem-sucedido fecha o circuito na hora. Para
    aparelhos cronicamente lentos, suba o `TimeoutMs` do cadastro (o upload de face já usa piso
    de 15 s).
+   **Porta que vai ficar fora do ar por dias** (à espera de conserto): coloque-a em
+   **modo manutenção** — aba *Manutenção* da página de detalhes, com um motivo opcional. Veja o
+   que acontece em cada caso:
+   - **Pausado sem tocar o aparelho:** monitoramento, coleta de registros, cadastros e remoções.
+     Os cadastros e remoções ficam como pendentes, com a mensagem "Porta em manutenção desde…".
+   - **Continua funcionando:** o health-check por ping/TCP (é como o painel mostra
+     "responde à rede" quando ela volta) e os comandos manuais da tela.
+   - **Fora dos alertas:** a porta não conta como offline e não acende a faixa de pendências.
+   - **Bloqueado:** a resincronização forçada, porque apagaria o aparelho e adiaria todos os
+     reenvios.
+   - **Na saída:** a tabela de grades de horário é reenviada primeiro e tudo o que ficou
+     esperando volta para a fila na hora.
+   - **Depois da saída:** rode a **Auditoria** daquela porta. A remoção de um usuário *excluído*
+     (não só revogado) durante a manutenção não deixa registro para repetir, e a auditoria
+     mostra e remove do aparelho quem não existe mais no sistema.
+   - **Auditoria do sistema:** entrada e saída ficam registradas, com o usuário. Motivo: em
+     nov/2026 o Quarto 9, morto por semanas, consumia sozinho 20% de todo o tempo de comunicação.
 6. **Divergência de cadastro** (auditoria acusa usuários faltando apesar de "Synced"): use o
    botão **"Auditar usuários em todos"** na tela de Controladores para varrer todos os
    aparelhos de uma vez — cada faltante aparece com nome/código e botão **"Resincronizar"**
